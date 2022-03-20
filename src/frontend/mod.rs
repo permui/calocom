@@ -52,10 +52,10 @@ fn parse_data_definition<'i>(p: Pair<'i, Rule>) -> DataDef {
 
     let mut it = p.into_inner();
     let name = it.next().unwrap().as_str().to_string();
-    let con_list : Vec<ConstructorType> = it.next().unwrap()
+    let con_list = Type::Enum(it.next().unwrap()
         .into_inner()
         .map(parse_constructor_type)
-        .collect();
+        .collect());
     DataDef { name, con_list }
 }
 

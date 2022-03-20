@@ -14,7 +14,7 @@ pub struct RefPath {
 #[derive(Debug)]
 pub struct DataDef {
     pub name: String,
-    pub con_list: Vec<ConstructorType>
+    pub con_list: Type,
 }
 
 #[derive(Debug)]
@@ -33,6 +33,7 @@ pub struct ConstructorVar {
 pub enum Type {
     Arrow(Box<Type>, Box<Type>),
     Tuple(Vec<Type>),
+    Enum(Vec<ConstructorType>),
     Unit,
     Named(String)
 }
