@@ -1,0 +1,24 @@
+import std.io
+
+data A = U | V ;
+
+swap: (@x: A, @y: A) -> () {
+	let tmp : A = x;
+	x = y;
+	y = tmp;
+}
+
+main: () -> () {
+	let x : A = U;
+	let y : A = V;
+	swap(@x, @y);
+	io.println<A>(x);
+	io.println<A>(y);
+}
+
+/*
+
+When calling `swap(@x, @y)`, `@` means a special parameter passing that allows 
+the function to change the variable itself.
+
+*/

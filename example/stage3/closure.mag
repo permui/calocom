@@ -1,0 +1,11 @@
+import std.io
+
+add_n: (n : i32) -> (i32 -> i32) {
+	\ m => { n + m }
+}
+
+main: () -> () {
+	let f : i32 -> i32 = add_n(3);
+	let z = f(10);
+	io.print<i32>(z);
+}

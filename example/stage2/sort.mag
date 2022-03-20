@@ -1,0 +1,21 @@
+import std.io
+import std.data.array
+
+sort: (a : [i32], cmp : i32 i32 -> bool) -> () {
+	let n = a.len();
+	for i in 0..n {
+		for j in i..n {
+			if cmp(a[j], a[i]) {
+				let tmp = a[j];
+				a[j] = a[i];
+				a[i] = tmp;
+			}
+		}
+	}
+}
+
+main: () -> () {
+	let a : [i32] = [2,3,1,5,4];
+	sort(a, cmp);
+	array.map<i32 -> ()>(a, io.print<i32>);
+}

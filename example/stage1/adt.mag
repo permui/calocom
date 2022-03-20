@@ -1,0 +1,25 @@
+import std.io
+
+data Nat = Z | S(Nat) ;
+
+add: (n: Nat, m: Nat) -> Nat {
+	match n {
+		Z => m,
+		S(k) => S(add(k, m))
+	}
+}
+
+prim: (n : Nat) -> i32 {
+	match n {
+		Z => 0,
+		S(k) => prim(k) + 1
+	}
+}
+
+main: () -> () {
+	let n : Nat = S(S(Z));
+	let m : Nat = S(S(S(Z)));
+	let z : Nat = add(n, m);
+	let w : i32 = prim(z);
+	io.print<i32>(w);
+}
