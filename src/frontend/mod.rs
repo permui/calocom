@@ -254,6 +254,14 @@ fn parse_op<'i>(p: Pair<'i, Rule>) -> BinOp {
         },
         Rule::op1 => match p.as_str() {
             "*" => BinOp::Mult,
-            if let ast::Type::Enum(v) = con_list {
-                
-            }
+            "/" => BinOp::Div,
+            "%" => BinOp::Mod,
+            _ => unreachable!()
+        },
+        _ => unreachable!()
+    }
+}
+
+fn get_first<'i>(p: Pair<'i, Rule>) -> Pair<'i, Rule> {
+    p.into_inner().next().unwrap()
+}
