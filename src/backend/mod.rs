@@ -1,11 +1,13 @@
-use crate::ast::{self, NameTypeBind};
+use crate::ast::{self, LetStmt, NameTypeBind};
 use inkwell::builder::Builder;
 use inkwell::context::Context;
+use inkwell::memory_buffer::MemoryBuffer;
 use inkwell::module::Module;
 use inkwell::types::{BasicMetadataTypeEnum, BasicTypeEnum, PointerType, StructType};
 use inkwell::values::FunctionValue;
-use inkwell::AddressSpace;
+use inkwell::{memory_buffer, AddressSpace};
 use std::collections::HashMap;
+use std::path::Path;
 use std::vec;
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
@@ -173,6 +175,13 @@ impl<'ctx> CodeGen<'ctx> {
         }
     }
 
+    fn add_runtime_function(&mut self) {
+        let memory_buffer =
+            MemoryBuffer::create_from_file(Path::new("calocom_runtime.ll")).unwrap();
+        let runtime_module = self.context.create_module_from_ir(memory_buffer).unwrap();
+        self.module.link_in_module(runtime_module).unwrap()
+    }
+
     fn get_llvm_type_or_insert(&mut self, typ: &Type) -> StructType<'ctx> {
         if !self.ty_pool.contains_key(typ) {
             let llvm_type = self.convert_type_to_llvm_type(typ);
@@ -252,11 +261,23 @@ impl<'ctx> CodeGen<'ctx> {
 
     fn emit_stmt(&mut self, stmt: &ast::Stmt) {
         match stmt {
-            ast::Stmt::Let(_) => todo!(),
+            ast::Stmt::Let(l) => self.emit_let(l),
             ast::Stmt::Asgn(_) => todo!(),
             ast::Stmt::Expr(e) => self.emit_expr(e),
         }
     }
+
+    fn emit_let(&mut self, stmt: &ast::LetStmt) {
+        let LetStmt {
+            var_name,
+            typ,
+            expr,
+        } = stmt;
+
+        self.push_symbol(var_name);
+    }
+
+    fn emit_asgn(&mut self, stmt: &ast::AsgnStmt) {}
 
     fn emit_expr(&mut self, expr: &ast::Expr) {
         todo!()
@@ -282,7 +303,7 @@ impl<'ctx> CodeGen<'ctx> {
 
 #[cfg(test)]
 mod tests {
-    use inkwell::context::Context;
+    use inkwell::{context::Context, execution_engine};
 
     use super::*;
     use crate::frontend;
