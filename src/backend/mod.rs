@@ -1,11 +1,14 @@
-use crate::ast::{self, LetStmt, NameTypeBind};
+use crate::ast::{
+    self, ArithExpr, BracketBody, CallExpr, Expr, LetStmt, Literal, MatchExpr, NameTypeBind,
+};
 use inkwell::builder::Builder;
 use inkwell::context::Context;
 use inkwell::memory_buffer::MemoryBuffer;
 use inkwell::module::Module;
-use inkwell::types::{BasicMetadataTypeEnum, BasicTypeEnum, PointerType, StructType};
-use inkwell::values::FunctionValue;
-use inkwell::{memory_buffer, AddressSpace};
+use inkwell::types::{BasicMetadataTypeEnum, BasicTypeEnum, IntType, PointerType, StructType};
+use inkwell::values::PointerValue;
+use inkwell::values::{BasicValue, FunctionValue, GlobalValue};
+use inkwell::AddressSpace;
 use std::collections::HashMap;
 use std::path::Path;
 use std::vec;
@@ -22,7 +25,7 @@ struct CodeGen<'ctx> {
     context: &'ctx Context,
     module: Module<'ctx>,
     builder: Builder<'ctx>,
-    sym_scope: Vec<HashMap<String, ()>>,
+    sym_scope: Vec<HashMap<String, PointerValue<'ctx>>>,
     fn_env: HashMap<String, FunctionValue<'ctx>>,
     ty_env: HashMap<String, Type>,
     ty_pool: HashMap<Type, StructType<'ctx>>,
@@ -51,9 +54,9 @@ impl<'ctx> CodeGen<'ctx> {
         self.sym_scope.pop();
     }
 
-    fn push_symbol(&mut self, sym_name: &String) {
+    fn push_symbol(&mut self, sym_name: &String, sym_value: PointerValue<'ctx>) {
         let set = self.sym_scope.last_mut().unwrap();
-        set.insert(sym_name.clone(), ());
+        set.insert(sym_name.clone(), sym_value);
     }
 
     fn push_fn(&mut self, fn_name: String, fn_val: FunctionValue<'ctx>) {
@@ -233,7 +236,6 @@ impl<'ctx> CodeGen<'ctx> {
         let fn_ty = ret_type.fn_type(param_list_type, false);
         let fn_val = self.module.add_function(name, fn_ty, None);
         self.push_fn(name.clone(), fn_val);
-        self.push_symbol(&name.clone());
         self.emit_body(fn_val, body);
         self.exit_symbol_scope();
     }
@@ -247,23 +249,17 @@ impl<'ctx> CodeGen<'ctx> {
         self.emit_body_initial(function);
         body.stmts.iter().for_each(|stmt| self.emit_stmt(stmt));
         if let Some(expr) = &body.ret_expr {
-            self.emit_expr(expr)
+            self.emit_expr(expr.as_ref());
         }
-    }
-
-    fn create_stack_alloca(&mut self, name: &str, typ: &Type) {
-        todo!()
-    }
-
-    fn allocate_default_object(&mut self) {
-        todo!()
     }
 
     fn emit_stmt(&mut self, stmt: &ast::Stmt) {
         match stmt {
             ast::Stmt::Let(l) => self.emit_let(l),
             ast::Stmt::Asgn(_) => todo!(),
-            ast::Stmt::Expr(e) => self.emit_expr(e),
+            ast::Stmt::Expr(e) => {
+                self.emit_expr(e);
+            }
         }
     }
 
@@ -274,12 +270,150 @@ impl<'ctx> CodeGen<'ctx> {
             expr,
         } = stmt;
 
-        self.push_symbol(var_name);
+        let result = self.emit_expr(expr);
+        self.push_symbol(var_name, result);
     }
 
     fn emit_asgn(&mut self, stmt: &ast::AsgnStmt) {}
 
-    fn emit_expr(&mut self, expr: &ast::Expr) {
+    fn get_unit_value() -> PointerValue<'ctx> {
+        todo!()
+    }
+
+    fn emit_block_stmt(&mut self, body: &BracketBody) -> PointerValue<'ctx> {
+        for stmt in &body.stmts {
+            self.emit_stmt(stmt);
+        }
+        if let Some(ret_expr) = &body.ret_expr {
+            self.emit_expr(ret_expr);
+        }
+        todo!()
+    }
+
+    fn emit_call_expr(&mut self, call: &CallExpr) -> PointerValue<'ctx> {
+        todo!()
+    }
+
+    fn emit_arith_expr(&mut self, arith: &ArithExpr) -> PointerValue<'ctx> {
+        todo!()
+    }
+
+    fn emit_match_expr(&mut self, expr: &MatchExpr) -> PointerValue<'ctx> {
+        todo!()
+    }
+
+    fn emit_variable(&mut self, var: &String) -> PointerValue<'ctx> {
+        todo!()
+    }
+
+    fn emit_runtime_alloc_object(&mut self, size: usize) -> PointerValue<'ctx> {
+        self.builder
+            .build_call(
+                self.module
+                    .get_function("__calocom_runtime_alloc_object")
+                    .unwrap(),
+                &[self
+                    .context
+                    .i64_type()
+                    .const_int(size.try_into().unwrap(), false)
+                    .into()],
+                "",
+            )
+            .try_as_basic_value()
+            .left()
+            .unwrap()
+            .into_pointer_value()
+    }
+
+    fn emit_constant_string_literal(&mut self, data: &String) -> PointerValue<'ctx> {
+        let mut v = vec![];
+        for i in data.bytes() {
+            v.push(self.context.i8_type().const_int(i as u64, false));
+        }
+        let init = self.context.i8_type().const_array(&v[..]);
+        let gv = self
+            .module
+            .add_global(init.get_type(), Some(AddressSpace::Generic), "");
+        gv.set_constant(true);
+        gv.set_initializer(&init.as_basic_value_enum());
+        gv.as_pointer_value()
+    }
+
+    fn emit_runtime_alloc_string_literal(&mut self, data: &String) -> PointerValue<'ctx> {
+        let size = data.as_bytes().len();
+        let gvp = self.emit_constant_string_literal(data);
+        self.builder
+            .build_call(
+                self.module
+                    .get_function("__calocom_runtime_alloc_string_literal")
+                    .unwrap(),
+                &[
+                    self.context
+                        .i64_type()
+                        .const_int(size.try_into().unwrap(), false)
+                        .into(),
+                    gvp.into(),
+                ],
+                "",
+            )
+            .try_as_basic_value()
+            .left()
+            .unwrap()
+            .into_pointer_value()
+    }
+
+    fn emit_literal(&mut self, lit: &Literal) -> PointerValue<'ctx> {
+        match lit {
+            Literal::Int(i) => {
+                let local = self
+                    .builder
+                    .build_alloca(self.context.i32_type().ptr_type(AddressSpace::Generic), "");
+
+                let alloc = self.emit_runtime_alloc_object(std::mem::size_of::<i32>());
+                self.builder.build_store(local, alloc);
+
+                let loaded = self.builder.build_load(local, "");
+                self.builder.build_store(
+                    loaded.into_pointer_value(),
+                    self.context.i32_type().const_int(*i as u64, false),
+                );
+
+                return self.builder.build_load(local, "").into_pointer_value();
+            }
+
+            Literal::Str(s) => {
+                todo!()
+            }
+
+            Literal::Bool(b) => {
+                let local = self
+                    .builder
+                    .build_alloca(self.context.bool_type().ptr_type(AddressSpace::Generic), "");
+
+                let alloc = self.emit_runtime_alloc_object(std::mem::size_of::<bool>());
+                self.builder.build_store(local, alloc);
+
+                let loaded = self.builder.build_load(local, "");
+                self.builder.build_store(
+                    loaded.into_pointer_value(),
+                    self.context.bool_type().const_int(*b as u64, true),
+                );
+
+                return self.builder.build_load(local, "").into_pointer_value();
+            }
+        };
+        todo!()
+    }
+
+    fn emit_expr(&mut self, expr: &ast::Expr) -> PointerValue<'ctx> {
+        match expr {
+            Expr::BraExpr(body) => self.emit_block_stmt(body),
+            Expr::CallExpr(call) => self.emit_call_expr(call),
+            Expr::ArithExpr(arith) => self.emit_arith_expr(arith),
+            Expr::MatchExpr(expr) => self.emit_match_expr(expr),
+            Expr::Var(var) => self.emit_variable(var),
+            Expr::Lit(lit) => self.emit_literal(lit),
+        };
         todo!()
     }
 
@@ -315,7 +449,7 @@ mod tests {
         let name = "test";
         let mut codegen = CodeGen::new(name, &context);
 
-        let s = fs::read_to_string("./example/stage1/at.mag").expect("read file fail");
+        let s = fs::read_to_string("./example/stage1/nat.mag").expect("read file fail");
         let ast = frontend::parse(&s);
         codegen.emit_code(&ast);
     }
