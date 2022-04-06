@@ -5,7 +5,7 @@ use inkwell::builder::Builder;
 use inkwell::context::Context;
 use inkwell::memory_buffer::MemoryBuffer;
 use inkwell::module::Module;
-use inkwell::types::{BasicMetadataTypeEnum, BasicTypeEnum, IntType, PointerType, StructType};
+use inkwell::types::{BasicMetadataTypeEnum, BasicTypeEnum, PointerType, StructType};
 use inkwell::values::PointerValue;
 use inkwell::values::{BasicValue, FunctionValue, GlobalValue};
 use inkwell::AddressSpace;
@@ -144,35 +144,18 @@ impl<'ctx> CodeGen<'ctx> {
 
                 let fields: Vec<BasicTypeEnum> = elem
                     .iter()
-                    .map(|t| BasicTypeEnum::StructType(self.get_llvm_type(t)))
+                    .map(|t| self.get_llvm_type(t).ptr_type(AddressSpace::Generic).into())
                     .collect();
 
                 self.context.struct_type(&fields[..], false)
             }
             Type::Enum(opt) => {
-                // assure all llvm_types correspond to the code gen types has been generated
-                // so that we don't need to borrow it mutably in later code
-                opt.iter().for_each(|x| {
-                    if let Some(t) = x {
-                        self.get_llvm_type_or_insert(t);
-                    }
-                });
+                let fields: &[BasicTypeEnum] = &[
+                    self.context.i32_type().into(),
+                    self.context.i8_type().ptr_type(AddressSpace::Generic).into(),
+                ];
 
-                // get the max size member of an enumeration
-                let max_size_member = opt.iter().max_by(|&x, &y| {
-                    self.get_enum_member_size(x)
-                        .cmp(&self.get_enum_member_size(y))
-                });
-
-                // tag field, it's a 32-bit width integer
-                let mut fields = vec![BasicTypeEnum::IntType(self.context.i32_type())];
-
-                // max size element as the only field (llvm has no union type)
-                if let Some(Some(member)) = max_size_member {
-                    fields.push(BasicTypeEnum::StructType(self.get_llvm_type(member)));
-                }
-
-                self.context.struct_type(&fields[..], false)
+                self.context.struct_type(fields, false)
             }
             Type::Unit => self.context.struct_type(&[], false),
         }
@@ -215,7 +198,7 @@ impl<'ctx> CodeGen<'ctx> {
                     if *with_at {
                         llvm_type = llvm_type.ptr_type(AddressSpace::Generic);
                     }
-                    BasicMetadataTypeEnum::PointerType(llvm_type)
+                    llvm_type.into()
                 },
             )
             .collect()
@@ -413,8 +396,7 @@ impl<'ctx> CodeGen<'ctx> {
             Expr::MatchExpr(expr) => self.emit_match_expr(expr),
             Expr::Var(var) => self.emit_variable(var),
             Expr::Lit(lit) => self.emit_literal(lit),
-        };
-        todo!()
+        }
     }
 
     fn emit_code(&mut self, module: &ast::Module) {
@@ -449,7 +431,7 @@ mod tests {
         let name = "test";
         let mut codegen = CodeGen::new(name, &context);
 
-        let s = fs::read_to_string("./example/stage1/nat.mag").expect("read file fail");
+        let s = fs::read_to_string("./example/stage1/hello_world.mag").expect("read file fail");
         let ast = frontend::parse(&s);
         codegen.emit_code(&ast);
     }
