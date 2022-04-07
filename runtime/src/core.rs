@@ -27,7 +27,7 @@ pub struct _Object {
 pub struct _String {
     pub header: _Object,
     pub len: u32,
-    pub data: c_char,
+    pub data: [c_char; 0],
 }
 
 #[repr(C)]
@@ -69,7 +69,7 @@ pub extern "C" fn __calocom_runtime_alloc_string(length: size_t) -> *mut _String
             __calocom_panic(fmt.as_ptr());
         };
         // length size + string length + trailing zero size
-        let mem = __calocom_runtime_alloc_object(length + ::core::mem::size_of::<_String>())
+        let mem = __calocom_runtime_alloc_object(length + 1 + ::core::mem::size_of::<_String>())
             as *mut _String;
         (*mem).header.tag = _ObjectType::Str;
         (*mem).len = length as u32;
@@ -78,11 +78,16 @@ pub extern "C" fn __calocom_runtime_alloc_string(length: size_t) -> *mut _String
 }
 
 #[no_mangle]
-pub extern "C" fn __calocom_runtime_alloc_string_literal(length: size_t, s: *const c_char) {
+pub extern "C" fn __calocom_runtime_alloc_string_literal(length: size_t, s: *const c_char) -> *mut _String {
     let buf = __calocom_runtime_alloc_string(length);
     unsafe {
-        memcpy((*buf).data as *mut c_void, s as *const c_void, length);
+        memcpy(
+            (&mut (*buf).data).as_mut_ptr() as *mut c_void,
+            s as *const c_void,
+            length,
+        );
     }
+    buf
 }
 
 /// # Safety
