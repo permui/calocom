@@ -8,7 +8,7 @@ use libc::puts;
 use libc::size_t;
 use libc::uintptr_t;
 
-#[repr(C)]
+#[repr(u8)]
 pub enum _ObjectType {
     Unit = 0,
     Str = 1,
@@ -17,43 +17,71 @@ pub enum _ObjectType {
     Other = 4,
 }
 
-#[repr(C)]
+#[repr(C, packed(4))]
 pub struct _Object {
-    pub tag: _ObjectType,
     pub ptr: uintptr_t,
+    pub tag: _ObjectType,
+    pub reserved1: u8,
+    pub reserved2: u16,
 }
 
-#[repr(C)]
+#[repr(C, packed(4))]
 pub struct _String {
     pub header: _Object,
     pub len: u32,
     pub data: [c_char; 0],
 }
 
-#[repr(C)]
-pub struct _I32 {
+#[repr(C, packed(4))]
+pub struct _Int32 {
     pub header: _Object,
     pub data: i32,
 }
+
+#[repr(C, packed(4))]
+pub struct _Tuple {
+    pub header: _Object,
+    pub data: [*mut c_void; 0],
+}
+
 /// # Safety
 ///
 /// This function should not be called directly by other crates
 #[no_mangle]
-pub unsafe extern "C" fn __calocom_panic(msg: *const c_char) -> ! {
+pub unsafe extern "C" fn __calocom_runtime_dummy(
+    _o: *mut _Object,
+    _s: *mut _String,
+    _i: *mut _Int32,
+    _t: *mut _Tuple,
+) -> ! {
+    let fmt = const_cstr!("this function should not be used");
+    __calocom_runtime_panic(fmt.as_ptr())
+}
+
+/// # Safety
+///
+/// This function should not be called directly by other crates
+#[no_mangle]
+pub unsafe extern "C" fn __calocom_runtime_panic(msg: *const c_char) -> ! {
     let fmt = const_cstr!("calocom runtime panic: %s\n");
     printf(fmt.as_ptr(), msg);
     exit(1)
 }
 
 #[no_mangle]
-pub extern "C" fn __calocom_runtime_alloc_object(size: size_t) -> *mut c_void {
+pub extern "C" fn __calocom_runtime_alloc(size: size_t) -> *mut c_void {
     unsafe { calloc(1, size) }
 }
 
 #[no_mangle]
+pub extern "C" fn __calocom_runtime_alloc_object() -> *mut _Object {
+    __calocom_runtime_alloc(::core::mem::size_of::<_Object>()) as *mut _Object
+}
+
+#[no_mangle]
 pub extern "C" fn __calocom_runtime_alloc_unit() -> *mut _Object {
-    let obj = __calocom_runtime_alloc_object(::core::mem::size_of::<_Object>()) as *mut _Object;
-    // TODO: regard keep a global singleton
+    let obj = __calocom_runtime_alloc_object();
+    // TODO: regard keeping a global singleton
     unsafe {
         (*obj).tag = _ObjectType::Unit;
         (*obj).ptr = 0;
@@ -66,11 +94,11 @@ pub extern "C" fn __calocom_runtime_alloc_string(length: size_t) -> *mut _String
     unsafe {
         if length > u32::MAX as size_t {
             let fmt = const_cstr!("string length exceeded");
-            __calocom_panic(fmt.as_ptr());
+            __calocom_runtime_panic(fmt.as_ptr());
         };
         // length size + string length + trailing zero size
-        let mem = __calocom_runtime_alloc_object(length + 1 + ::core::mem::size_of::<_String>())
-            as *mut _String;
+        let mem =
+            __calocom_runtime_alloc(length + 1 + ::core::mem::size_of::<_String>()) as *mut _String;
         (*mem).header.tag = _ObjectType::Str;
         (*mem).len = length as u32;
         mem
@@ -78,7 +106,10 @@ pub extern "C" fn __calocom_runtime_alloc_string(length: size_t) -> *mut _String
 }
 
 #[no_mangle]
-pub extern "C" fn __calocom_runtime_alloc_string_literal(length: size_t, s: *const c_char) -> *mut _String {
+pub extern "C" fn __calocom_runtime_alloc_string_literal(
+    length: size_t,
+    s: *const c_char,
+) -> *mut _String {
     let buf = __calocom_runtime_alloc_string(length);
     unsafe {
         memcpy(
@@ -105,12 +136,12 @@ pub unsafe fn __calocom_runtime_print_object(p: *const _Object) {
             printf(fmt.as_ptr(), (*s).len, &(*s).data as *const c_char);
         }
         _ObjectType::I32 => {
-            let i = p as *const _I32;
+            let i = p as *const _Int32;
             let fmt = const_cstr!("%d");
             printf(fmt.as_ptr(), (*i).data);
         }
         _ObjectType::Bool => {
-            let i = p as *const _I32;
+            let i = p as *const _Int32;
             let true_s = const_cstr!("true");
             let false_s = const_cstr!("false");
             puts(if (*i).data == 0 {
@@ -121,7 +152,7 @@ pub unsafe fn __calocom_runtime_print_object(p: *const _Object) {
         }
         _ => {
             let msg = const_cstr!("not supported type");
-            __calocom_panic(msg.as_ptr());
+            __calocom_runtime_panic(msg.as_ptr());
         }
     }
 }

@@ -15,6 +15,6 @@ extern "C" fn eh_personality() {}
 fn panic(_panic: &::core::panic::PanicInfo<'_>) -> ! {
     unsafe {
         let fmt = const_cstr!("");
-        core::__calocom_panic(fmt.as_ptr())
+        core::__calocom_runtime_panic(fmt.as_ptr())
     }
 }
