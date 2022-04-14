@@ -7,7 +7,14 @@ use std::{
 };
 use Either::{Left, Right};
 
-use crate::ast::NameTypeBind;
+use crate::{
+    ast::NameTypeBind,
+    sym::{self, SymbolTable},
+};
+
+use self::unique_name::UniqueName;
+
+mod unique_name;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Tuple {
@@ -104,14 +111,15 @@ pub struct VarDef {
 
 #[derive(Debug)]
 pub struct Block {
-    stmts: Vec<Stmt>,
-    terminator: Terminator,
+    pub stmts: Vec<Stmt>,
+    pub terminator: Terminator,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct Stmt {
-    left: Rc<VarDef>,
-    right: Box<Value>,
+    pub left: Option<Rc<VarDef>>,
+    pub right: Option<Value>,
+    pub note: String,
 }
 
 #[derive(Debug)]
@@ -147,6 +155,16 @@ pub enum Literal {
     Bool(bool),
 }
 
+impl From<&crate::ast::Literal> for Literal {
+    fn from(lit: &crate::ast::Literal) -> Self {
+        match lit {
+            crate::ast::Literal::Int(i) => Literal::Int(i.clone()),
+            crate::ast::Literal::Str(s) => Literal::Str(s.clone()),
+            crate::ast::Literal::Bool(b) => Literal::Bool(b.clone()),
+        }
+    }
+}
+
 #[derive(Debug, Default)]
 struct MiddleIR {
     name_typeid_map: HashMap<String, usize>,
@@ -159,7 +177,10 @@ struct MiddleIR {
     imports: HashMap<String, RefPath>,
     constructors: HashSet<String>,
     module: Module,
+    position: Option<Rc<Block>>,
 }
+
+type SymTable<T> = Vec<HashMap<String, T>>;
 
 impl MiddleIR {
     fn insert_type_or_get(&mut self, typ: Type) -> (usize, Type) {
@@ -376,8 +397,102 @@ impl MiddleIR {
         }
     }
 
-    fn convert_bracket_body(&self, body: &crate::ast::BracketBody, def: &mut FuncDef) {
+    fn convert_asgn(
+        &mut self,
+        name: &str,
+        expr: &crate::ast::Expr,
+        table: &mut SymTable<Rc<VarDef>>,
+    ) {
+        self.convert_expr(expr, table, Some(name));
+    }
+
+    fn convert_construction(&mut self) -> Value {
+        todo!()
+    }
+
+    fn convert_expr(
+        &mut self,
+        expr: &crate::ast::Expr,
+        table: &mut SymTable<Rc<VarDef>>,
+        out: Option<&str>,
+    ) {
+        let cur_bb = self.position.as_ref().expect("must set the insert point");
+        let mut stmt = Stmt::default();
+
+        if let Some(name) = out {
+            let var = table.find_symbol(name).expect("variable not defined");
+            stmt.left = Some(Rc::clone(var));
+        }
         
+        stmt.right = Some(match expr {
+            crate::ast::Expr::MatchExpr(_) => todo!(),
+            crate::ast::Expr::BraExpr(_) => todo!(),
+            crate::ast::Expr::CallExpr(_) => todo!(),
+            crate::ast::Expr::ArithExpr(_) => todo!(),
+            crate::ast::Expr::Var(name) => {
+                if self.constructors.contains(name) {
+                    self.convert_construction()
+                } else {
+                    Value::VarRef(Rc::clone(
+                        table.find_symbol(name).expect("variable not defined"),
+                    ))
+                }
+            }
+            crate::ast::Expr::Lit(lit) => Value::Imm(lit.into()),
+        });
+    }
+
+    fn convert_let(
+        &mut self,
+        stmt: &crate::ast::LetStmt,
+        namer: &mut UniqueName,
+        table: &mut SymTable<Rc<VarDef>>,
+        def: &mut FuncDef,
+    ) {
+        let crate::ast::LetStmt {
+            var_name,
+            typ,
+            expr,
+        } = stmt;
+
+        let name = namer.next_name(var_name);
+        let (_, typ) = self.resolve_type(typ, false);
+        let new_var = Rc::new(VarDef { name, typ });
+
+        table.insert_symbol(var_name.clone(), Rc::clone(&new_var));
+        def.tmp_def.push(new_var);
+
+        self.convert_asgn(var_name, expr, table);
+    }
+
+    fn convert_stmt(
+        &mut self,
+        stmt: &crate::ast::Stmt,
+        namer: &mut UniqueName,
+        table: &mut SymTable<Rc<VarDef>>,
+        def: &mut FuncDef,
+    ) {
+        match stmt {
+            crate::ast::Stmt::Let(stmt) => self.convert_let(stmt, namer, table, def),
+            crate::ast::Stmt::Asgn(stmt) => self.convert_asgn(&stmt.var_name, &stmt.expr, table),
+            crate::ast::Stmt::Expr(stmt) => self.convert_expr(stmt, table, None),
+        }
+    }
+
+    fn convert_bracket_body(
+        &mut self,
+        body: &crate::ast::BracketBody,
+        namer: &mut UniqueName,
+        table: &mut SymTable<Rc<VarDef>>,
+        def: &mut FuncDef,
+        out: Option<&str>,
+    ) {
+        for stmt in &body.stmts {
+            self.convert_stmt(stmt, namer, table, def)
+        }
+        if let Some(ret_expr) = &body.ret_expr {
+            self.convert_expr(ret_expr, table, out);
+        }
     }
 
     fn convert_fn_definition(&mut self, func: &crate::ast::FuncDef) -> FuncDef {
@@ -386,10 +501,20 @@ impl MiddleIR {
             ..Default::default()
         };
 
+        // setup the return type and create the return value variable
         let (_, typ) = self.resolve_type(&func.ret_type, false);
         let name = "#ret.ptr".to_string();
-        def.ret_def = Some(Rc::new(VarDef { name, typ }));
+        let name_cpy = name.clone();
+        let ret = Rc::new(VarDef { name, typ });
+        def.ret_def = Some(ret.clone());
 
+        // setup the symbol table
+        // insert the return value variable
+        let mut sym_table: SymTable<Rc<VarDef>> = SymTable::new();
+        sym_table.entry();
+        sym_table.insert_symbol(name_cpy, Rc::clone(&ret));
+
+        // initialize all parameters
         for NameTypeBind {
             with_at,
             var_name,
@@ -402,13 +527,43 @@ impl MiddleIR {
                 self.resolve_type_with_at(typ)
             };
             let name = format!("#{}", var_name);
+            let name_cpy = name.clone();
+            let param = Rc::new(VarDef { name, typ });
 
-            def.param_def
-                .push((*with_at, Rc::new(VarDef { name, typ })));
+            // insert the parameter into symbol table
+            sym_table.insert_symbol(name_cpy, Rc::clone(&param));
+            def.param_def.push((*with_at, param));
         }
 
-        self.convert_bracket_body(&func.body, &mut def);
+        // return block
+        let ret_block = Rc::new(Block {
+            terminator: Terminator::Return,
+            stmts: vec![],
+        });
 
+        // add an empty entry block and set the insert point
+        let entry_block = Rc::new(Block {
+            terminator: Terminator::Jump(Rc::clone(&ret_block)),
+            stmts: vec![],
+        });
+        self.position = Some(Rc::clone(&entry_block));
+
+        def.blocks.push(entry_block);
+
+        // convert the function body
+        let mut namer = UniqueName::new();
+        self.convert_bracket_body(
+            &func.body,
+            &mut namer,
+            &mut sym_table,
+            &mut def,
+            Some("#ret.ptr"),
+        );
+
+        def.blocks.push(ret_block);
+
+        // exit the symbol table scope
+        sym_table.exit();
         def
     }
 
