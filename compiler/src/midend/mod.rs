@@ -1,80 +1,17 @@
-use either::Either;
 use std::{
     collections::{HashMap, HashSet},
     panic,
     rc::Rc,
     vec,
 };
-use Either::{Left, Right};
 
-use crate::{
-    ast::NameTypeBind,
-    sym::{self, SymbolTable},
-};
+use crate::{ast::NameTypeBind, sym::SymbolTable};
 
+use self::type_context::*;
 use self::unique_name::UniqueName;
 
+mod type_context;
 mod unique_name;
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct Tuple {
-    fields: Vec<Type>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct Enum {
-    constructors: Vec<(String, Option<Type>)>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub enum PrimitiveType {
-    Str,
-    Bool,
-    Int32,
-    Unit,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct Primitive {
-    typ: PrimitiveType,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct Opaque {
-    refer: Either<usize, String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub enum Type {
-    Tuple(Box<Tuple>),
-    Enum(Box<Enum>),
-    Primitive(Box<Primitive>),
-    Opaque(Opaque),
-}
-
-impl From<Tuple> for Type {
-    fn from(x: Tuple) -> Self {
-        Type::Tuple(Box::new(x))
-    }
-}
-
-impl From<Enum> for Type {
-    fn from(x: Enum) -> Self {
-        Type::Enum(Box::new(x))
-    }
-}
-
-impl From<Primitive> for Type {
-    fn from(x: Primitive) -> Self {
-        Type::Primitive(Box::new(x))
-    }
-}
-
-impl From<Opaque> for Type {
-    fn from(x: Opaque) -> Self {
-        Type::Opaque(x)
-    }
-}
 
 #[derive(Debug, Default)]
 pub struct Module {
@@ -139,6 +76,18 @@ pub enum BinOp {
     Mod,
 }
 
+impl From<&crate::ast::BinOp> for BinOp {
+    fn from(op: &crate::ast::BinOp) -> Self {
+        match op {
+            crate::ast::BinOp::Plus => BinOp::Plus,
+            crate::ast::BinOp::Sub => BinOp::Sub,
+            crate::ast::BinOp::Mult => BinOp::Mult,
+            crate::ast::BinOp::Div => BinOp::Div,
+            crate::ast::BinOp::Mod => BinOp::Mod,
+        }
+    }
+}
+
 #[derive(Debug)]
 pub enum Value {
     Call(RefPath, Box<Value>, Box<Value>),
@@ -158,52 +107,36 @@ pub enum Literal {
 impl From<&crate::ast::Literal> for Literal {
     fn from(lit: &crate::ast::Literal) -> Self {
         match lit {
-            crate::ast::Literal::Int(i) => Literal::Int(i.clone()),
+            crate::ast::Literal::Int(i) => Literal::Int(*i),
             crate::ast::Literal::Str(s) => Literal::Str(s.clone()),
-            crate::ast::Literal::Bool(b) => Literal::Bool(b.clone()),
+            crate::ast::Literal::Bool(b) => Literal::Bool(*b),
         }
     }
 }
 
+#[derive(Debug)]
+struct FunctionBuilder<'a> {
+    pub position: Option<Rc<Block>>,
+    pub namer: UniqueName,
+    pub table: SymTable<Rc<VarDef>>,
+    pub func: &'a mut FuncDef,
+}
+
 #[derive(Debug, Default)]
 struct MiddleIR {
-    name_typeid_map: HashMap<String, usize>,
-    type_typeid_map: HashMap<Type, usize>,
-    types: Vec<Type>,
-    unit: usize,
-    bool: usize,
-    str: usize,
-    i32: usize,
+    ty_ctx: TypeContext,
     imports: HashMap<String, RefPath>,
     constructors: HashSet<String>,
     module: Module,
-    position: Option<Rc<Block>>,
 }
 
 type SymTable<T> = Vec<HashMap<String, T>>;
 
 impl MiddleIR {
-    fn insert_type_or_get(&mut self, typ: Type) -> (usize, Type) {
-        if self.type_typeid_map.contains_key(&typ) {
-            return (*self.type_typeid_map.get(&typ).unwrap(), typ);
-        }
-
-        let self_index = self.types.len();
-        self.types.push(typ.clone());
-        self.type_typeid_map.insert(typ.clone(), self_index);
-
-        (self_index, typ)
-    }
-
     fn resolve_type_with_at(&mut self, ast_type: &crate::ast::Type) -> (usize, Type) {
         let (idx, _typ) = self.resolve_type(ast_type, false);
 
-        let opaque: Type = Opaque {
-            refer: Either::Left(idx),
-        }
-        .into();
-
-        self.insert_type_or_get(opaque)
+        self.ty_ctx.opaque_type(idx)
     }
 
     fn resolve_type(&mut self, ast_type: &crate::ast::Type, allow_opaque: bool) -> (usize, Type) {
@@ -212,30 +145,20 @@ impl MiddleIR {
 
             crate::ast::Type::Tuple(tuple) => {
                 let mut fields = vec![];
-                let mut indices = vec![];
                 for ty in tuple {
-                    let (index, field) = self.resolve_type(ty, allow_opaque);
-                    indices.push(index);
+                    let (_, field) = self.resolve_type(ty, allow_opaque);
                     fields.push(field);
                 }
 
-                let res: Type = Tuple { fields }.into();
-                let (self_index, res) = self.insert_type_or_get(res);
-
-                (self_index, res)
+                self.ty_ctx.tuple_type(fields)
             }
 
             crate::ast::Type::Enum(e) => {
-                let mut enu = Enum {
-                    constructors: Default::default(),
-                };
                 let mut ctors = vec![];
-                let mut indices = vec![];
 
                 for crate::ast::ConstructorType { name, inner } in e {
                     let ty = if inner.is_some() {
-                        let (index, ty) = self.resolve_type(inner.as_ref().unwrap(), allow_opaque);
-                        indices.push(index);
+                        let (_, ty) = self.resolve_type(inner.as_ref().unwrap(), allow_opaque);
                         Some(ty)
                     } else {
                         None
@@ -243,25 +166,16 @@ impl MiddleIR {
                     ctors.push((name.clone(), ty));
                 }
 
-                enu.constructors = ctors;
-
-                let res: Type = enu.into();
-                self.insert_type_or_get(res)
+                self.ty_ctx.enum_type(ctors)
             }
 
-            crate::ast::Type::Unit => (self.unit, self.types[self.unit].clone()),
+            crate::ast::Type::Unit => self.ty_ctx.singleton_type(PrimitiveType::Unit),
 
             crate::ast::Type::Named(s) => {
-                if self.name_typeid_map.contains_key(s) {
-                    let idx = *self.name_typeid_map.get(s).unwrap();
-                    (idx, self.types[idx].clone())
+                if let Some(handle) = self.ty_ctx.get_type_by_name(s) {
+                    handle
                 } else if allow_opaque {
-                    let opaque: Type = Opaque {
-                        refer: Either::Right(s.to_string()),
-                    }
-                    .into();
-
-                    self.insert_type_or_get(opaque)
+                    self.ty_ctx.opaque_name_type(s)
                 } else {
                     panic!("unresolved type: {}", s);
                 }
@@ -269,100 +183,11 @@ impl MiddleIR {
         }
     }
 
-    fn add_primitive(&mut self) {
-        let b: Type = Primitive {
-            typ: PrimitiveType::Bool,
-        }
-        .into();
-
-        let i: Type = Primitive {
-            typ: PrimitiveType::Int32,
-        }
-        .into();
-
-        let u: Type = Primitive {
-            typ: PrimitiveType::Unit,
-        }
-        .into();
-
-        let s: Type = Primitive {
-            typ: PrimitiveType::Str,
-        }
-        .into();
-
-        self.types.clear();
-
-        let (bi, ii, ui, si) = (0, 1, 2, 3);
-
-        self.types.push(b.clone());
-        self.types.push(i.clone());
-        self.types.push(u.clone());
-        self.types.push(s.clone());
-
-        self.type_typeid_map.insert(b, bi);
-        self.type_typeid_map.insert(i, ii);
-        self.type_typeid_map.insert(u, ui);
-        self.type_typeid_map.insert(s, si);
-
-        self.name_typeid_map.insert("bool".to_string(), bi);
-        self.name_typeid_map.insert("i32".to_string(), ii);
-        self.name_typeid_map.insert("str".to_string(), si);
-
-        self.bool = bi;
-        self.i32 = ii;
-        self.unit = ui;
-        self.str = si;
-    }
-
     fn resolve_all_type(&mut self, module: &crate::ast::Module) {
         for crate::ast::DataDef { name, con_list } in &module.data_defs {
-            if self.name_typeid_map.contains_key(name) {
-                panic!("data type redefinition: {}", name);
-            }
             let (idx, _typ) = self.resolve_type(con_list, true);
-            self.name_typeid_map.insert(name.to_string(), idx);
+            self.ty_ctx.associate_name_and_idx(name, idx)
         }
-    }
-
-    fn resolve_opaque_type(name_map: &HashMap<String, usize>, t: &mut Type) {
-        match t {
-            Type::Tuple(tuple) => {
-                let Tuple { fields } = tuple.as_mut();
-                for field in fields {
-                    MiddleIR::resolve_opaque_type(name_map, field);
-                }
-            }
-            Type::Enum(enu) => {
-                let Enum { constructors } = enu.as_mut();
-                for ctor in constructors {
-                    for field in &mut ctor.1 {
-                        MiddleIR::resolve_opaque_type(name_map, field);
-                    }
-                }
-            }
-            Type::Primitive(_) => {}
-            Type::Opaque(opaque) => {
-                let Opaque { refer } = opaque;
-                if let Right(name) = refer {
-                    if !name_map.contains_key(name) {
-                        panic!("unresolved type {}", name);
-                    }
-                    let idx = *name_map.get(name).unwrap();
-                    *refer = Left(idx);
-                }
-            }
-        }
-    }
-
-    fn resolve_all_opaque_type(&mut self) {
-        for t in self.types.iter_mut() {
-            MiddleIR::resolve_opaque_type(&self.name_typeid_map, t)
-        }
-        let mut new_node_map = HashMap::new();
-        for idx in self.type_typeid_map.values() {
-            new_node_map.insert(self.types[*idx].clone(), *idx);
-        }
-        self.type_typeid_map = new_node_map;
     }
 
     fn resolve_import(&mut self, module: &crate::ast::Module) {
@@ -382,28 +207,8 @@ impl MiddleIR {
         }
     }
 
-    fn collect_constructor(record: &mut HashSet<String>, ty: &Type) {
-        if let Type::Enum(enu) = ty {
-            let Enum { constructors } = enu.as_ref();
-            for ctor in constructors {
-                record.insert(ctor.0.clone());
-            }
-        }
-    }
-
-    fn collect_all_constructor(&mut self) {
-        for ty in self.types.iter() {
-            MiddleIR::collect_constructor(&mut self.constructors, ty)
-        }
-    }
-
-    fn convert_asgn(
-        &mut self,
-        name: &str,
-        expr: &crate::ast::Expr,
-        table: &mut SymTable<Rc<VarDef>>,
-    ) {
-        self.convert_expr(expr, table, Some(name));
+    fn convert_asgn(&mut self, name: &str, expr: &crate::ast::Expr, builder: &mut FunctionBuilder) {
+        self.convert_expr(expr, builder, Some(name));
     }
 
     fn convert_construction(&mut self) -> Value {
@@ -413,28 +218,35 @@ impl MiddleIR {
     fn convert_expr(
         &mut self,
         expr: &crate::ast::Expr,
-        table: &mut SymTable<Rc<VarDef>>,
+        builder: &mut FunctionBuilder,
         out: Option<&str>,
     ) {
-        let cur_bb = self.position.as_ref().expect("must set the insert point");
         let mut stmt = Stmt::default();
 
         if let Some(name) = out {
-            let var = table.find_symbol(name).expect("variable not defined");
+            let var = builder
+                .table
+                .find_symbol(name)
+                .expect("variable not defined");
             stmt.left = Some(Rc::clone(var));
         }
-        
+
         stmt.right = Some(match expr {
             crate::ast::Expr::MatchExpr(_) => todo!(),
             crate::ast::Expr::BraExpr(_) => todo!(),
             crate::ast::Expr::CallExpr(_) => todo!(),
-            crate::ast::Expr::ArithExpr(_) => todo!(),
+            crate::ast::Expr::ArithExpr(arith) => {
+                todo!()
+            }
             crate::ast::Expr::Var(name) => {
                 if self.constructors.contains(name) {
                     self.convert_construction()
                 } else {
                     Value::VarRef(Rc::clone(
-                        table.find_symbol(name).expect("variable not defined"),
+                        builder
+                            .table
+                            .find_symbol(name)
+                            .expect("variable not defined"),
                     ))
                 }
             }
@@ -442,56 +254,44 @@ impl MiddleIR {
         });
     }
 
-    fn convert_let(
-        &mut self,
-        stmt: &crate::ast::LetStmt,
-        namer: &mut UniqueName,
-        table: &mut SymTable<Rc<VarDef>>,
-        def: &mut FuncDef,
-    ) {
+    fn convert_let(&mut self, stmt: &crate::ast::LetStmt, builder: &mut FunctionBuilder) {
         let crate::ast::LetStmt {
             var_name,
             typ,
             expr,
         } = stmt;
 
-        let name = namer.next_name(var_name);
+        let name = builder.namer.next_name(var_name);
         let (_, typ) = self.resolve_type(typ, false);
         let new_var = Rc::new(VarDef { name, typ });
 
-        table.insert_symbol(var_name.clone(), Rc::clone(&new_var));
-        def.tmp_def.push(new_var);
+        builder
+            .table
+            .insert_symbol(var_name.clone(), Rc::clone(&new_var));
+        builder.func.tmp_def.push(new_var);
 
-        self.convert_asgn(var_name, expr, table);
+        self.convert_asgn(var_name, expr, builder);
     }
 
-    fn convert_stmt(
-        &mut self,
-        stmt: &crate::ast::Stmt,
-        namer: &mut UniqueName,
-        table: &mut SymTable<Rc<VarDef>>,
-        def: &mut FuncDef,
-    ) {
+    fn convert_stmt(&mut self, stmt: &crate::ast::Stmt, builder: &mut FunctionBuilder) {
         match stmt {
-            crate::ast::Stmt::Let(stmt) => self.convert_let(stmt, namer, table, def),
-            crate::ast::Stmt::Asgn(stmt) => self.convert_asgn(&stmt.var_name, &stmt.expr, table),
-            crate::ast::Stmt::Expr(stmt) => self.convert_expr(stmt, table, None),
+            crate::ast::Stmt::Let(stmt) => self.convert_let(stmt, builder),
+            crate::ast::Stmt::Asgn(stmt) => self.convert_asgn(&stmt.var_name, &stmt.expr, builder),
+            crate::ast::Stmt::Expr(stmt) => self.convert_expr(stmt, builder, None),
         }
     }
 
     fn convert_bracket_body(
         &mut self,
         body: &crate::ast::BracketBody,
-        namer: &mut UniqueName,
-        table: &mut SymTable<Rc<VarDef>>,
-        def: &mut FuncDef,
+        builder: &mut FunctionBuilder,
         out: Option<&str>,
     ) {
         for stmt in &body.stmts {
-            self.convert_stmt(stmt, namer, table, def)
+            self.convert_stmt(stmt, builder)
         }
         if let Some(ret_expr) = &body.ret_expr {
-            self.convert_expr(ret_expr, table, out);
+            self.convert_expr(ret_expr, builder, out);
         }
     }
 
@@ -546,21 +346,21 @@ impl MiddleIR {
             terminator: Terminator::Jump(Rc::clone(&ret_block)),
             stmts: vec![],
         });
-        self.position = Some(Rc::clone(&entry_block));
+
+        let position = Rc::clone(&entry_block);
 
         def.blocks.push(entry_block);
+        def.blocks.push(ret_block);
+
+        let mut fn_builder = FunctionBuilder {
+            func: &mut def,
+            position: Some(position),
+            namer: UniqueName::new(),
+            table: SymTable::<Rc<VarDef>>::new(),
+        };
 
         // convert the function body
-        let mut namer = UniqueName::new();
-        self.convert_bracket_body(
-            &func.body,
-            &mut namer,
-            &mut sym_table,
-            &mut def,
-            Some("#ret.ptr"),
-        );
-
-        def.blocks.push(ret_block);
+        self.convert_bracket_body(&func.body, &mut fn_builder, Some("#ret.ptr"));
 
         // exit the symbol table scope
         sym_table.exit();
@@ -574,15 +374,19 @@ impl MiddleIR {
         }
     }
 
+
+    fn check_type(&self) {}
+    fn check_type_of_function(&self) {}
+
     pub fn create_from_ast(module: &crate::ast::Module) -> Self {
         let mut mir = MiddleIR::default();
 
-        mir.add_primitive();
         mir.resolve_all_type(module);
-        mir.resolve_all_opaque_type();
+        mir.ty_ctx.refine_all_opaque_type();
         mir.resolve_import(module);
-        mir.collect_all_constructor();
-        mir.convert_ast(module);
+        mir.ty_ctx.collect_all_constructor(&mut mir.constructors);
+        mir.check_type();
+        //mir.convert_ast(module);
 
         mir
     }
