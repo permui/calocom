@@ -1,7 +1,4 @@
-use std::{
-    collections::{HashMap, HashSet},
-    panic,
-};
+use std::{collections::HashMap, panic};
 
 use either::Either;
 use Either::{Left, Right};
@@ -33,7 +30,7 @@ pub struct Primitive {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Opaque {
-    refer: Either<usize, String>,
+    pub refer: Either<usize, String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -104,7 +101,7 @@ impl Default for TypeContext {
 }
 
 impl TypeContext {
-    fn get_type_by_idx(&self, idx: usize) -> TypeHandle {
+    pub fn get_type_by_idx(&self, idx: usize) -> TypeHandle {
         (idx, self.types[idx].clone())
     }
 

@@ -1,0 +1,26 @@
+data A = U | V ;
+
+data T1 = C1(T2) ;
+data T2 = C2(T1) ;
+
+data Nat = O | S(Nat);
+
+f: (n: i32) -> i32 {
+	let x: i32 = 2 + 3 + 4 + 5;
+    x
+}
+
+swap: (@x: A, @y: A) -> () {
+	let tmp : A = x;
+	x = y;
+	y = tmp;
+}
+
+main: () -> () {
+	let x : A = U;
+	let y : A = V;
+	let w : i32 = 10;
+	let z : i32 = f(w);
+	let n : i32 = S(S(O));
+	swap(@x, @y);
+}

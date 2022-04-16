@@ -1,10 +1,7 @@
-use std::{
-    collections::{HashMap, HashSet},
-    panic, vec,
-};
+use std::{collections::HashMap, panic, vec};
 
-use super::{middle_ir::FuncDef, type_context::*};
-use crate::{ast::ArithExpr, sym::SymbolTable};
+use super::type_context::*;
+use crate::sym::SymbolTable;
 
 #[derive(Debug)]
 pub struct TypedFuncDef {
@@ -128,6 +125,14 @@ pub struct TypedASTRefPath {
     pub items: Vec<String>,
 }
 
+impl From<&crate::ast::RefPath> for TypedASTRefPath {
+    fn from(path: &crate::ast::RefPath) -> TypedASTRefPath {
+        TypedASTRefPath {
+            items: path.items.clone(),
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct TypedASTConstructorVar {
     pub name: String,
@@ -135,7 +140,7 @@ pub struct TypedASTConstructorVar {
 }
 
 #[derive(Debug, Default)]
-pub struct TypedAst {
+pub struct TypedAST {
     ty_ctx: TypeContext,
     imports: HashMap<String, TypedASTRefPath>,
     constructors: HashMap<String, usize>,
@@ -164,7 +169,7 @@ impl From<&crate::ast::Literal> for TypedASTLiteral {
     }
 }
 
-impl TypedAst {
+impl TypedAST {
     fn resolve_type_with_at(&mut self, ast_type: &crate::ast::Type) -> (usize, Type) {
         let (idx, _typ) = self.resolve_type(ast_type, false);
 
@@ -284,28 +289,47 @@ impl TypedAst {
             panic!("initializer of variable {} has incorrect type", var_name);
         }
 
+        self.ty_ctx.env.insert_symbol(var_name.clone(), t);
+
         TypedLetStmt {
-            var_name: var_name.clone(),
+            var_name: var_name.to_string(),
             var_typ: t,
             expr: typed_expr,
         }
     }
 
     fn check_type_of_argument(&mut self, arg: &crate::ast::Argument) -> TypedArgument {
+        match arg {
+            crate::ast::Argument::Expr(e) => TypedArgument::Expr(self.check_type_of_expr(e)),
+            crate::ast::Argument::AtVar(name) => {
+                let typ = *self
+                    .ty_ctx
+                    .env
+                    .find_symbol(name)
+                    .unwrap_or_else(|| panic!("variable undefined: {}", name));
+
+                TypedArgument::AtVar(name.to_string(), typ)
+            }
+        }
+    }
+
+    fn check_type_of_external_call(&mut self, call: &crate::ast::CallExpr) -> TypedExpr {
         todo!()
     }
 
     fn check_type_of_call(&mut self, call: &crate::ast::CallExpr) -> TypedExpr {
         let crate::ast::CallExpr { path, gen, args } = call;
 
-        // it's a constructor with arguments
-        if path.items.len() == 1 && self.constructors.contains_key(&path.items[0]) {
-            let typ = *self.constructors.get(&path.items[0]).unwrap();
+        let first_item = &path.items[0];
 
-            let args = args
-                .iter()
-                .map(|arg| self.check_type_of_argument(arg))
-                .collect();
+        let args = args
+            .iter()
+            .map(|arg| self.check_type_of_argument(arg))
+            .collect();
+
+        // it's a constructor with arguments
+        if path.items.len() == 1 && self.constructors.contains_key(first_item) {
+            let typ = *self.constructors.get(first_item).unwrap();
 
             let ctor_expr = TypedCtorExpr {
                 typ,
@@ -319,8 +343,49 @@ impl TypedAst {
             };
         }
 
+        if self.imports.contains_key(first_item) {
+            return self.check_type_of_external_call(call);
+        }
 
-        todo!()
+        let new_generic = gen.as_ref().map(|ty| self.resolve_type(ty, false).1);
+
+        if let Some(ty) = self.ty_ctx.find_function_type(first_item) {
+            if ty.1.len() != args.len() {
+                panic!(
+                    "wrong number of arguments: expect {} but given {}",
+                    ty.1.len(),
+                    args.len()
+                );
+            }
+
+            for (idx, (typ, typed_arg)) in ty.1.iter().zip(args.iter()).enumerate() {
+                match typed_arg {
+                    TypedArgument::Expr(e) => {
+                        if !self.is_compatible(*typ, e.typ) {
+                            panic!("argument {} type incorrect", idx);
+                        }
+                    }
+                    TypedArgument::AtVar(_, atvar_typ) => {
+                        if !self.is_compatible(*typ, *atvar_typ) {
+                            panic!("argument {} type incorrect", idx);
+                        }
+                    }
+                }
+            }
+
+            let typed_call = TypedCallExpr {
+                path: path.into(),
+                gen: new_generic,
+                args,
+            };
+
+            TypedExpr {
+                typ: ty.0,
+                expr: Box::new(ExprEnum::CallExpr(typed_call)),
+            }
+        } else {
+            panic!("not callable: {}", first_item);
+        }
     }
 
     fn check_type_of_var(&mut self, var: &str) -> TypedExpr {
@@ -456,7 +521,7 @@ impl TypedAst {
             with_at,
             var_name: _,
             typ, }
-        | if *with_at {
+        | if !*with_at {
             self.resolve_type(typ, false)
         } else {
             self.resolve_type_with_at(typ)
@@ -510,12 +575,27 @@ impl TypedAst {
         });
     }
 
+    fn is_t1_opaque_of_t2(&self, t1: &Type, t2: usize) -> bool {
+        match t1 {
+            Type::Opaque(opaque) => *opaque.refer.as_ref().left().unwrap() == t2,
+            _ => false,
+        }
+    }
+
     fn is_compatible(&self, t1: usize, t2: usize) -> bool {
-        t1 == t2
+        if t1 != t2 {
+            let ty1 = self.ty_ctx.get_type_by_idx(t1).1;
+            self.is_t1_opaque_of_t2(&ty1, t2) || {
+                let ty2 = self.ty_ctx.get_type_by_idx(t2).1;
+                self.is_t1_opaque_of_t2(&ty2, t1)
+            }
+        } else {
+            true
+        }
     }
 
     pub fn create_from_ast(module: &crate::ast::Module) -> Self {
-        let mut typed_ast = TypedAst::default();
+        let mut typed_ast = TypedAST::default();
 
         typed_ast.resolve_import(module);
         typed_ast.resolve_all_type(module);
@@ -526,5 +606,11 @@ impl TypedAst {
         typed_ast.check_type(module);
 
         typed_ast
+    }
+}
+
+impl From<crate::ast::Module> for TypedAST {
+    fn from(module: crate::ast::Module) -> Self {
+        TypedAST::create_from_ast(&module)
     }
 }
