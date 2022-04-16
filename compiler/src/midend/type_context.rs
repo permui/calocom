@@ -3,6 +3,8 @@ use std::{collections::{HashMap, HashSet}, panic};
 use either::Either;
 use Either::{Left, Right};
 
+use super::middle_ir::SymTable;
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Tuple {
     fields: Vec<Type>,
@@ -80,6 +82,7 @@ pub struct TypeContext {
     types: Vec<Type>,
     stypes: SingletonType,
     ftypes: HashMap<String, (usize, Vec<usize>)>,
+    pub env: SymTable<usize>,
 }
 
 impl Default for TypeContext {
@@ -90,6 +93,7 @@ impl Default for TypeContext {
             types: Default::default(),
             stypes: Default::default(),
             ftypes: Default::default(),
+            env: Default::default(),
         };
         tcx.add_primitive();
         tcx
