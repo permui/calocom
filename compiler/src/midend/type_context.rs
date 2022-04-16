@@ -1,4 +1,7 @@
-use std::{collections::{HashMap, HashSet}, panic};
+use std::{
+    collections::{HashMap, HashSet},
+    panic,
+};
 
 use either::Either;
 use Either::{Left, Right};
@@ -103,6 +106,10 @@ impl Default for TypeContext {
 impl TypeContext {
     fn get_type_by_idx(&self, idx: usize) -> TypeHandle {
         (idx, self.types[idx].clone())
+    }
+
+    pub fn find_function_type(&self, name: &str) -> Option<&(usize, Vec<usize>)> {
+        self.ftypes.get(name)
     }
 
     pub fn associate_function_type(&mut self, name: &str, typ: (usize, Vec<usize>)) {
@@ -264,18 +271,18 @@ impl TypeContext {
         }
     }
 
-    fn collect_constructor(record: &mut HashSet<String>, ty: &Type) {
+    fn collect_constructor(record: &mut HashMap<String, usize>, idx: usize, ty: &Type) {
         if let Type::Enum(enu) = ty {
             let Enum { constructors } = enu.as_ref();
             for ctor in constructors {
-                record.insert(ctor.0.clone());
+                record.insert(ctor.0.clone(), idx);
             }
         }
     }
 
-    pub fn collect_all_constructor(&self, constructors: &mut HashSet<String>) {
-        for ty in self.types.iter() {
-            TypeContext::collect_constructor(constructors, ty)
+    pub fn collect_all_constructor(&self, constructors: &mut HashMap<String, usize>) {
+        for (idx, ty) in self.types.iter().enumerate() {
+            TypeContext::collect_constructor(constructors, idx, ty);
         }
     }
 }

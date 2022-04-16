@@ -1,6 +1,7 @@
 mod middle_ir;
 mod type_context;
 mod unique_name;
+mod typed_ast;
 
 #[cfg(test)]
 mod tests {

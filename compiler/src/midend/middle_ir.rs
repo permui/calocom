@@ -371,74 +371,12 @@ impl MiddleIR {
         }
     }
 
-    fn check_type(&mut self, module: &crate::ast::Module) {
-        for func in &module.func_defs {
-            self.check_type_of_function(func)
-        }
-    }
-
-    fn check_type_of_let(&self, stmt: &crate::ast::LetStmt) {}
-
-    fn check_type_of_stmt(&self, stmt: &crate::ast::Stmt) {}
-
-    fn check_type_of_expr(&self, expr: &crate::ast::Expr) -> TypeHandle {
-        todo!()
-    }
-
-    fn check_type_of_bracket_body(&self, body: &crate::ast::BracketBody) -> TypeHandle {
-        for stmt in &body.stmts {
-            self.check_type_of_stmt(stmt)
-        }
-        if let Some(expr) = &body.ret_expr {
-            self.check_type_of_expr(expr)
-        } else {
-            self.ty_ctx.singleton_type(PrimitiveType::Unit)
-        }
-    }
-
-    fn check_type_of_function(&mut self, func: &crate::ast::FuncDef) {
-        let (t1, _) = self.resolve_type(&func.ret_type, false);
-        let (t2, _) = self.check_type_of_bracket_body(&func.body);
-        if t1 != t2 {
-            panic!("function return type inconsistency: {}", func.name);
-        }
-
-        self.ty_ctx.env.entry();
-
-        let param_types = func
-            .param_list
-            .iter()
-            .map(
-                |NameTypeBind {
-                     with_at,
-                     var_name,
-                     typ,
-                 }| {
-                    let (tp, _) = if *with_at {
-                        self.resolve_type(typ, false)
-                    } else {
-                        self.resolve_type_with_at(typ)
-                    };
-                    self.ty_ctx.env.insert_symbol(var_name.to_string(), tp);
-                    tp
-                },
-            )
-            .collect::<Vec<usize>>();
-
-        self.ty_ctx.env.exit();
-
-        self.ty_ctx
-            .associate_function_type(func.name.as_str(), (t1, param_types));
-    }
-
     pub fn create_from_ast(module: &crate::ast::Module) -> Self {
         let mut mir = MiddleIR::default();
 
+        mir.resolve_import(module);
         mir.resolve_all_type(module);
         mir.ty_ctx.refine_all_opaque_type();
-        mir.resolve_import(module);
-        mir.ty_ctx.collect_all_constructor(&mut mir.constructors);
-        mir.check_type(module);
         mir.convert_ast(module);
 
         mir
