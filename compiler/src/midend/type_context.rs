@@ -82,6 +82,7 @@ pub struct TypeContext {
     types: Vec<Type>,
     stypes: SingletonType,
     ftypes: HashMap<String, (usize, Vec<usize>)>,
+    ext_types: HashMap<String, (usize, Vec<usize>)>,
     pub env: SymTable<usize>,
 }
 
@@ -93,6 +94,7 @@ impl Default for TypeContext {
             types: Default::default(),
             stypes: Default::default(),
             ftypes: Default::default(),
+            ext_types: Default::default(),
             env: Default::default(),
         };
         tcx.add_primitive();
@@ -101,6 +103,10 @@ impl Default for TypeContext {
 }
 
 impl TypeContext {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
     pub fn get_type_by_idx(&self, idx: usize) -> TypeHandle {
         (idx, self.types[idx].clone())
     }
@@ -178,6 +184,9 @@ impl TypeContext {
         self.type_typeid_map.insert(typ.clone(), self_index);
 
         (self_index, typ)
+    }
+
+    fn add_external(&mut self) {
     }
 
     fn add_primitive(&mut self) {

@@ -16,6 +16,10 @@ swap: (@x: A, @y: A) -> () {
 	y = tmp;
 }
 
+g: () -> str {
+	"hello, world"
+}
+
 main: () -> () {
 	let x : A = U;
 	let y : A = V;

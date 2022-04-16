@@ -2,6 +2,7 @@ mod middle_ir;
 mod type_context;
 mod typed_ast;
 mod unique_name;
+mod name_decoration;
 
 #[cfg(test)]
 mod tests {
