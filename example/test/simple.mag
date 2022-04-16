@@ -21,6 +21,6 @@ main: () -> () {
 	let y : A = V;
 	let w : i32 = 10;
 	let z : i32 = f(w);
-	let n : i32 = S(S(O));
+	let n : Nat = S(S(O));
 	swap(@x, @y);
 }
