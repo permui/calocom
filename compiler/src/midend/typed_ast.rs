@@ -598,11 +598,26 @@ impl TypedAST {
         let mut typed_ast = TypedAST::default();
 
         typed_ast.resolve_import(module);
+
+        // Resolve type means transforming types in AST
+        // to types in TypeContext.
+
+        // resolve type in **data definitions**, first pass,
+        // may leave opaque named type
         typed_ast.resolve_all_type(module);
+
+        // resolve type, second pass, replace previously opaque
+        // named type [Right(name)] with type index [Left(idx)].
         typed_ast.ty_ctx.refine_all_opaque_type();
+
+        // All opaque types cleared. No more opaque types allowed.
+
+        // build the mapping
+        // typed_ast.constructors: constructor name -> corresponding type index
         typed_ast
             .ty_ctx
             .collect_all_constructor(&mut typed_ast.constructors);
+
         typed_ast.check_type(module);
 
         typed_ast

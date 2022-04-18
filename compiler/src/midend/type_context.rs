@@ -281,6 +281,12 @@ impl TypeContext {
         if let Type::Enum(enu) = ty {
             let Enum { constructors } = enu.as_ref();
             for ctor in constructors {
+                if record.contains_key(&ctor.0) {
+                    panic!(
+                        "multiple definitions for constructor name `{}`",
+                        ctor.0
+                    );
+                }
                 record.insert(ctor.0.clone(), idx);
             }
         }
