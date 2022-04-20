@@ -113,12 +113,18 @@ impl TypeContext {
         (idx, self.types[idx].clone())
     }
 
-
-    pub fn find_external_polymorphic_function_type(&self, path: &[String]) -> Option<&(usize, Vec<usize>)> {
+    pub fn find_external_polymorphic_function_type(
+        &self,
+        path: &[String],
+    ) -> Option<&(usize, Vec<usize>)> {
         self.ext_poly_ftypes.get(path)
     }
 
-    pub fn associate_external_polymorphic_function_type(&mut self, path: &[String], typ: (usize, Vec<usize>)) {
+    pub fn associate_external_polymorphic_function_type(
+        &mut self,
+        path: &[String],
+        typ: (usize, Vec<usize>),
+    ) {
         if self.ext_poly_ftypes.contains_key(path) {
             panic!("external polymorphic function redefined");
         }
@@ -154,7 +160,9 @@ impl TypeContext {
     }
 
     pub fn get_type_by_name(&self, name: &str) -> Option<TypeHandle> {
-        self.name_typeid_map.get(name).map(|x| self.get_type_by_idx(*x))
+        self.name_typeid_map
+            .get(name)
+            .map(|x| self.get_type_by_idx(*x))
     }
 
     pub fn tuple_type(&mut self, fields: Vec<Type>) -> TypeHandle {
@@ -200,7 +208,6 @@ impl TypeContext {
         let o: Type = Primitive {
             typ: PrimitiveType::Object,
         }
-
         .into();
         let b: Type = Primitive {
             typ: PrimitiveType::Bool,

@@ -467,7 +467,17 @@ impl TypedAST {
         }
     }
 
+    fn check_type_of_match_bool(
+        &mut self,
+        expr: TypedExpr,
+        arms: &Vec<(Pattern, Box<crate::ast::Expr>)>,
+    ) -> TypedExpr {
+        todo!()
+    }
+
     fn check_type_of_match(&mut self, mexp: &crate::ast::MatchExpr) -> TypedExpr {
+        let crate::ast::MatchExpr { e, arms } = mexp;
+        let expr = self.check_type_of_expr(e);
         todo!()
     }
 
