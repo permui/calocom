@@ -7,12 +7,12 @@ use super::middle_ir::SymTable;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Tuple {
-    fields: Vec<Type>,
+    pub fields: Vec<Type>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Enum {
-    constructors: Vec<(String, Option<Type>)>,
+    pub constructors: Vec<(String, Option<Type>)>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -25,7 +25,7 @@ pub enum PrimitiveType {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Primitive {
-    typ: PrimitiveType,
+    pub typ: PrimitiveType,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]

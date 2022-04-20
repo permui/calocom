@@ -141,10 +141,10 @@ pub struct TypedASTConstructorVar {
 
 #[derive(Debug, Default)]
 pub struct TypedAST {
-    ty_ctx: TypeContext,
-    imports: HashMap<String, TypedASTRefPath>,
-    constructors: HashMap<String, usize>,
-    module: Vec<TypedFuncDef>,
+    pub ty_ctx: TypeContext,
+    pub imports: HashMap<String, TypedASTRefPath>,
+    pub constructors: HashMap<String, usize>,
+    pub module: Vec<TypedFuncDef>,
 }
 
 impl From<&crate::ast::BinOp> for TypedASTBinOp {
