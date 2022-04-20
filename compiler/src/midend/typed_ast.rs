@@ -313,8 +313,61 @@ impl TypedAST {
         }
     }
 
-    fn check_type_of_external_call(&mut self, call: &crate::ast::CallExpr) -> TypedExpr {
-        todo!()
+    fn check_type_of_external_call(
+        &mut self,
+        path: &crate::ast::RefPath,
+        gen: Option<Type>,
+        typed_args: Vec<TypedArgument>,
+    ) -> TypedExpr {
+        let call_path = &mut path.items.clone();
+        let mut full_path = self
+            .imports
+            .get(call_path.first().unwrap())
+            .unwrap()
+            .items
+            .clone();
+        full_path.pop();
+        full_path.append(call_path);
+        if let Some(ty) = self
+            .ty_ctx
+            .find_external_polymorphic_function_type(&full_path[..])
+        {
+            if ty.1.len() != typed_args.len() {
+                panic!(
+                    "wrong number of arguments: expect {} but given {}",
+                    ty.1.len(),
+                    typed_args.len()
+                );
+            }
+
+            for (idx, (typ, typed_arg)) in ty.1.iter().zip(typed_args.iter()).enumerate() {
+                match typed_arg {
+                    TypedArgument::Expr(e) => {
+                        if !self.is_compatible(*typ, e.typ) {
+                            panic!("argument {} type incorrect", idx);
+                        }
+                    }
+                    TypedArgument::AtVar(_, atvar_typ) => {
+                        if !self.is_compatible(*typ, *atvar_typ) {
+                            panic!("argument {} type incorrect", idx);
+                        }
+                    }
+                }
+            }
+
+            let typed_call = TypedCallExpr {
+                path: TypedASTRefPath { items: full_path },
+                gen,
+                args: typed_args,
+            };
+
+            TypedExpr {
+                typ: ty.0,
+                expr: Box::new(ExprEnum::CallExpr(typed_call)),
+            }
+        } else {
+            panic!("not callable: {}", full_path.join(""));
+        }
     }
 
     fn check_type_of_call(&mut self, call: &crate::ast::CallExpr) -> TypedExpr {
@@ -328,26 +381,26 @@ impl TypedAST {
             .collect();
 
         // it's a constructor with arguments
-        if path.items.len() == 1 && self.constructors.contains_key(first_item) {
-            let typ = *self.constructors.get(first_item).unwrap();
+        if path.items.len() == 1 {
+            if let Some(&typ) = self.constructors.get(first_item) {
+                let ctor_expr = TypedCtorExpr {
+                    typ,
+                    name: path.items[0].clone(),
+                    args,
+                };
 
-            let ctor_expr = TypedCtorExpr {
-                typ,
-                name: path.items[0].clone(),
-                args,
-            };
-
-            return TypedExpr {
-                typ,
-                expr: Box::new(ExprEnum::CtorExpr(ctor_expr)),
-            };
-        }
-
-        if self.imports.contains_key(first_item) {
-            return self.check_type_of_external_call(call);
+                return TypedExpr {
+                    typ,
+                    expr: Box::new(ExprEnum::CtorExpr(ctor_expr)),
+                };
+            }
         }
 
         let new_generic = gen.as_ref().map(|ty| self.resolve_type(ty, false).1);
+
+        if self.imports.contains_key(first_item) {
+            return self.check_type_of_external_call(&path, new_generic, args);
+        }
 
         if let Some(ty) = self.ty_ctx.find_function_type(first_item) {
             if ty.1.len() != args.len() {
@@ -389,8 +442,7 @@ impl TypedAST {
     }
 
     fn check_type_of_var(&mut self, var: &str) -> TypedExpr {
-        if self.constructors.contains_key(var) {
-            let typ = *self.constructors.get(var).unwrap();
+        if let Some(&typ) = self.constructors.get(var) {
             let ctor_expr = TypedCtorExpr {
                 typ,
                 name: var.to_string(),
@@ -584,19 +636,37 @@ impl TypedAST {
 
     fn is_compatible(&self, t1: usize, t2: usize) -> bool {
         if t1 != t2 {
-            let ty1 = self.ty_ctx.get_type_by_idx(t1).1;
-            self.is_t1_opaque_of_t2(&ty1, t2) || {
-                let ty2 = self.ty_ctx.get_type_by_idx(t2).1;
-                self.is_t1_opaque_of_t2(&ty2, t1)
-            }
+            t1 == self.ty_ctx.singleton_type(PrimitiveType::Object).0
+                || t2 == self.ty_ctx.singleton_type(PrimitiveType::Object).0
+                || {
+                    let ty1 = self.ty_ctx.get_type_by_idx(t1).1;
+                    self.is_t1_opaque_of_t2(&ty1, t2) || {
+                        let ty2 = self.ty_ctx.get_type_by_idx(t2).1;
+                        self.is_t1_opaque_of_t2(&ty2, t1)
+                    }
+                }
         } else {
             true
         }
     }
 
+    fn create_library_function_signature(&mut self) {
+        let unit = self.ty_ctx.singleton_type(PrimitiveType::Unit).0;
+        let object = self.ty_ctx.singleton_type(PrimitiveType::Object).0;
+        self.ty_ctx.associate_external_polymorphic_function_type(
+            &["std", "io", "print"].map(|s| s.to_string()),
+            (unit, [object].into()),
+        );
+        self.ty_ctx.associate_external_polymorphic_function_type(
+            &["std", "io", "println"].map(|s| s.to_string()),
+            (unit, [object].into()),
+        );
+    }
+
     pub fn create_from_ast(module: &crate::ast::Module) -> Self {
         let mut typed_ast = TypedAST::default();
 
+        typed_ast.create_library_function_signature();
         typed_ast.resolve_import(module);
         typed_ast.resolve_all_type(module);
         typed_ast.ty_ctx.refine_all_opaque_type();

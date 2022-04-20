@@ -1,3 +1,6 @@
+import std
+import std.io
+
 data A = U | V ;
 
 data T1 = C1(T2) ;
@@ -27,4 +30,6 @@ main: () -> () {
 	let z : i32 = f(w);
 	let n : Nat = S(S(O));
 	swap(@x, @y);
+	std.io.print<i32>(w);
+	io.print<i32>(z);
 }

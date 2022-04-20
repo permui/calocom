@@ -84,7 +84,7 @@ pub struct TypeContext {
     types: Vec<Type>,
     stypes: SingletonType,
     ftypes: HashMap<String, (usize, Vec<usize>)>,
-    ext_poly_ftypes: HashMap<String, (usize, Vec<usize>)>,
+    ext_poly_ftypes: HashMap<Vec<String>, (usize, Vec<usize>)>,
     pub env: SymTable<usize>,
 }
 
@@ -111,6 +111,18 @@ impl TypeContext {
 
     pub fn get_type_by_idx(&self, idx: usize) -> TypeHandle {
         (idx, self.types[idx].clone())
+    }
+
+
+    pub fn find_external_polymorphic_function_type(&self, path: &[String]) -> Option<&(usize, Vec<usize>)> {
+        self.ext_poly_ftypes.get(path)
+    }
+
+    pub fn associate_external_polymorphic_function_type(&mut self, path: &[String], typ: (usize, Vec<usize>)) {
+        if self.ext_poly_ftypes.contains_key(path) {
+            panic!("external polymorphic function redefined");
+        }
+        self.ext_poly_ftypes.insert(path.into(), typ);
     }
 
     pub fn find_function_type(&self, name: &str) -> Option<&(usize, Vec<usize>)> {
@@ -142,12 +154,7 @@ impl TypeContext {
     }
 
     pub fn get_type_by_name(&self, name: &str) -> Option<TypeHandle> {
-        if self.name_typeid_map.contains_key(name) {
-            let idx = *self.name_typeid_map.get(name).unwrap();
-            Some(self.get_type_by_idx(idx))
-        } else {
-            None
-        }
+        self.name_typeid_map.get(name).map(|x| self.get_type_by_idx(*x))
     }
 
     pub fn tuple_type(&mut self, fields: Vec<Type>) -> TypeHandle {
@@ -178,8 +185,8 @@ impl TypeContext {
     }
 
     fn insert_type_or_get(&mut self, typ: Type) -> TypeHandle {
-        if self.type_typeid_map.contains_key(&typ) {
-            return (*self.type_typeid_map.get(&typ).unwrap(), typ);
+        if let Some(id) = self.type_typeid_map.get(&typ) {
+            return (*id, typ);
         }
 
         let self_index = self.types.len();
@@ -187,9 +194,6 @@ impl TypeContext {
         self.type_typeid_map.insert(typ.clone(), self_index);
 
         (self_index, typ)
-    }
-
-    fn add_external(&mut self) {
     }
 
     fn add_primitive(&mut self) {

@@ -124,10 +124,6 @@ pub fn decorate_polymorphic_function(
     )
 }
 
-fn decorate_function(path: &Vec<String>, generic: &[&Type], ret: &Type, arg: &[&Type]) {
-    unimplemented!()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
