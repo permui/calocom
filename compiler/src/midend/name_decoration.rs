@@ -83,6 +83,7 @@ impl DecorationName for Type {
                 )
             }
             Type::Primitive(prim) => match prim.typ {
+                PrimitiveType::Object => "Co",
                 PrimitiveType::Str => "Cs",
                 PrimitiveType::Bool => "Cb",
                 PrimitiveType::Int32 => "Ci4",

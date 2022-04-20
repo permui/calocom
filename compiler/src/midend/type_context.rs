@@ -17,6 +17,7 @@ pub struct Enum {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum PrimitiveType {
+    Object,
     Str,
     Bool,
     Int32,
@@ -69,6 +70,7 @@ pub type TypeHandle = (usize, Type);
 
 #[derive(Debug, Default)]
 pub struct SingletonType {
+    object: usize,
     bool: usize,
     i32: usize,
     str: usize,
@@ -82,7 +84,7 @@ pub struct TypeContext {
     types: Vec<Type>,
     stypes: SingletonType,
     ftypes: HashMap<String, (usize, Vec<usize>)>,
-    ext_types: HashMap<String, (usize, Vec<usize>)>,
+    ext_poly_ftypes: HashMap<String, (usize, Vec<usize>)>,
     pub env: SymTable<usize>,
 }
 
@@ -94,7 +96,7 @@ impl Default for TypeContext {
             types: Default::default(),
             stypes: Default::default(),
             ftypes: Default::default(),
-            ext_types: Default::default(),
+            ext_poly_ftypes: Default::default(),
             env: Default::default(),
         };
         tcx.add_primitive();
@@ -128,6 +130,7 @@ impl TypeContext {
             PrimitiveType::Bool => self.get_type_by_idx(self.stypes.bool),
             PrimitiveType::Int32 => self.get_type_by_idx(self.stypes.i32),
             PrimitiveType::Unit => self.get_type_by_idx(self.stypes.unit),
+            PrimitiveType::Object => self.get_type_by_idx(self.stypes.object),
         }
     }
 
@@ -190,6 +193,11 @@ impl TypeContext {
     }
 
     fn add_primitive(&mut self) {
+        let o: Type = Primitive {
+            typ: PrimitiveType::Object,
+        }
+
+        .into();
         let b: Type = Primitive {
             typ: PrimitiveType::Bool,
         }
@@ -212,17 +220,19 @@ impl TypeContext {
 
         self.types.clear();
 
-        let (bi, ii, ui, si) = (0, 1, 2, 3);
+        let (oi, bi, ii, ui, si) = (0, 1, 2, 3, 4);
 
         self.types.push(b.clone());
         self.types.push(i.clone());
         self.types.push(u.clone());
         self.types.push(s.clone());
+        self.types.push(o.clone());
 
         self.type_typeid_map.insert(b, bi);
         self.type_typeid_map.insert(i, ii);
         self.type_typeid_map.insert(u, ui);
         self.type_typeid_map.insert(s, si);
+        self.type_typeid_map.insert(o, oi);
 
         self.name_typeid_map.insert("bool".to_string(), bi);
         self.name_typeid_map.insert("i32".to_string(), ii);
@@ -233,6 +243,7 @@ impl TypeContext {
             i32: ii,
             str: si,
             unit: ui,
+            object: oi,
         };
     }
 

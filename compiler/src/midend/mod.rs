@@ -24,7 +24,7 @@ mod tests {
     fn test_typed_ast() {
         let s = fs::read_to_string("../example/test/simple.mag").expect("read file fail");
         let ast = frontend::parse(&s);
-        let mir: TypedAST = ast.into();
-        println!("{:#?}", mir);
+        let tast: TypedAST = ast.into();
+        println!("{:#?}", tast);
     }
 }
