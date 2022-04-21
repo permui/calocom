@@ -66,15 +66,35 @@ impl From<Opaque> for Type {
     }
 }
 
+impl From<PrimitiveType> for Type {
+    fn from(x: PrimitiveType) -> Self {
+        x.into()
+    }
+}
+
 pub type TypeHandle = (usize, Type);
 
 #[derive(Debug, Default)]
-pub struct SingletonType {
-    object: usize,
-    bool: usize,
-    i32: usize,
-    str: usize,
-    unit: usize,
+pub struct SingletonType {}
+
+impl SingletonType {
+    pub const OBJECT: usize = 0;
+    pub const BOOL: usize = 1;
+    pub const I32: usize = 2;
+    pub const STR: usize = 3;
+    pub const UNIT: usize = 4;
+}
+
+impl From<PrimitiveType> for usize {
+    fn from(typ: PrimitiveType) -> Self {
+        match typ {
+            PrimitiveType::Str => SingletonType::STR,
+            PrimitiveType::Bool => SingletonType::BOOL,
+            PrimitiveType::Int32 => SingletonType::I32,
+            PrimitiveType::Unit => SingletonType::UNIT,
+            PrimitiveType::Object => SingletonType::OBJECT,
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -82,7 +102,6 @@ pub struct TypeContext {
     name_typeid_map: HashMap<String, usize>,
     type_typeid_map: HashMap<Type, usize>,
     types: Vec<Type>,
-    stypes: SingletonType,
     ftypes: HashMap<String, (usize, Vec<usize>)>,
     ext_poly_ftypes: HashMap<Vec<String>, (usize, Vec<usize>)>,
     pub env: SymTable<usize>,
@@ -94,12 +113,11 @@ impl Default for TypeContext {
             name_typeid_map: Default::default(),
             type_typeid_map: Default::default(),
             types: Default::default(),
-            stypes: Default::default(),
             ftypes: Default::default(),
             ext_poly_ftypes: Default::default(),
             env: Default::default(),
         };
-        tcx.add_primitive();
+        tcx.add_primitives();
         tcx
     }
 }
@@ -143,13 +161,7 @@ impl TypeContext {
     }
 
     pub fn singleton_type(&self, typ: PrimitiveType) -> TypeHandle {
-        match typ {
-            PrimitiveType::Str => self.get_type_by_idx(self.stypes.str),
-            PrimitiveType::Bool => self.get_type_by_idx(self.stypes.bool),
-            PrimitiveType::Int32 => self.get_type_by_idx(self.stypes.i32),
-            PrimitiveType::Unit => self.get_type_by_idx(self.stypes.unit),
-            PrimitiveType::Object => self.get_type_by_idx(self.stypes.object),
-        }
+        self.get_type_by_idx(typ.into())
     }
 
     pub fn associate_name_and_idx(&mut self, name: &str, idx: usize) {
@@ -204,58 +216,23 @@ impl TypeContext {
         (self_index, typ)
     }
 
-    fn add_primitive(&mut self) {
-        let o: Type = Primitive {
-            typ: PrimitiveType::Object,
+    fn add_primitive(&mut self, primitive: PrimitiveType, name: Option<&str>) {
+        let idx: usize = primitive.clone().into();
+        let typ: Type = primitive.into();
+        self.types.push(typ.clone());
+        self.type_typeid_map.insert(typ, idx);
+        if let Some(name) = name {
+            self.name_typeid_map.insert(name.to_string(), idx);
         }
-        .into();
-        let b: Type = Primitive {
-            typ: PrimitiveType::Bool,
-        }
-        .into();
+    }
 
-        let i: Type = Primitive {
-            typ: PrimitiveType::Int32,
-        }
-        .into();
-
-        let u: Type = Primitive {
-            typ: PrimitiveType::Unit,
-        }
-        .into();
-
-        let s: Type = Primitive {
-            typ: PrimitiveType::Str,
-        }
-        .into();
-
-        self.types.clear();
-
-        let (oi, bi, ii, ui, si) = (0, 1, 2, 3, 4);
-
-        self.types.push(b.clone());
-        self.types.push(i.clone());
-        self.types.push(u.clone());
-        self.types.push(s.clone());
-        self.types.push(o.clone());
-
-        self.type_typeid_map.insert(b, bi);
-        self.type_typeid_map.insert(i, ii);
-        self.type_typeid_map.insert(u, ui);
-        self.type_typeid_map.insert(s, si);
-        self.type_typeid_map.insert(o, oi);
-
-        self.name_typeid_map.insert("bool".to_string(), bi);
-        self.name_typeid_map.insert("i32".to_string(), ii);
-        self.name_typeid_map.insert("str".to_string(), si);
-
-        self.stypes = SingletonType {
-            bool: bi,
-            i32: ii,
-            str: si,
-            unit: ui,
-            object: oi,
-        };
+    fn add_primitives(&mut self) {
+        // NOTE: be the same order with constants in SingletonType
+        self.add_primitive(PrimitiveType::Object, None);
+        self.add_primitive(PrimitiveType::Bool, Some("bool"));
+        self.add_primitive(PrimitiveType::Int32, Some("i32"));
+        self.add_primitive(PrimitiveType::Str, Some("str"));
+        self.add_primitive(PrimitiveType::Unit, None);
     }
 
     pub fn refine_all_opaque_type(&mut self) {
