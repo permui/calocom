@@ -68,7 +68,7 @@ impl From<Opaque> for Type {
 
 impl From<PrimitiveType> for Type {
     fn from(x: PrimitiveType) -> Self {
-        x.into()
+        Primitive { typ: x }.into()
     }
 }
 
@@ -169,6 +169,23 @@ impl TypeContext {
             panic!("data type redefinition: {}", name);
         }
         self.name_typeid_map.insert(name.to_string(), idx);
+    }
+
+    pub fn get_ctor_field_type_by_name(&self, typ: usize, name: &str) -> Option<TypeHandle> {
+        match &self.types[typ] {
+            Type::Enum(e) => {
+                let ctor_idx = e
+                    .constructors
+                    .iter()
+                    .position(|ctor| ctor.0 == name)
+                    .unwrap_or_else(|| panic!("{} not found", name));
+                let ctor = &e.constructors[ctor_idx];
+                ctor.1
+                    .clone()
+                    .map(|ty| (*self.type_typeid_map.get(&ty).unwrap(), ty))
+            }
+            _ => panic!("can't get fields of non enum type"),
+        }
     }
 
     pub fn get_type_by_name(&self, name: &str) -> Option<TypeHandle> {

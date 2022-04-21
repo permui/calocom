@@ -169,6 +169,18 @@ impl From<&crate::ast::Literal> for TypedASTLiteral {
     }
 }
 
+impl From<&crate::ast::Pattern> for Pattern {
+    fn from(pat: &crate::ast::Pattern) -> Self {
+        match pat {
+            crate::ast::Pattern::Lit(lit) => Self::Lit(lit.into()),
+            crate::ast::Pattern::Con(ctor_var) => Self::Con(TypedASTConstructorVar {
+                name: ctor_var.name.clone(),
+                inner: ctor_var.inner.clone(),
+            }),
+        }
+    }
+}
+
 impl TypedAST {
     fn resolve_type_with_at(&mut self, ast_type: &crate::ast::Type) -> (usize, Type) {
         let (idx, _typ) = self.resolve_type(ast_type, false);
@@ -467,25 +479,76 @@ impl TypedAST {
         }
     }
 
-    fn check_type_of_match_bool(
-        &mut self,
-        expr: TypedExpr,
-        arms: &Vec<(crate::ast::Pattern, Box<crate::ast::Expr>)>,
-    ) -> TypedExpr {
-        todo!()
-    }
-
     fn check_type_of_match(&mut self, mexp: &crate::ast::MatchExpr) -> TypedExpr {
         let crate::ast::MatchExpr { e, arms } = mexp;
-        let expr = self.check_type_of_expr(e);
-        match expr.typ {
-            SingletonType::BOOL => self.check_type_of_match_bool(expr, arms),
-            SingletonType::I32 | SingletonType::STR | SingletonType::UNIT => {
-                panic!("could not match i32, str or unit type")
+        let match_expr = self.check_type_of_expr(e);
+        let mut typed_arms = vec![];
+        for (pat, expr) in arms {
+            match pat {
+                crate::ast::Pattern::Lit(lit) => {
+                    let typ = self.check_type_of_literal(lit).typ;
+                    if self.is_compatible(typ, match_expr.typ) {
+                        typed_arms.push(self.check_type_of_expr(expr));
+                    } else {
+                        panic!("invalid literal for match arm: type is not compatible")
+                    }
+                }
+                crate::ast::Pattern::Con(crate::ast::ConstructorVar { name, inner }) => {
+                    if let Some(&typ) = self.constructors.get(name) {
+                        if self.is_compatible(typ, match_expr.typ) {
+                            if let Some(bind) = inner {
+                                let (typ, _) =
+                                    self.ty_ctx.get_ctor_field_type_by_name(typ, name).unwrap();
+                                self.ty_ctx.env.entry();
+                                self.ty_ctx.env.insert_symbol(bind.to_string(), typ);
+                                typed_arms.push(self.check_type_of_expr(expr));
+                                self.ty_ctx.env.exit();
+                            } else {
+                                typed_arms.push(self.check_type_of_expr(expr));
+                            }
+                        } else {
+                            panic!("invalid constructor for match arm: constructor belongs to another type")
+                        }
+                    } else {
+                        panic!("invalid constructor for match arm: constructor doesn't exist")
+                    };
+                }
             }
-            _ => {
-                todo!()
-            }
+        }
+
+        let first_arm_typ = typed_arms.first().unwrap().typ;
+
+        if !typed_arms.iter().all(|expr| expr.typ == first_arm_typ) {
+            panic!("match arm returns incompatible types")
+        }
+
+        TypedExpr {
+            typ: first_arm_typ,
+            expr: Box::new(ExprEnum::MatchExpr(TypedMatchExpr {
+                e: match_expr,
+                arms: typed_arms
+                    .into_iter()
+                    .zip(arms)
+                    .map(|(expr, (pat, _))| (pat.into(), expr))
+                    .collect(),
+                typ: first_arm_typ,
+            })),
+        }
+    }
+
+    fn check_type_of_literal(&mut self, lit: &crate::ast::Literal) -> TypedExpr {
+        let lit: TypedASTLiteral = lit.into();
+
+        let typ = match lit {
+            TypedASTLiteral::Int(_) => self.ty_ctx.singleton_type(PrimitiveType::Int32),
+            TypedASTLiteral::Str(_) => self.ty_ctx.singleton_type(PrimitiveType::Str),
+            TypedASTLiteral::Bool(_) => self.ty_ctx.singleton_type(PrimitiveType::Bool),
+        }
+        .0;
+
+        TypedExpr {
+            typ,
+            expr: Box::new(ExprEnum::Lit(lit)),
         }
     }
 
@@ -525,21 +588,7 @@ impl TypedAST {
             }
             crate::ast::Expr::MatchExpr(m) => self.check_type_of_match(m),
             crate::ast::Expr::Var(var) => self.check_type_of_var(var),
-            crate::ast::Expr::Lit(lit) => {
-                let lit: TypedASTLiteral = lit.into();
-
-                let typ = match lit {
-                    TypedASTLiteral::Int(_) => self.ty_ctx.singleton_type(PrimitiveType::Int32),
-                    TypedASTLiteral::Str(_) => self.ty_ctx.singleton_type(PrimitiveType::Str),
-                    TypedASTLiteral::Bool(_) => self.ty_ctx.singleton_type(PrimitiveType::Bool),
-                }
-                .0;
-
-                TypedExpr {
-                    typ,
-                    expr: Box::new(ExprEnum::Lit(lit)),
-                }
-            }
+            crate::ast::Expr::Lit(lit) => self.check_type_of_literal(lit),
         }
     }
 
