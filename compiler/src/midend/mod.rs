@@ -13,18 +13,11 @@ mod tests {
     use std::fs;
 
     #[test]
-    fn test_middle_ir() {
-        let s = fs::read_to_string("../example/stage1/adt.mag").expect("read file fail");
-        let ast = frontend::parse(&s);
-        let mir: MiddleIR = ast.into();
-        println!("{:#?}", mir);
-    }
-
-    #[test]
-    fn test_typed_ast() {
+    fn test() {
         let s = fs::read_to_string("../example/test/simple.mag").expect("read file fail");
         let ast = frontend::parse(&s);
-        let tast: TypedAST = ast.into();
-        println!("{:#?}", tast);
+        let ty_ast: TypedAST = ast.into();
+        let mir: MiddleIR = ty_ast.into();
+        println!("{:#?}", mir);
     }
 }
