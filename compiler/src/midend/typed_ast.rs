@@ -411,7 +411,7 @@ impl TypedAST {
         let new_generic = gen.as_ref().map(|ty| self.resolve_type(ty, false).1);
 
         if self.imports.contains_key(first_item) {
-            return self.check_type_of_external_call(&path, new_generic, args);
+            return self.check_type_of_external_call(path, new_generic, args);
         }
 
         if let Some(ty) = self.ty_ctx.find_function_type(first_item) {

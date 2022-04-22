@@ -123,10 +123,6 @@ impl Default for TypeContext {
 }
 
 impl TypeContext {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
     pub fn get_type_by_idx(&self, idx: usize) -> TypeHandle {
         (idx, self.types[idx].clone())
     }
