@@ -55,7 +55,7 @@ pub type BinOp = TypedASTBinOp;
 
 #[derive(Debug)]
 pub enum Value {
-    Call(RefPath, Box<Value>, Box<Value>),
+    Call(RefPath, Vec<Value>),
     Op(BinOp, Box<Value>, Box<Value>),
     Imm(Literal),
     Intrinsic(&'static str, Vec<Value>),
@@ -82,45 +82,87 @@ pub struct MiddleIR {
 
 impl MiddleIR {
     fn convert_asgn(&mut self, name: &str, expr: &TypedExpr, builder: &mut FunctionBuilder) {
-        self.convert_expr(expr, builder, Some(name));
+        let var = Rc::clone(
+            builder
+                .table
+                .find_symbol(name)
+                .unwrap_or_else(|| panic!("variable {} not defined", name)),
+        );
+        self.convert_expr(expr, builder, Some(var));
     }
 
-    fn convert_ctor_expr(&mut self, expr: &TypedCtorExpr) -> Value {
+    fn convert_ctor_expr(&mut self, x: &TypedCtorExpr) -> Value {
+        let TypedCtorExpr { typ, name, args } = x;
         todo!()
     }
 
-    fn convert_match_expr(&mut self, expr: &TypedMatchExpr) -> Value {
+    fn convert_match_expr(&mut self, x: &TypedMatchExpr) -> Value {
+        let TypedMatchExpr { e, arms, typ } = x;
         todo!()
     }
 
-    fn convert_bracket_expr(&mut self, expr: &TypedBracketBody) -> Value {
+    fn convert_call_expr(&mut self, x: &TypedCallExpr) -> Value {
+        let TypedCallExpr { path, gen, args } = x;
         todo!()
     }
 
-    fn convert_call_expr(&mut self, expr: &TypedCallExpr) -> Value {
-        todo!()
+    fn convert_bracket_expr(&mut self, builder: &mut FunctionBuilder, x: &TypedBracketBody) -> Value {
+        let TypedBracketBody { stmts, ret_expr, typ } = x;
+        builder.table.entry();
+
+        let bracket_out = self.create_variable_definition("bracket.out", *typ);
+
+        for stmt in stmts {
+            self.convert_stmt(stmt, builder)
+        }
+
+        if let Some(ret_expr) = ret_expr {
+            self.convert_expr(ret_expr, builder, Some(Rc::clone(&bracket_out)));
+        }
+        
+        builder.table.exit();
+        Value::VarRef(bracket_out)
     }
 
-    fn convert_arith_expr(&mut self, expr: &TypedArithExpr) -> Value {
-        todo!()
+    fn convert_arith_expr(&mut self, builder: &mut FunctionBuilder, x: &TypedArithExpr) -> Value {
+        let TypedArithExpr { lhs, rhs, op, typ } = x;
+
+        let lhs_out = self.create_variable_definition("arith.lhs", *typ);
+        let rhs_out = self.create_variable_definition("arith.rhs", *typ);
+
+        builder.func.tmp_def.push(Rc::clone(&lhs_out));
+        builder.func.tmp_def.push(Rc::clone(&rhs_out));
+
+        self.convert_expr(lhs, builder, Some(Rc::clone(&lhs_out)));
+        self.convert_expr(rhs, builder, Some(Rc::clone(&rhs_out)));
+
+        Value::Op(
+            op.clone(),
+            Box::new(Value::VarRef(lhs_out)),
+            Box::new(Value::VarRef(rhs_out)),
+        )
     }
 
-    fn convert_variable_expr(&mut self, expr: &str) -> Value {
-        todo!()
+    fn convert_variable_expr(&mut self, builder: &mut FunctionBuilder, x: &str) -> Value {
+        let var = builder
+            .table
+            .find_symbol(x)
+            .unwrap_or_else(|| panic!("variable {} not defined", x));
+        Value::VarRef(var.clone())
     }
 
-    fn convert_literal_expr(&mut self, expr: &TypedASTLiteral) -> Value {
-        todo!()
+    fn convert_literal_expr(&mut self, x: &Literal) -> Value {
+        Value::Imm(x.clone())
     }
 
-    fn create_value_from_expr(&mut self, expr: &ExprEnum) -> Value {
+    fn create_value_from_expr(&mut self, builder: &mut FunctionBuilder, expr: &ExprEnum) -> Value {
         match expr {
             ExprEnum::MatchExpr(x) => self.convert_match_expr(x),
-            ExprEnum::BraExpr(x) => self.convert_bracket_expr(x),
+            ExprEnum::BraExpr(x) => self.convert_bracket_expr(builder, x),
             ExprEnum::CallExpr(x) => self.convert_call_expr(x),
-            ExprEnum::ArithExpr(x) => self.convert_arith_expr(x),
+            ExprEnum::ArithExpr(x) => self.convert_arith_expr(builder, x),
             ExprEnum::CtorExpr(x) => self.convert_ctor_expr(x),
-            ExprEnum::Var(x) => self.convert_variable_expr(x.as_str()),
+            ExprEnum::Var(x) => self.convert_variable_expr(builder, x.as_str()),
             ExprEnum::Lit(x) => self.convert_literal_expr(x),
         }
     }
@@ -140,27 +182,27 @@ impl MiddleIR {
         unboxed
     }
 
-    fn convert_expr(&mut self, expr: &TypedExpr, builder: &mut FunctionBuilder, out: Option<&str>) {
+    fn convert_expr(
+        &mut self,
+        expr: &TypedExpr,
+        builder: &mut FunctionBuilder,
+        out: Option<Rc<VarDef>>,
+    ) {
         let mut stmt = Stmt::default();
 
         let TypedExpr { expr, typ } = expr;
-        let val = self.create_value_from_expr(expr);
+        let val = self.create_value_from_expr(builder, expr);
         let insert_position = &mut builder.position.as_ref().unwrap().borrow_mut().stmts;
-        if let Some(name) = out {
-            let lhs = builder
-                .table
-                .find_symbol(name)
-                .expect("variable not defined");
-
+        if let Some(lhs) = out {
             let t1 = lhs.typ;
             let t2 = *typ;
 
             if !self.ty_ctx.is_type_pure_eq(t1, t2) {
                 if self.ty_ctx.is_object_type(t1) {
-                    stmt.left = Some(Rc::clone(lhs));
+                    stmt.left = Some(Rc::clone(&lhs));
                     stmt.right = Some(Value::Intrinsic("calocom.erase_type", vec![val]));
                 } else if self.ty_ctx.is_object_type(t2) {
-                    stmt.left = Some(Rc::clone(lhs));
+                    stmt.left = Some(Rc::clone(&lhs));
                     stmt.right = Some(Value::Intrinsic("calocom.specialize_type", vec![val]));
                 } else if self.ty_ctx.is_t1_opaque_of_t2(t1, t2) {
                     let unboxed = self.create_unboxed_value(
@@ -169,12 +211,13 @@ impl MiddleIR {
                         format!("{}.unboxed", lhs.name).as_str(),
                         t1,
                     );
+                    builder.func.tmp_def.push(Rc::clone(&unboxed));
 
                     let unbox_stmt = Stmt {
                         left: Some(Rc::clone(&unboxed)),
                         right: Some(Value::Intrinsic(
                             "calocom.unbox",
-                            vec![Value::VarRef(Rc::clone(lhs))],
+                            vec![Value::VarRef(Rc::clone(&lhs))],
                         )),
                         ..Default::default()
                     };
@@ -190,6 +233,7 @@ impl MiddleIR {
                         "expr.unboxed",
                         t2,
                     );
+                    builder.func.tmp_def.push(Rc::clone(&unboxed));
 
                     let unbox_stmt = Stmt {
                         left: Some(Rc::clone(&unboxed)),
@@ -199,7 +243,7 @@ impl MiddleIR {
 
                     insert_position.push(unbox_stmt);
 
-                    stmt.left = Some(Rc::clone(lhs));
+                    stmt.left = Some(Rc::clone(&lhs));
                     stmt.right = Some(Value::VarRef(unboxed));
                 } else if self.ty_ctx.is_type_opaque_eq(t1, t2) {
                     let unboxed1 = self.create_unboxed_value(
@@ -216,26 +260,26 @@ impl MiddleIR {
                         t2,
                     );
 
-
                     let unbox_rhs = Stmt {
                         left: Some(Rc::clone(&unboxed2)),
                         right: Some(val),
                         ..Default::default()
                     };
-                    
+
                     let unbox_lhs = Stmt {
                         left: Some(Rc::clone(&unboxed1)),
                         right: Some(Value::Intrinsic(
                             "calocom.unbox",
-                            vec![Value::VarRef(Rc::clone(lhs))],
+                            vec![Value::VarRef(Rc::clone(&lhs))],
                         )),
                         ..Default::default()
                     };
 
+                    builder.func.tmp_def.push(Rc::clone(&unboxed1));
+                    builder.func.tmp_def.push(Rc::clone(&unboxed2));
 
                     insert_position.push(unbox_lhs);
                     insert_position.push(unbox_rhs);
-
 
                     stmt.left = Some(unboxed1);
                     stmt.right = Some(Value::VarRef(unboxed2));
@@ -263,7 +307,7 @@ impl MiddleIR {
         builder
             .table
             .insert_symbol(var_name.clone(), Rc::clone(&new_var));
-        builder.func.tmp_def.push(new_var);
+        builder.func.var_def.push(new_var);
 
         self.convert_asgn(var_name, expr, builder);
     }
@@ -280,7 +324,7 @@ impl MiddleIR {
         &mut self,
         body: &TypedBracketBody,
         builder: &mut FunctionBuilder,
-        out: Option<&str>,
+        out: Option<Rc<VarDef>>,
     ) {
         for stmt in &body.stmts {
             self.convert_stmt(stmt, builder)
@@ -310,7 +354,7 @@ impl MiddleIR {
         // insert the return value variable
         let mut sym_table: SymTable<Rc<VarDef>> = SymTable::new();
         sym_table.entry();
-        sym_table.insert_symbol(ret_name.clone(), Rc::clone(&ret));
+        sym_table.insert_symbol(ret_name, Rc::clone(&ret));
 
         // initialize all parameters
         for TypedBind {
@@ -352,7 +396,7 @@ impl MiddleIR {
         };
 
         // convert the function body
-        self.convert_bracket_body(&func.body, &mut fn_builder, Some(ret_name.as_str()));
+        self.convert_bracket_body(&func.body, &mut fn_builder, Some(Rc::clone(&ret)));
 
         // exit the symbol table scope
         sym_table.exit();

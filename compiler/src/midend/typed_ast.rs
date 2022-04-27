@@ -104,7 +104,7 @@ pub enum TypedArgument {
     AtVar(String, usize),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum TypedASTBinOp {
     Plus,
     Sub,
@@ -113,7 +113,7 @@ pub enum TypedASTBinOp {
     Mod,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum TypedASTLiteral {
     Int(i32),
     Str(String),
