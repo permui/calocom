@@ -7,16 +7,17 @@ use super::middle_ir::SymTable;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Tuple {
-    fields: Vec<Type>,
+    pub fields: Vec<Type>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Enum {
-    constructors: Vec<(String, Option<Type>)>,
+    pub constructors: Vec<(String, Option<Type>)>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum PrimitiveType {
+    Object,
     Str,
     Bool,
     Int32,
@@ -25,7 +26,7 @@ pub enum PrimitiveType {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Primitive {
-    typ: PrimitiveType,
+    pub typ: PrimitiveType,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -40,6 +41,16 @@ pub enum Type {
     Primitive(Primitive),
     Opaque(Opaque),
 }
+
+impl From<Type> for Opaque {
+    fn from(x: Type) -> Self {
+        match x {
+            Type::Opaque(x) => x,
+            _ => panic!("not an opaque type"),
+        }
+    }
+}
+
 
 impl From<Tuple> for Type {
     fn from(x: Tuple) -> Self {
@@ -65,14 +76,35 @@ impl From<Opaque> for Type {
     }
 }
 
+impl From<PrimitiveType> for Type {
+    fn from(x: PrimitiveType) -> Self {
+        Primitive { typ: x }.into()
+    }
+}
+
 pub type TypeHandle = (usize, Type);
 
 #[derive(Debug, Default)]
-pub struct SingletonType {
-    bool: usize,
-    i32: usize,
-    str: usize,
-    unit: usize,
+pub struct SingletonType {}
+
+impl SingletonType {
+    pub const OBJECT: usize = 0;
+    pub const BOOL: usize = 1;
+    pub const I32: usize = 2;
+    pub const STR: usize = 3;
+    pub const UNIT: usize = 4;
+}
+
+impl From<PrimitiveType> for usize {
+    fn from(typ: PrimitiveType) -> Self {
+        match typ {
+            PrimitiveType::Str => SingletonType::STR,
+            PrimitiveType::Bool => SingletonType::BOOL,
+            PrimitiveType::Int32 => SingletonType::I32,
+            PrimitiveType::Unit => SingletonType::UNIT,
+            PrimitiveType::Object => SingletonType::OBJECT,
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -80,9 +112,8 @@ pub struct TypeContext {
     name_typeid_map: HashMap<String, usize>,
     type_typeid_map: HashMap<Type, usize>,
     types: Vec<Type>,
-    stypes: SingletonType,
     ftypes: HashMap<String, (usize, Vec<usize>)>,
-    ext_types: HashMap<String, (usize, Vec<usize>)>,
+    ext_poly_ftypes: HashMap<Vec<String>, (usize, Vec<usize>)>,
     pub env: SymTable<usize>,
 }
 
@@ -92,23 +123,36 @@ impl Default for TypeContext {
             name_typeid_map: Default::default(),
             type_typeid_map: Default::default(),
             types: Default::default(),
-            stypes: Default::default(),
             ftypes: Default::default(),
-            ext_types: Default::default(),
+            ext_poly_ftypes: Default::default(),
             env: Default::default(),
         };
-        tcx.add_primitive();
+        tcx.add_primitives();
         tcx
     }
 }
 
 impl TypeContext {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
     pub fn get_type_by_idx(&self, idx: usize) -> TypeHandle {
         (idx, self.types[idx].clone())
+    }
+
+    pub fn find_external_polymorphic_function_type(
+        &self,
+        path: &[String],
+    ) -> Option<&(usize, Vec<usize>)> {
+        self.ext_poly_ftypes.get(path)
+    }
+
+    pub fn associate_external_polymorphic_function_type(
+        &mut self,
+        path: &[String],
+        typ: (usize, Vec<usize>),
+    ) {
+        if self.ext_poly_ftypes.contains_key(path) {
+            panic!("external polymorphic function redefined");
+        }
+        self.ext_poly_ftypes.insert(path.into(), typ);
     }
 
     pub fn find_function_type(&self, name: &str) -> Option<&(usize, Vec<usize>)> {
@@ -123,12 +167,7 @@ impl TypeContext {
     }
 
     pub fn singleton_type(&self, typ: PrimitiveType) -> TypeHandle {
-        match typ {
-            PrimitiveType::Str => self.get_type_by_idx(self.stypes.str),
-            PrimitiveType::Bool => self.get_type_by_idx(self.stypes.bool),
-            PrimitiveType::Int32 => self.get_type_by_idx(self.stypes.i32),
-            PrimitiveType::Unit => self.get_type_by_idx(self.stypes.unit),
-        }
+        self.get_type_by_idx(typ.into())
     }
 
     pub fn associate_name_and_idx(&mut self, name: &str, idx: usize) {
@@ -138,13 +177,27 @@ impl TypeContext {
         self.name_typeid_map.insert(name.to_string(), idx);
     }
 
-    pub fn get_type_by_name(&self, name: &str) -> Option<TypeHandle> {
-        if self.name_typeid_map.contains_key(name) {
-            let idx = *self.name_typeid_map.get(name).unwrap();
-            Some(self.get_type_by_idx(idx))
-        } else {
-            None
+    pub fn get_ctor_field_type_by_name(&self, typ: usize, name: &str) -> Option<TypeHandle> {
+        match &self.types[typ] {
+            Type::Enum(e) => {
+                let ctor_idx = e
+                    .constructors
+                    .iter()
+                    .position(|ctor| ctor.0 == name)
+                    .unwrap_or_else(|| panic!("{} not found", name));
+                let ctor = &e.constructors[ctor_idx];
+                ctor.1
+                    .clone()
+                    .map(|ty| (*self.type_typeid_map.get(&ty).unwrap(), ty))
+            }
+            _ => panic!("can't get fields of non enum type"),
         }
+    }
+
+    pub fn get_type_by_name(&self, name: &str) -> Option<TypeHandle> {
+        self.name_typeid_map
+            .get(name)
+            .map(|x| self.get_type_by_idx(*x))
     }
 
     pub fn tuple_type(&mut self, fields: Vec<Type>) -> TypeHandle {
@@ -175,8 +228,8 @@ impl TypeContext {
     }
 
     fn insert_type_or_get(&mut self, typ: Type) -> TypeHandle {
-        if self.type_typeid_map.contains_key(&typ) {
-            return (*self.type_typeid_map.get(&typ).unwrap(), typ);
+        if let Some(id) = self.type_typeid_map.get(&typ) {
+            return (*id, typ);
         }
 
         let self_index = self.types.len();
@@ -186,54 +239,23 @@ impl TypeContext {
         (self_index, typ)
     }
 
-    fn add_external(&mut self) {
+    fn add_primitive(&mut self, primitive: PrimitiveType, name: Option<&str>) {
+        let idx: usize = primitive.clone().into();
+        let typ: Type = primitive.into();
+        self.types.push(typ.clone());
+        self.type_typeid_map.insert(typ, idx);
+        if let Some(name) = name {
+            self.name_typeid_map.insert(name.to_string(), idx);
+        }
     }
 
-    fn add_primitive(&mut self) {
-        let b: Type = Primitive {
-            typ: PrimitiveType::Bool,
-        }
-        .into();
-
-        let i: Type = Primitive {
-            typ: PrimitiveType::Int32,
-        }
-        .into();
-
-        let u: Type = Primitive {
-            typ: PrimitiveType::Unit,
-        }
-        .into();
-
-        let s: Type = Primitive {
-            typ: PrimitiveType::Str,
-        }
-        .into();
-
-        self.types.clear();
-
-        let (bi, ii, ui, si) = (0, 1, 2, 3);
-
-        self.types.push(b.clone());
-        self.types.push(i.clone());
-        self.types.push(u.clone());
-        self.types.push(s.clone());
-
-        self.type_typeid_map.insert(b, bi);
-        self.type_typeid_map.insert(i, ii);
-        self.type_typeid_map.insert(u, ui);
-        self.type_typeid_map.insert(s, si);
-
-        self.name_typeid_map.insert("bool".to_string(), bi);
-        self.name_typeid_map.insert("i32".to_string(), ii);
-        self.name_typeid_map.insert("str".to_string(), si);
-
-        self.stypes = SingletonType {
-            bool: bi,
-            i32: ii,
-            str: si,
-            unit: ui,
-        };
+    fn add_primitives(&mut self) {
+        // NOTE: be the same order with constants in SingletonType
+        self.add_primitive(PrimitiveType::Object, None);
+        self.add_primitive(PrimitiveType::Bool, Some("bool"));
+        self.add_primitive(PrimitiveType::Int32, Some("i32"));
+        self.add_primitive(PrimitiveType::Str, Some("str"));
+        self.add_primitive(PrimitiveType::Unit, None);
     }
 
     pub fn refine_all_opaque_type(&mut self) {
@@ -296,5 +318,44 @@ impl TypeContext {
         for (idx, ty) in self.types.iter().enumerate() {
             TypeContext::collect_constructor(constructors, idx, ty);
         }
+    }
+
+    pub fn is_t1_opaque_of_t2(&self, t1: usize, t2: usize) -> bool {
+        match self.get_type_by_idx(t1).1 {
+            Type::Opaque(opaque) => *opaque.refer.as_ref().left().unwrap() == t2,
+            _ => false,
+        }
+    }
+
+    pub fn is_object_type(&self, t1: usize) -> bool {
+        t1 == self.singleton_type(PrimitiveType::Object).0
+    }
+
+    pub fn is_type_pure_eq(&self, t1: usize, t2: usize) -> bool {
+        t1 == t2
+    }
+
+    pub fn is_type_opaque_eq(&self, t1: usize, t2: usize) -> bool {
+        let t1 = self.get_type_by_idx(t1).1;
+        let t2 = self.get_type_by_idx(t2).1;
+        match (t1, t2) {
+            (Type::Opaque(opaque1), Type::Opaque(opaque2)) => self.is_type_eq(
+                *opaque1.refer.as_ref().left().unwrap(),
+                *opaque2.refer.as_ref().left().unwrap(),
+            ),
+            _ => false,
+        }
+    }
+
+    pub fn is_type_eq(&self, t1: usize, t2: usize) -> bool {
+        self.is_type_pure_eq(t1, t2) || self.is_type_opaque_eq(t1, t2)
+    }
+
+    pub fn is_compatible(&self, t1: usize, t2: usize) -> bool {
+        self.is_type_eq(t1, t2)
+            || self.is_object_type(t1)
+            || self.is_object_type(t2)
+            || self.is_t1_opaque_of_t2(t1, t2)
+            || self.is_t1_opaque_of_t2(t2, t1)
     }
 }

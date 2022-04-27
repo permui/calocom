@@ -10,10 +10,10 @@ use libc::putchar;
 /// Module: M 3 std
 /// Module: M 2 io
 /// Polymorphic Function: PF 5 print
-/// Parameter 0: P0_ o: Calocom.object
+/// Parameter 0: P0_ Calocom.object
 /// Return Type: RT Calocom.unit
 #[no_mangle]
-pub unsafe extern "C" fn _CM3stdM2ioPF5printP0_1oCoRTCu(p: *const _Object) -> *const _Object {
+pub unsafe extern "C" fn _CM3stdM2ioPF5printP0_CoRTCu(p: *const _Object) -> *const _Object {
     __calocom_runtime_print_object(p);
     __calocom_runtime_alloc_unit()
 }
@@ -26,10 +26,10 @@ pub unsafe extern "C" fn _CM3stdM2ioPF5printP0_1oCoRTCu(p: *const _Object) -> *c
 /// Module: M 3 std
 /// Module: M 2 io
 /// Polymorphic Function: PF 7 println
-/// Parameter 0: P0_ o: Calocom.object
+/// Parameter 0: P0_ Calocom.object
 /// Return Type: RT Calocom.unit
 #[no_mangle]
-pub unsafe extern "C" fn _CM3stdM2ioPF7printlnP0_1oCoRTCu(p: *const _Object) -> *const _Object {
+pub unsafe extern "C" fn _CM3stdM2ioPF7printlnP0_CoRTCu(p: *const _Object) -> *const _Object {
     __calocom_runtime_print_object(p);
     #[cfg(windows)]
     putchar('\r' as c_int);

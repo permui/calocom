@@ -104,7 +104,7 @@ pub enum TypedArgument {
     AtVar(String, usize),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum TypedASTBinOp {
     Plus,
     Sub,
@@ -113,7 +113,7 @@ pub enum TypedASTBinOp {
     Mod,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum TypedASTLiteral {
     Int(i32),
     Str(String),
@@ -141,10 +141,10 @@ pub struct TypedASTConstructorVar {
 
 #[derive(Debug, Default)]
 pub struct TypedAST {
-    ty_ctx: TypeContext,
-    imports: HashMap<String, TypedASTRefPath>,
-    constructors: HashMap<String, usize>,
-    module: Vec<TypedFuncDef>,
+    pub ty_ctx: TypeContext,
+    pub imports: HashMap<String, TypedASTRefPath>,
+    pub constructors: HashMap<String, usize>,
+    pub module: Vec<TypedFuncDef>,
 }
 
 impl From<&crate::ast::BinOp> for TypedASTBinOp {
@@ -165,6 +165,18 @@ impl From<&crate::ast::Literal> for TypedASTLiteral {
             crate::ast::Literal::Int(i) => TypedASTLiteral::Int(*i),
             crate::ast::Literal::Str(s) => TypedASTLiteral::Str(s.clone()),
             crate::ast::Literal::Bool(b) => TypedASTLiteral::Bool(*b),
+        }
+    }
+}
+
+impl From<&crate::ast::Pattern> for Pattern {
+    fn from(pat: &crate::ast::Pattern) -> Self {
+        match pat {
+            crate::ast::Pattern::Lit(lit) => Self::Lit(lit.into()),
+            crate::ast::Pattern::Con(ctor_var) => Self::Con(TypedASTConstructorVar {
+                name: ctor_var.name.clone(),
+                inner: ctor_var.inner.clone(),
+            }),
         }
     }
 }
@@ -263,7 +275,7 @@ impl TypedAST {
 
         let typed_expr = self.check_type_of_expr(&stmt.expr);
 
-        if !self.is_compatible(typ, typed_expr.typ) {
+        if !self.ty_ctx.is_compatible(typ, typed_expr.typ) {
             panic!("inconsistent type when assigning to {}", name);
         }
 
@@ -285,7 +297,7 @@ impl TypedAST {
 
         let typed_expr = self.check_type_of_expr(expr);
 
-        if !self.is_compatible(t, typed_expr.typ) {
+        if !self.ty_ctx.is_compatible(t, typed_expr.typ) {
             panic!("initializer of variable {} has incorrect type", var_name);
         }
 
@@ -313,8 +325,61 @@ impl TypedAST {
         }
     }
 
-    fn check_type_of_external_call(&mut self, call: &crate::ast::CallExpr) -> TypedExpr {
-        todo!()
+    fn check_type_of_external_call(
+        &mut self,
+        path: &crate::ast::RefPath,
+        gen: Option<Type>,
+        typed_args: Vec<TypedArgument>,
+    ) -> TypedExpr {
+        let call_path = &mut path.items.clone();
+        let mut full_path = self
+            .imports
+            .get(call_path.first().unwrap())
+            .unwrap()
+            .items
+            .clone();
+        full_path.pop();
+        full_path.append(call_path);
+        if let Some(ty) = self
+            .ty_ctx
+            .find_external_polymorphic_function_type(&full_path[..])
+        {
+            if ty.1.len() != typed_args.len() {
+                panic!(
+                    "wrong number of arguments: expect {} but given {}",
+                    ty.1.len(),
+                    typed_args.len()
+                );
+            }
+
+            for (idx, (typ, typed_arg)) in ty.1.iter().zip(typed_args.iter()).enumerate() {
+                match typed_arg {
+                    TypedArgument::Expr(e) => {
+                        if !self.ty_ctx.is_compatible(*typ, e.typ) {
+                            panic!("argument {} type incorrect", idx);
+                        }
+                    }
+                    TypedArgument::AtVar(_, atvar_typ) => {
+                        if !self.ty_ctx.is_compatible(*typ, *atvar_typ) {
+                            panic!("argument {} type incorrect", idx);
+                        }
+                    }
+                }
+            }
+
+            let typed_call = TypedCallExpr {
+                path: TypedASTRefPath { items: full_path },
+                gen,
+                args: typed_args,
+            };
+
+            TypedExpr {
+                typ: ty.0,
+                expr: Box::new(ExprEnum::CallExpr(typed_call)),
+            }
+        } else {
+            panic!("not callable: {}", full_path.join(""));
+        }
     }
 
     fn check_type_of_call(&mut self, call: &crate::ast::CallExpr) -> TypedExpr {
@@ -328,26 +393,26 @@ impl TypedAST {
             .collect();
 
         // it's a constructor with arguments
-        if path.items.len() == 1 && self.constructors.contains_key(first_item) {
-            let typ = *self.constructors.get(first_item).unwrap();
+        if path.items.len() == 1 {
+            if let Some(&typ) = self.constructors.get(first_item) {
+                let ctor_expr = TypedCtorExpr {
+                    typ,
+                    name: path.items[0].clone(),
+                    args,
+                };
 
-            let ctor_expr = TypedCtorExpr {
-                typ,
-                name: path.items[0].clone(),
-                args,
-            };
-
-            return TypedExpr {
-                typ,
-                expr: Box::new(ExprEnum::CtorExpr(ctor_expr)),
-            };
-        }
-
-        if self.imports.contains_key(first_item) {
-            return self.check_type_of_external_call(call);
+                return TypedExpr {
+                    typ,
+                    expr: Box::new(ExprEnum::CtorExpr(ctor_expr)),
+                };
+            }
         }
 
         let new_generic = gen.as_ref().map(|ty| self.resolve_type(ty, false).1);
+
+        if self.imports.contains_key(first_item) {
+            return self.check_type_of_external_call(path, new_generic, args);
+        }
 
         if let Some(ty) = self.ty_ctx.find_function_type(first_item) {
             if ty.1.len() != args.len() {
@@ -361,12 +426,12 @@ impl TypedAST {
             for (idx, (typ, typed_arg)) in ty.1.iter().zip(args.iter()).enumerate() {
                 match typed_arg {
                     TypedArgument::Expr(e) => {
-                        if !self.is_compatible(*typ, e.typ) {
+                        if !self.ty_ctx.is_compatible(*typ, e.typ) {
                             panic!("argument {} type incorrect", idx);
                         }
                     }
                     TypedArgument::AtVar(_, atvar_typ) => {
-                        if !self.is_compatible(*typ, *atvar_typ) {
+                        if !self.ty_ctx.is_compatible(*typ, *atvar_typ) {
                             panic!("argument {} type incorrect", idx);
                         }
                     }
@@ -389,8 +454,7 @@ impl TypedAST {
     }
 
     fn check_type_of_var(&mut self, var: &str) -> TypedExpr {
-        if self.constructors.contains_key(var) {
-            let typ = *self.constructors.get(var).unwrap();
+        if let Some(&typ) = self.constructors.get(var) {
             let ctor_expr = TypedCtorExpr {
                 typ,
                 name: var.to_string(),
@@ -416,7 +480,77 @@ impl TypedAST {
     }
 
     fn check_type_of_match(&mut self, mexp: &crate::ast::MatchExpr) -> TypedExpr {
-        todo!()
+        let crate::ast::MatchExpr { e, arms } = mexp;
+        let match_expr = self.check_type_of_expr(e);
+        let mut typed_arms = vec![];
+        for (pat, expr) in arms {
+            match pat {
+                crate::ast::Pattern::Lit(lit) => {
+                    let typ = self.check_type_of_literal(lit).typ;
+                    if self.ty_ctx.is_compatible(typ, match_expr.typ) {
+                        typed_arms.push(self.check_type_of_expr(expr));
+                    } else {
+                        panic!("invalid literal for match arm: type is not compatible")
+                    }
+                }
+                crate::ast::Pattern::Con(crate::ast::ConstructorVar { name, inner }) => {
+                    if let Some(&typ) = self.constructors.get(name) {
+                        if self.ty_ctx.is_compatible(typ, match_expr.typ) {
+                            if let Some(bind) = inner {
+                                let (typ, _) =
+                                    self.ty_ctx.get_ctor_field_type_by_name(typ, name).unwrap();
+                                self.ty_ctx.env.entry();
+                                self.ty_ctx.env.insert_symbol(bind.to_string(), typ);
+                                typed_arms.push(self.check_type_of_expr(expr));
+                                self.ty_ctx.env.exit();
+                            } else {
+                                typed_arms.push(self.check_type_of_expr(expr));
+                            }
+                        } else {
+                            panic!("invalid constructor for match arm: constructor belongs to another type")
+                        }
+                    } else {
+                        panic!("invalid constructor for match arm: constructor doesn't exist")
+                    };
+                }
+            }
+        }
+
+        let first_arm_typ = typed_arms.first().unwrap().typ;
+
+        // requires same, because we don't expect to infer opaque type
+        if !typed_arms.iter().all(|expr| expr.typ == first_arm_typ) {
+            panic!("match arm returns incompatible types")
+        }
+
+        TypedExpr {
+            typ: first_arm_typ,
+            expr: Box::new(ExprEnum::MatchExpr(TypedMatchExpr {
+                e: match_expr,
+                arms: typed_arms
+                    .into_iter()
+                    .zip(arms)
+                    .map(|(expr, (pat, _))| (pat.into(), expr))
+                    .collect(),
+                typ: first_arm_typ,
+            })),
+        }
+    }
+
+    fn check_type_of_literal(&mut self, lit: &crate::ast::Literal) -> TypedExpr {
+        let lit: TypedASTLiteral = lit.into();
+
+        let typ = match lit {
+            TypedASTLiteral::Int(_) => self.ty_ctx.singleton_type(PrimitiveType::Int32),
+            TypedASTLiteral::Str(_) => self.ty_ctx.singleton_type(PrimitiveType::Str),
+            TypedASTLiteral::Bool(_) => self.ty_ctx.singleton_type(PrimitiveType::Bool),
+        }
+        .0;
+
+        TypedExpr {
+            typ,
+            expr: Box::new(ExprEnum::Lit(lit)),
+        }
     }
 
     fn check_type_of_expr(&mut self, expr: &crate::ast::Expr) -> TypedExpr {
@@ -435,7 +569,7 @@ impl TypedAST {
                 let left = self.check_type_of_expr(lhs);
                 let right = self.check_type_of_expr(rhs);
 
-                if !self.is_compatible(left.typ, right.typ) {
+                if !self.ty_ctx.is_compatible(left.typ, right.typ) {
                     panic!("invalid operator type");
                 }
 
@@ -455,21 +589,7 @@ impl TypedAST {
             }
             crate::ast::Expr::MatchExpr(m) => self.check_type_of_match(m),
             crate::ast::Expr::Var(var) => self.check_type_of_var(var),
-            crate::ast::Expr::Lit(lit) => {
-                let lit: TypedASTLiteral = lit.into();
-
-                let typ = match lit {
-                    TypedASTLiteral::Int(_) => self.ty_ctx.singleton_type(PrimitiveType::Int32),
-                    TypedASTLiteral::Str(_) => self.ty_ctx.singleton_type(PrimitiveType::Str),
-                    TypedASTLiteral::Bool(_) => self.ty_ctx.singleton_type(PrimitiveType::Bool),
-                }
-                .0;
-
-                TypedExpr {
-                    typ,
-                    expr: Box::new(ExprEnum::Lit(lit)),
-                }
-            }
+            crate::ast::Expr::Lit(lit) => self.check_type_of_literal(lit),
         }
     }
 
@@ -561,7 +681,7 @@ impl TypedAST {
         }
 
         let body = self.check_type_of_bracket_body(&func.body);
-        if !self.is_compatible(body.typ, declared_return_type) {
+        if !self.ty_ctx.is_compatible(body.typ, declared_return_type) {
             panic!("return type inconsistent: {}", func.name);
         }
 
@@ -575,28 +695,23 @@ impl TypedAST {
         });
     }
 
-    fn is_t1_opaque_of_t2(&self, t1: &Type, t2: usize) -> bool {
-        match t1 {
-            Type::Opaque(opaque) => *opaque.refer.as_ref().left().unwrap() == t2,
-            _ => false,
-        }
-    }
-
-    fn is_compatible(&self, t1: usize, t2: usize) -> bool {
-        if t1 != t2 {
-            let ty1 = self.ty_ctx.get_type_by_idx(t1).1;
-            self.is_t1_opaque_of_t2(&ty1, t2) || {
-                let ty2 = self.ty_ctx.get_type_by_idx(t2).1;
-                self.is_t1_opaque_of_t2(&ty2, t1)
-            }
-        } else {
-            true
-        }
+    fn create_library_function_signature(&mut self) {
+        let unit = self.ty_ctx.singleton_type(PrimitiveType::Unit).0;
+        let object = self.ty_ctx.singleton_type(PrimitiveType::Object).0;
+        self.ty_ctx.associate_external_polymorphic_function_type(
+            &["std", "io", "print"].map(|s| s.to_string()),
+            (unit, [object].into()),
+        );
+        self.ty_ctx.associate_external_polymorphic_function_type(
+            &["std", "io", "println"].map(|s| s.to_string()),
+            (unit, [object].into()),
+        );
     }
 
     pub fn create_from_ast(module: &crate::ast::Module) -> Self {
         let mut typed_ast = TypedAST::default();
 
+        typed_ast.create_library_function_signature();
         typed_ast.resolve_import(module);
 
         // Resolve type means transforming types in AST

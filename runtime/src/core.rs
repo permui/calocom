@@ -1,3 +1,6 @@
+use core::ptr::addr_of;
+use core::ptr::addr_of_mut;
+
 use libc::c_char;
 use libc::c_void;
 use libc::calloc;
@@ -113,7 +116,7 @@ pub extern "C" fn __calocom_runtime_alloc_string_literal(
     let buf = __calocom_runtime_alloc_string(length);
     unsafe {
         memcpy(
-            (&mut (*buf).data).as_mut_ptr() as *mut c_void,
+            addr_of_mut!((*buf).data) as *mut c_void,
             s as *const c_void,
             length,
         );
@@ -133,7 +136,7 @@ pub unsafe fn __calocom_runtime_print_object(p: *const _Object) {
         _ObjectType::Str => {
             let s = p as *const _String;
             let fmt = const_cstr!("%.*s");
-            printf(fmt.as_ptr(), (*s).len, &(*s).data as *const c_char);
+            printf(fmt.as_ptr(), (*s).len, addr_of!((*s).data) as *const c_char);
         }
         _ObjectType::I32 => {
             let i = p as *const _Int32;

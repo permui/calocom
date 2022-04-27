@@ -1,48 +1,33 @@
-use std::{
-    collections::{HashMap, HashSet},
-    panic,
-    rc::Rc,
-    vec,
-};
+use std::cell::RefCell;
+use std::collections::HashSet;
+use std::fmt::format;
+use std::rc::Rc;
+use std::{collections::HashMap, panic, vec};
 
-use crate::{ast::NameTypeBind, sym::SymbolTable};
+use crate::sym::SymbolTable;
 
 use super::type_context::*;
-use super::unique_name::UniqueName;
+use super::typed_ast::*;
+use super::unique_name::*;
 
 pub type SymTable<T> = Vec<HashMap<String, T>>;
-
-#[derive(Debug, Default)]
-pub struct Module {
-    pub data_defs: Vec<DataDef>,
-    pub func_defs: Vec<FuncDef>,
-}
-
-#[derive(Debug)]
-pub struct RefPath {
-    pub items: Vec<String>,
-}
-
-#[derive(Debug)]
-pub struct DataDef {
-    pub name: String,
-    pub con_list: Type,
-}
+type RefPath = TypedASTRefPath;
 
 #[derive(Debug, Default)]
 pub struct FuncDef {
     pub name: String,
     pub param_def: Vec<(bool, Rc<VarDef>)>,
-    pub var_def: Vec<Rc<VarDef>>,
-    pub tmp_def: Vec<Rc<VarDef>>,
-    pub ret_def: Option<Rc<VarDef>>,
-    pub blocks: Vec<Rc<Block>>,
+    pub var_def: Vec<Rc<VarDef>>, // represents a reference to a local stack slot
+    pub tmp_def: Vec<Rc<VarDef>>, // be the same as var_def but it's not named by users
+    pub mem_ref: HashSet<Rc<VarDef>>, // only represents a reference to a memory position
+    pub ret_def: Option<Rc<VarDef>>, // represents the reference to the stack slot where the return value locates
+    pub blocks: Vec<Rc<RefCell<Block>>>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Hash, PartialEq, Eq)]
 pub struct VarDef {
     pub name: String,
-    pub typ: Type,
+    pub typ: usize,
 }
 
 #[derive(Debug)]
@@ -62,60 +47,26 @@ pub struct Stmt {
 pub enum Terminator {
     Cond(Box<Value>, Rc<Block>, Rc<Block>),
     Select(Box<Value>, Vec<Rc<Block>>),
-    Jump(Rc<Block>),
+    Jump(Rc<RefCell<Block>>),
     Return,
 }
 
-#[derive(Debug)]
-pub enum BinOp {
-    Plus,
-    Sub,
-    Mult,
-    Div,
-    Mod,
-}
-
-impl From<&crate::ast::BinOp> for BinOp {
-    fn from(op: &crate::ast::BinOp) -> Self {
-        match op {
-            crate::ast::BinOp::Plus => BinOp::Plus,
-            crate::ast::BinOp::Sub => BinOp::Sub,
-            crate::ast::BinOp::Mult => BinOp::Mult,
-            crate::ast::BinOp::Div => BinOp::Div,
-            crate::ast::BinOp::Mod => BinOp::Mod,
-        }
-    }
-}
+pub type BinOp = TypedASTBinOp;
 
 #[derive(Debug)]
 pub enum Value {
-    Call(RefPath, Box<Value>, Box<Value>),
+    Call(RefPath, Vec<Value>),
     Op(BinOp, Box<Value>, Box<Value>),
     Imm(Literal),
-    Intrinsic(String, Vec<Box<Value>>),
+    Intrinsic(&'static str, Vec<Value>),
     VarRef(Rc<VarDef>),
 }
 
-#[derive(Debug)]
-pub enum Literal {
-    Int(i32),
-    Str(String),
-    Bool(bool),
-}
-
-impl From<&crate::ast::Literal> for Literal {
-    fn from(lit: &crate::ast::Literal) -> Self {
-        match lit {
-            crate::ast::Literal::Int(i) => Literal::Int(*i),
-            crate::ast::Literal::Str(s) => Literal::Str(s.clone()),
-            crate::ast::Literal::Bool(b) => Literal::Bool(*b),
-        }
-    }
-}
+pub type Literal = TypedASTLiteral;
 
 #[derive(Debug)]
 struct FunctionBuilder<'a> {
-    pub position: Option<Rc<Block>>,
+    pub position: Option<Rc<RefCell<Block>>>,
     pub namer: UniqueName,
     pub table: SymTable<Rc<VarDef>>,
     pub func: &'a mut FuncDef,
@@ -125,164 +76,255 @@ struct FunctionBuilder<'a> {
 pub struct MiddleIR {
     ty_ctx: TypeContext,
     imports: HashMap<String, RefPath>,
-    constructors: HashSet<String>,
-    module: Module,
+    constructors: HashMap<String, usize>,
+    module: Vec<FuncDef>,
 }
 
 impl MiddleIR {
-    fn resolve_type_with_at(&mut self, ast_type: &crate::ast::Type) -> (usize, Type) {
-        let (idx, _typ) = self.resolve_type(ast_type, false);
-
-        self.ty_ctx.opaque_type(idx)
+    fn convert_asgn(&mut self, name: &str, expr: &TypedExpr, builder: &mut FunctionBuilder) {
+        let var = Rc::clone(
+            builder
+                .table
+                .find_symbol(name)
+                .unwrap_or_else(|| panic!("variable {} not defined", name)),
+        );
+        self.convert_expr(expr, builder, Some(var));
     }
 
-    fn resolve_type(&mut self, ast_type: &crate::ast::Type, allow_opaque: bool) -> (usize, Type) {
-        match ast_type {
-            crate::ast::Type::Arrow(_, _) => unimplemented!(),
-
-            crate::ast::Type::Tuple(tuple) => {
-                let mut fields = vec![];
-                for ty in tuple {
-                    let (_, field) = self.resolve_type(ty, allow_opaque);
-                    fields.push(field);
-                }
-
-                self.ty_ctx.tuple_type(fields)
-            }
-
-            crate::ast::Type::Enum(e) => {
-                let mut ctors = vec![];
-
-                for crate::ast::ConstructorType { name, inner } in e {
-                    let ty = if inner.is_some() {
-                        let (_, ty) = self.resolve_type(inner.as_ref().unwrap(), allow_opaque);
-                        Some(ty)
-                    } else {
-                        None
-                    };
-                    ctors.push((name.clone(), ty));
-                }
-
-                self.ty_ctx.enum_type(ctors)
-            }
-
-            crate::ast::Type::Unit => self.ty_ctx.singleton_type(PrimitiveType::Unit),
-
-            crate::ast::Type::Named(s) => {
-                if let Some(handle) = self.ty_ctx.get_type_by_name(s) {
-                    handle
-                } else if allow_opaque {
-                    self.ty_ctx.opaque_name_type(s)
-                } else {
-                    panic!("unresolved type: {}", s);
-                }
-            }
-        }
-    }
-
-    fn resolve_all_type(&mut self, module: &crate::ast::Module) {
-        for crate::ast::DataDef { name, con_list } in &module.data_defs {
-            let (idx, _typ) = self.resolve_type(con_list, true);
-            self.ty_ctx.associate_name_and_idx(name, idx)
-        }
-    }
-
-    fn resolve_import(&mut self, module: &crate::ast::Module) {
-        let imports = &module.imports;
-        for import in imports {
-            let items = import.items.clone();
-            let path = RefPath { items };
-            let name = path.items.last().expect("empty import").clone();
-            if self.imports.contains_key(&name) {
-                panic!(
-                    "conflict import: {} and {}",
-                    path.items.join("."),
-                    self.imports.get(&name).unwrap().items.join(".")
-                )
-            }
-            self.imports.insert(name, path);
-        }
-    }
-
-    fn convert_asgn(&mut self, name: &str, expr: &crate::ast::Expr, builder: &mut FunctionBuilder) {
-        self.convert_expr(expr, builder, Some(name));
-    }
-
-    fn convert_construction(&mut self) -> Value {
+    fn convert_ctor_expr(&mut self, x: &TypedCtorExpr) -> Value {
+        let TypedCtorExpr { typ, name, args } = x;
         todo!()
+    }
+
+    fn convert_match_expr(&mut self, x: &TypedMatchExpr) -> Value {
+        let TypedMatchExpr { e, arms, typ } = x;
+        todo!()
+    }
+
+    fn convert_call_expr(&mut self, x: &TypedCallExpr) -> Value {
+        let TypedCallExpr { path, gen, args } = x;
+        todo!()
+    }
+
+    fn convert_bracket_expr(&mut self, builder: &mut FunctionBuilder, x: &TypedBracketBody) -> Value {
+        let TypedBracketBody { stmts, ret_expr, typ } = x;
+        builder.table.entry();
+
+        let bracket_out = self.create_variable_definition("bracket.out", *typ);
+
+        for stmt in stmts {
+            self.convert_stmt(stmt, builder)
+        }
+
+        if let Some(ret_expr) = ret_expr {
+            self.convert_expr(ret_expr, builder, Some(Rc::clone(&bracket_out)));
+        }
+        
+        builder.table.exit();
+        Value::VarRef(bracket_out)
+    }
+
+    fn convert_arith_expr(&mut self, builder: &mut FunctionBuilder, x: &TypedArithExpr) -> Value {
+        let TypedArithExpr { lhs, rhs, op, typ } = x;
+
+        let lhs_out = self.create_variable_definition("arith.lhs", *typ);
+        let rhs_out = self.create_variable_definition("arith.rhs", *typ);
+
+        builder.func.tmp_def.push(Rc::clone(&lhs_out));
+        builder.func.tmp_def.push(Rc::clone(&rhs_out));
+
+        self.convert_expr(lhs, builder, Some(Rc::clone(&lhs_out)));
+        self.convert_expr(rhs, builder, Some(Rc::clone(&rhs_out)));
+
+        Value::Op(
+            op.clone(),
+            Box::new(Value::VarRef(lhs_out)),
+            Box::new(Value::VarRef(rhs_out)),
+        )
+    }
+
+    fn convert_variable_expr(&mut self, builder: &mut FunctionBuilder, x: &str) -> Value {
+        let var = builder
+            .table
+            .find_symbol(x)
+            .unwrap_or_else(|| panic!("variable {} not defined", x));
+        Value::VarRef(var.clone())
+    }
+
+    fn convert_literal_expr(&mut self, x: &Literal) -> Value {
+        Value::Imm(x.clone())
+    }
+
+    fn create_value_from_expr(&mut self, builder: &mut FunctionBuilder, expr: &ExprEnum) -> Value {
+        match expr {
+            ExprEnum::MatchExpr(x) => self.convert_match_expr(x),
+            ExprEnum::BraExpr(x) => self.convert_bracket_expr(builder, x),
+            ExprEnum::CallExpr(x) => self.convert_call_expr(x),
+            ExprEnum::ArithExpr(x) => self.convert_arith_expr(builder, x),
+            ExprEnum::CtorExpr(x) => self.convert_ctor_expr(x),
+            ExprEnum::Var(x) => self.convert_variable_expr(builder, x.as_str()),
+            ExprEnum::Lit(x) => self.convert_literal_expr(x),
+        }
+    }
+
+    fn create_unboxed_value(
+        &self,
+        func: &mut FuncDef,
+        namer: &mut UniqueName,
+        name: &str,
+        typ: usize,
+    ) -> Rc<VarDef> {
+        let name = namer.next_name(name);
+        let base_type: Opaque = self.ty_ctx.get_type_by_idx(typ).1.into();
+        let unboxed =
+            self.create_variable_definition(name.as_str(), base_type.refer.left().unwrap());
+        func.mem_ref.insert(Rc::clone(&unboxed));
+        unboxed
     }
 
     fn convert_expr(
         &mut self,
-        expr: &crate::ast::Expr,
+        expr: &TypedExpr,
         builder: &mut FunctionBuilder,
-        out: Option<&str>,
+        out: Option<Rc<VarDef>>,
     ) {
         let mut stmt = Stmt::default();
 
-        if let Some(name) = out {
-            let var = builder
-                .table
-                .find_symbol(name)
-                .expect("variable not defined");
-            stmt.left = Some(Rc::clone(var));
-        }
+        let TypedExpr { expr, typ } = expr;
+        let val = self.create_value_from_expr(builder, expr);
+        let insert_position = &mut builder.position.as_ref().unwrap().borrow_mut().stmts;
+        if let Some(lhs) = out {
+            let t1 = lhs.typ;
+            let t2 = *typ;
 
-        stmt.right = Some(match expr {
-            crate::ast::Expr::MatchExpr(_) => todo!(),
-            crate::ast::Expr::BraExpr(_) => todo!(),
-            crate::ast::Expr::CallExpr(_) => todo!(),
-            crate::ast::Expr::ArithExpr(arith) => {
-                todo!()
-            }
-            crate::ast::Expr::Var(name) => {
-                if self.constructors.contains(name) {
-                    self.convert_construction()
+            if !self.ty_ctx.is_type_pure_eq(t1, t2) {
+                if self.ty_ctx.is_object_type(t1) {
+                    stmt.left = Some(Rc::clone(&lhs));
+                    stmt.right = Some(Value::Intrinsic("calocom.erase_type", vec![val]));
+                } else if self.ty_ctx.is_object_type(t2) {
+                    stmt.left = Some(Rc::clone(&lhs));
+                    stmt.right = Some(Value::Intrinsic("calocom.specialize_type", vec![val]));
+                } else if self.ty_ctx.is_t1_opaque_of_t2(t1, t2) {
+                    let unboxed = self.create_unboxed_value(
+                        builder.func,
+                        &mut builder.namer,
+                        format!("{}.unboxed", lhs.name).as_str(),
+                        t1,
+                    );
+                    builder.func.tmp_def.push(Rc::clone(&unboxed));
+
+                    let unbox_stmt = Stmt {
+                        left: Some(Rc::clone(&unboxed)),
+                        right: Some(Value::Intrinsic(
+                            "calocom.unbox",
+                            vec![Value::VarRef(Rc::clone(&lhs))],
+                        )),
+                        ..Default::default()
+                    };
+
+                    insert_position.push(unbox_stmt);
+
+                    stmt.left = Some(unboxed);
+                    stmt.right = Some(val);
+                } else if self.ty_ctx.is_t1_opaque_of_t2(t2, t1) {
+                    let unboxed = self.create_unboxed_value(
+                        builder.func,
+                        &mut builder.namer,
+                        "expr.unboxed",
+                        t2,
+                    );
+                    builder.func.tmp_def.push(Rc::clone(&unboxed));
+
+                    let unbox_stmt = Stmt {
+                        left: Some(Rc::clone(&unboxed)),
+                        right: Some(val),
+                        ..Default::default()
+                    };
+
+                    insert_position.push(unbox_stmt);
+
+                    stmt.left = Some(Rc::clone(&lhs));
+                    stmt.right = Some(Value::VarRef(unboxed));
+                } else if self.ty_ctx.is_type_opaque_eq(t1, t2) {
+                    let unboxed1 = self.create_unboxed_value(
+                        builder.func,
+                        &mut builder.namer,
+                        format!("{}.unboxed", lhs.name).as_str(),
+                        t1,
+                    );
+
+                    let unboxed2 = self.create_unboxed_value(
+                        builder.func,
+                        &mut builder.namer,
+                        "expr.unboxed",
+                        t2,
+                    );
+
+                    let unbox_rhs = Stmt {
+                        left: Some(Rc::clone(&unboxed2)),
+                        right: Some(val),
+                        ..Default::default()
+                    };
+
+                    let unbox_lhs = Stmt {
+                        left: Some(Rc::clone(&unboxed1)),
+                        right: Some(Value::Intrinsic(
+                            "calocom.unbox",
+                            vec![Value::VarRef(Rc::clone(&lhs))],
+                        )),
+                        ..Default::default()
+                    };
+
+                    builder.func.tmp_def.push(Rc::clone(&unboxed1));
+                    builder.func.tmp_def.push(Rc::clone(&unboxed2));
+
+                    insert_position.push(unbox_lhs);
+                    insert_position.push(unbox_rhs);
+
+                    stmt.left = Some(unboxed1);
+                    stmt.right = Some(Value::VarRef(unboxed2));
                 } else {
-                    Value::VarRef(Rc::clone(
-                        builder
-                            .table
-                            .find_symbol(name)
-                            .expect("variable not defined"),
-                    ))
+                    unreachable!()
                 }
             }
-            crate::ast::Expr::Lit(lit) => Value::Imm(lit.into()),
-        });
+        } else {
+            stmt.right = Some(val);
+        }
+
+        insert_position.push(stmt);
     }
 
-    fn convert_let(&mut self, stmt: &crate::ast::LetStmt, builder: &mut FunctionBuilder) {
-        let crate::ast::LetStmt {
+    fn convert_let(&mut self, stmt: &TypedLetStmt, builder: &mut FunctionBuilder) {
+        let TypedLetStmt {
             var_name,
-            typ,
+            var_typ,
             expr,
         } = stmt;
 
         let name = builder.namer.next_name(var_name);
-        let (_, typ) = self.resolve_type(typ, false);
-        let new_var = Rc::new(VarDef { name, typ });
+        let new_var = self.create_variable_definition(name.as_str(), *var_typ);
 
         builder
             .table
             .insert_symbol(var_name.clone(), Rc::clone(&new_var));
-        builder.func.tmp_def.push(new_var);
+        builder.func.var_def.push(new_var);
 
         self.convert_asgn(var_name, expr, builder);
     }
 
-    fn convert_stmt(&mut self, stmt: &crate::ast::Stmt, builder: &mut FunctionBuilder) {
+    fn convert_stmt(&mut self, stmt: &TypedASTStmt, builder: &mut FunctionBuilder) {
         match stmt {
-            crate::ast::Stmt::Let(stmt) => self.convert_let(stmt, builder),
-            crate::ast::Stmt::Asgn(stmt) => self.convert_asgn(&stmt.var_name, &stmt.expr, builder),
-            crate::ast::Stmt::Expr(stmt) => self.convert_expr(stmt, builder, None),
+            TypedASTStmt::Let(stmt) => self.convert_let(stmt, builder),
+            TypedASTStmt::Asgn(stmt) => self.convert_asgn(&stmt.var_name, &stmt.expr, builder),
+            TypedASTStmt::Expr(stmt) => self.convert_expr(stmt, builder, None),
         }
     }
 
     fn convert_bracket_body(
         &mut self,
-        body: &crate::ast::BracketBody,
+        body: &TypedBracketBody,
         builder: &mut FunctionBuilder,
-        out: Option<&str>,
+        out: Option<Rc<VarDef>>,
     ) {
         for stmt in &body.stmts {
             self.convert_stmt(stmt, builder)
@@ -292,57 +334,54 @@ impl MiddleIR {
         }
     }
 
-    fn convert_fn_definition(&mut self, func: &crate::ast::FuncDef) -> FuncDef {
+    fn create_variable_definition(&self, name: &str, typ: usize) -> Rc<VarDef> {
+        let name = name.to_string();
+        Rc::new(VarDef { name, typ })
+    }
+
+    fn convert_fn_definition(&mut self, func: &TypedFuncDef) -> FuncDef {
         let mut def = FuncDef {
             name: func.name.clone(),
             ..Default::default()
         };
 
-        // setup the return type and create the return value variable
-        let (_, typ) = self.resolve_type(&func.ret_type, false);
-        let name = "#ret.ptr".to_string();
-        let name_cpy = name.clone();
-        let ret = Rc::new(VarDef { name, typ });
+        // create the return value variable
+        let ret_name = "#ret.var".to_string();
+        let ret = self.create_variable_definition(ret_name.as_str(), func.ret_type);
         def.ret_def = Some(ret.clone());
 
         // setup the symbol table
         // insert the return value variable
         let mut sym_table: SymTable<Rc<VarDef>> = SymTable::new();
         sym_table.entry();
-        sym_table.insert_symbol(name_cpy, Rc::clone(&ret));
+        sym_table.insert_symbol(ret_name, Rc::clone(&ret));
 
         // initialize all parameters
-        for NameTypeBind {
+        for TypedBind {
             with_at,
             var_name,
             typ,
         } in &func.param_list
         {
-            let (_, typ) = if *with_at {
-                self.resolve_type(typ, false)
-            } else {
-                self.resolve_type_with_at(typ)
-            };
             let name = format!("#{}", var_name);
-            let name_cpy = name.clone();
-            let param = Rc::new(VarDef { name, typ });
+            let param = self.create_variable_definition(name.as_str(), *typ);
 
             // insert the parameter into symbol table
-            sym_table.insert_symbol(name_cpy, Rc::clone(&param));
+            sym_table.insert_symbol(name, Rc::clone(&param));
             def.param_def.push((*with_at, param));
         }
 
         // return block
-        let ret_block = Rc::new(Block {
+        let ret_block = Rc::new(RefCell::new(Block {
             terminator: Terminator::Return,
             stmts: vec![],
-        });
+        }));
 
         // add an empty entry block and set the insert point
-        let entry_block = Rc::new(Block {
+        let entry_block = Rc::new(RefCell::new(Block {
             terminator: Terminator::Jump(Rc::clone(&ret_block)),
             stmts: vec![],
-        });
+        }));
 
         let position = Rc::clone(&entry_block);
 
@@ -357,34 +396,43 @@ impl MiddleIR {
         };
 
         // convert the function body
-        self.convert_bracket_body(&func.body, &mut fn_builder, Some("#ret.ptr"));
+        self.convert_bracket_body(&func.body, &mut fn_builder, Some(Rc::clone(&ret)));
 
         // exit the symbol table scope
         sym_table.exit();
         def
     }
 
-    fn convert_ast(&mut self, module: &crate::ast::Module) {
-        for func in &module.func_defs {
+    fn convert_ast(&mut self, fn_def: &Vec<TypedFuncDef>) {
+        for func in fn_def {
             let new_def = self.convert_fn_definition(func);
-            self.module.func_defs.push(new_def);
+            self.module.push(new_def);
         }
     }
 
-    pub fn create_from_ast(module: &crate::ast::Module) -> Self {
-        let mut mir = MiddleIR::default();
+    pub fn create_from_ast(ty_ast: TypedAST) -> Self {
+        let TypedAST {
+            ty_ctx,
+            imports,
+            constructors,
+            module,
+        } = ty_ast;
 
-        mir.resolve_import(module);
-        mir.resolve_all_type(module);
-        mir.ty_ctx.refine_all_opaque_type();
-        mir.convert_ast(module);
+        let mut mir = MiddleIR {
+            ty_ctx,
+            imports,
+            constructors,
+            ..Default::default()
+        };
+
+        mir.convert_ast(&module);
 
         mir
     }
 }
 
-impl From<crate::ast::Module> for MiddleIR {
-    fn from(module: crate::ast::Module) -> Self {
-        MiddleIR::create_from_ast(&module)
+impl From<TypedAST> for MiddleIR {
+    fn from(ty_ast: TypedAST) -> Self {
+        MiddleIR::create_from_ast(ty_ast)
     }
 }

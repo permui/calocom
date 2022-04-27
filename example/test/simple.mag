@@ -1,3 +1,6 @@
+import std
+import std.io
+
 data A = U | V ;
 
 data T1 = C1(T2) ;
@@ -20,6 +23,20 @@ g: () -> str {
 	"hello, world"
 }
 
+add: (n: Nat, m: Nat) -> Nat {
+	match n {
+		O => m,
+		S(k) => S(add(k, m))
+	}
+}
+
+prim: (n : Nat) -> i32 {
+	match n {
+		O => 0,
+		S(k) => prim(k) + 1
+	}
+}
+
 main: () -> () {
 	let x : A = U;
 	let y : A = V;
@@ -27,4 +44,6 @@ main: () -> () {
 	let z : i32 = f(w);
 	let n : Nat = S(S(O));
 	swap(@x, @y);
+	std.io.print<i32>(w);
+	io.print<i32>(z);
 }
