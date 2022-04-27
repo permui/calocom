@@ -275,7 +275,7 @@ impl TypedAST {
 
         let typed_expr = self.check_type_of_expr(&stmt.expr);
 
-        if !self.is_compatible(typ, typed_expr.typ) {
+        if !self.ty_ctx.is_compatible(typ, typed_expr.typ) {
             panic!("inconsistent type when assigning to {}", name);
         }
 
@@ -297,7 +297,7 @@ impl TypedAST {
 
         let typed_expr = self.check_type_of_expr(expr);
 
-        if !self.is_compatible(t, typed_expr.typ) {
+        if !self.ty_ctx.is_compatible(t, typed_expr.typ) {
             panic!("initializer of variable {} has incorrect type", var_name);
         }
 
@@ -355,12 +355,12 @@ impl TypedAST {
             for (idx, (typ, typed_arg)) in ty.1.iter().zip(typed_args.iter()).enumerate() {
                 match typed_arg {
                     TypedArgument::Expr(e) => {
-                        if !self.is_compatible(*typ, e.typ) {
+                        if !self.ty_ctx.is_compatible(*typ, e.typ) {
                             panic!("argument {} type incorrect", idx);
                         }
                     }
                     TypedArgument::AtVar(_, atvar_typ) => {
-                        if !self.is_compatible(*typ, *atvar_typ) {
+                        if !self.ty_ctx.is_compatible(*typ, *atvar_typ) {
                             panic!("argument {} type incorrect", idx);
                         }
                     }
@@ -426,12 +426,12 @@ impl TypedAST {
             for (idx, (typ, typed_arg)) in ty.1.iter().zip(args.iter()).enumerate() {
                 match typed_arg {
                     TypedArgument::Expr(e) => {
-                        if !self.is_compatible(*typ, e.typ) {
+                        if !self.ty_ctx.is_compatible(*typ, e.typ) {
                             panic!("argument {} type incorrect", idx);
                         }
                     }
                     TypedArgument::AtVar(_, atvar_typ) => {
-                        if !self.is_compatible(*typ, *atvar_typ) {
+                        if !self.ty_ctx.is_compatible(*typ, *atvar_typ) {
                             panic!("argument {} type incorrect", idx);
                         }
                     }
@@ -487,7 +487,7 @@ impl TypedAST {
             match pat {
                 crate::ast::Pattern::Lit(lit) => {
                     let typ = self.check_type_of_literal(lit).typ;
-                    if self.is_compatible(typ, match_expr.typ) {
+                    if self.ty_ctx.is_compatible(typ, match_expr.typ) {
                         typed_arms.push(self.check_type_of_expr(expr));
                     } else {
                         panic!("invalid literal for match arm: type is not compatible")
@@ -495,7 +495,7 @@ impl TypedAST {
                 }
                 crate::ast::Pattern::Con(crate::ast::ConstructorVar { name, inner }) => {
                     if let Some(&typ) = self.constructors.get(name) {
-                        if self.is_compatible(typ, match_expr.typ) {
+                        if self.ty_ctx.is_compatible(typ, match_expr.typ) {
                             if let Some(bind) = inner {
                                 let (typ, _) =
                                     self.ty_ctx.get_ctor_field_type_by_name(typ, name).unwrap();
@@ -518,6 +518,7 @@ impl TypedAST {
 
         let first_arm_typ = typed_arms.first().unwrap().typ;
 
+        // requires same, because we don't expect to infer opaque type
         if !typed_arms.iter().all(|expr| expr.typ == first_arm_typ) {
             panic!("match arm returns incompatible types")
         }
@@ -568,7 +569,7 @@ impl TypedAST {
                 let left = self.check_type_of_expr(lhs);
                 let right = self.check_type_of_expr(rhs);
 
-                if !self.is_compatible(left.typ, right.typ) {
+                if !self.ty_ctx.is_compatible(left.typ, right.typ) {
                     panic!("invalid operator type");
                 }
 
@@ -680,7 +681,7 @@ impl TypedAST {
         }
 
         let body = self.check_type_of_bracket_body(&func.body);
-        if !self.is_compatible(body.typ, declared_return_type) {
+        if !self.ty_ctx.is_compatible(body.typ, declared_return_type) {
             panic!("return type inconsistent: {}", func.name);
         }
 
@@ -692,29 +693,6 @@ impl TypedAST {
             ret_type: declared_return_type,
             body: Box::new(body),
         });
-    }
-
-    fn is_t1_opaque_of_t2(&self, t1: &Type, t2: usize) -> bool {
-        match t1 {
-            Type::Opaque(opaque) => *opaque.refer.as_ref().left().unwrap() == t2,
-            _ => false,
-        }
-    }
-
-    fn is_compatible(&self, t1: usize, t2: usize) -> bool {
-        if t1 != t2 {
-            t1 == self.ty_ctx.singleton_type(PrimitiveType::Object).0
-                || t2 == self.ty_ctx.singleton_type(PrimitiveType::Object).0
-                || {
-                    let ty1 = self.ty_ctx.get_type_by_idx(t1).1;
-                    self.is_t1_opaque_of_t2(&ty1, t2) || {
-                        let ty2 = self.ty_ctx.get_type_by_idx(t2).1;
-                        self.is_t1_opaque_of_t2(&ty2, t1)
-                    }
-                }
-        } else {
-            true
-        }
     }
 
     fn create_library_function_signature(&mut self) {

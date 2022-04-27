@@ -1,8 +1,8 @@
 mod middle_ir;
+mod name_decoration;
 mod type_context;
 mod typed_ast;
 mod unique_name;
-mod name_decoration;
 
 #[cfg(test)]
 mod tests {
@@ -17,7 +17,8 @@ mod tests {
         let s = fs::read_to_string("../example/test/simple.mag").expect("read file fail");
         let ast = frontend::parse(&s);
         let ty_ast: TypedAST = ast.into();
-        let mir: MiddleIR = ty_ast.into();
-        println!("{:#?}", mir);
+        fs::write("../typed_ast.ir", format!("{:#?}", ty_ast)).expect("write failed");
+        // let mir: MiddleIR = ty_ast.into();
+        // println!("{:#?}", mir);
     }
 }

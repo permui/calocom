@@ -42,6 +42,16 @@ pub enum Type {
     Opaque(Opaque),
 }
 
+impl From<Type> for Opaque {
+    fn from(x: Type) -> Self {
+        match x {
+            Type::Opaque(x) => x,
+            _ => panic!("not an opaque type"),
+        }
+    }
+}
+
+
 impl From<Tuple> for Type {
     fn from(x: Tuple) -> Self {
         Type::Tuple(Box::new(x))
@@ -302,5 +312,44 @@ impl TypeContext {
         for (idx, ty) in self.types.iter().enumerate() {
             TypeContext::collect_constructor(constructors, idx, ty);
         }
+    }
+
+    pub fn is_t1_opaque_of_t2(&self, t1: usize, t2: usize) -> bool {
+        match self.get_type_by_idx(t1).1 {
+            Type::Opaque(opaque) => *opaque.refer.as_ref().left().unwrap() == t2,
+            _ => false,
+        }
+    }
+
+    pub fn is_object_type(&self, t1: usize) -> bool {
+        t1 == self.singleton_type(PrimitiveType::Object).0
+    }
+
+    pub fn is_type_pure_eq(&self, t1: usize, t2: usize) -> bool {
+        t1 == t2
+    }
+
+    pub fn is_type_opaque_eq(&self, t1: usize, t2: usize) -> bool {
+        let t1 = self.get_type_by_idx(t1).1;
+        let t2 = self.get_type_by_idx(t2).1;
+        match (t1, t2) {
+            (Type::Opaque(opaque1), Type::Opaque(opaque2)) => self.is_type_eq(
+                *opaque1.refer.as_ref().left().unwrap(),
+                *opaque2.refer.as_ref().left().unwrap(),
+            ),
+            _ => false,
+        }
+    }
+
+    pub fn is_type_eq(&self, t1: usize, t2: usize) -> bool {
+        self.is_type_pure_eq(t1, t2) || self.is_type_opaque_eq(t1, t2)
+    }
+
+    pub fn is_compatible(&self, t1: usize, t2: usize) -> bool {
+        self.is_type_eq(t1, t2)
+            || self.is_object_type(t1)
+            || self.is_object_type(t2)
+            || self.is_t1_opaque_of_t2(t1, t2)
+            || self.is_t1_opaque_of_t2(t2, t1)
     }
 }
