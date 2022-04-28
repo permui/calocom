@@ -375,7 +375,7 @@ impl TypedAST {
                 }
             }
 
-            let typed_call = TypedCallExpr {
+            let typed_call = TypedExternalCallExpr {
                 path: TypedASTRefPath { items: full_path },
                 gen,
                 args: typed_args,
@@ -383,7 +383,7 @@ impl TypedAST {
 
             TypedExpr {
                 typ: ty.0,
-                expr: Box::new(ExprEnum::CallExpr(typed_call)),
+                expr: Box::new(ExprEnum::ExtCallExpr(typed_call)),
             }
         } else {
             panic!("not callable: {}", full_path.join(""));
@@ -489,7 +489,21 @@ impl TypedAST {
 
     fn check_type_of_match(&mut self, mexp: &crate::ast::MatchExpr) -> TypedExpr {
         let crate::ast::MatchExpr { e, arms } = mexp;
-        let match_expr = self.check_type_of_expr(e);
+        let mut match_expr = self.check_type_of_expr(e);
+        // we need unboxed type for matching
+        match_expr.typ = self.ty_ctx.get_opaque_base_type(match_expr.typ);
+
+        if arms.is_empty() {
+            return TypedExpr {
+                typ: SingletonType::UNIT,
+                expr: Box::new(ExprEnum::MatchExpr(TypedMatchExpr {
+                    e: match_expr,
+                    arms: vec![],
+                    typ: SingletonType::UNIT,
+                })),
+            }
+        }
+
         let mut typed_arms = vec![];
         for (pat, expr) in arms {
             match pat {

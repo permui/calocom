@@ -92,6 +92,13 @@ impl SingletonType {
     pub const I32: usize = 2;
     pub const STR: usize = 3;
     pub const UNIT: usize = 4;
+    pub fn is_singleton_type(typ: usize) -> bool {
+        matches!(typ, SingletonType::OBJECT
+            | SingletonType::BOOL
+            | SingletonType::I32
+            | SingletonType::UNIT
+            | SingletonType::STR)
+    }
 }
 
 impl From<PrimitiveType> for usize {
@@ -187,7 +194,7 @@ impl TypeContext {
                 let ctor = &e.constructors[ctor_idx];
                 ctor.1
                     .iter()
-                    .map(|ty| (*self.type_typeid_map.get(&ty).unwrap(), ty.clone()))
+                    .map(|ty| (*self.type_typeid_map.get(ty).unwrap(), ty.clone()))
                     .collect()
             }
             _ => panic!("can't get fields of non enum type"),
@@ -314,6 +321,16 @@ impl TypeContext {
         }
     }
 
+    pub fn get_opaque_base_type(&self, typ: usize) -> usize {
+        let mut typ = typ;
+        loop {
+            match self.get_type_by_idx(typ).1 {
+                Type::Opaque(opaque) => typ = opaque.refer.left().unwrap(),
+                _ => return typ,
+            }
+        }
+    }
+
     pub fn is_t1_opaque_of_t2(&self, t1: usize, t2: usize) -> bool {
         match self.get_type_by_idx(t1).1 {
             Type::Opaque(opaque) => *opaque.refer.as_ref().left().unwrap() == t2,
@@ -321,8 +338,8 @@ impl TypeContext {
         }
     }
 
-    pub fn is_object_type(&self, t1: usize) -> bool {
-        t1 == self.singleton_type(PrimitiveType::Object).0
+    pub fn is_enum_type(&self, t: usize) -> bool {
+        matches!(self.get_type_by_idx(t).1, Type::Enum(_))
     }
 
     pub fn is_type_pure_eq(&self, t1: usize, t2: usize) -> bool {
@@ -347,8 +364,8 @@ impl TypeContext {
 
     pub fn is_compatible(&self, t1: usize, t2: usize) -> bool {
         self.is_type_eq(t1, t2)
-            || self.is_object_type(t1)
-            || self.is_object_type(t2)
+            || t1 == SingletonType::OBJECT
+            || t2 == SingletonType::OBJECT
             || self.is_t1_opaque_of_t2(t1, t2)
             || self.is_t1_opaque_of_t2(t2, t1)
     }
