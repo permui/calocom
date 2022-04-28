@@ -75,8 +75,6 @@ struct FunctionBuilder<'a> {
 #[derive(Debug, Default)]
 pub struct MiddleIR {
     ty_ctx: TypeContext,
-    imports: HashMap<String, RefPath>,
-    constructors: HashMap<String, usize>,
     module: Vec<FuncDef>,
 }
 
@@ -91,23 +89,62 @@ impl MiddleIR {
         self.convert_expr(expr, builder, Some(var));
     }
 
-    fn convert_ctor_expr(&mut self, x: &TypedCtorExpr) -> Value {
-        let TypedCtorExpr { typ, name, args } = x;
+    fn convert_args(
+        &mut self,
+        builder: &mut FunctionBuilder,
+        arg: &Vec<TypedArgument>,
+        param: &Vec<usize>,
+    ) -> Vec<Value> {
         todo!()
+    }
+
+    fn convert_ctor_expr(&mut self, builder: &mut FunctionBuilder, x: &TypedCtorExpr) -> Value {
+        let TypedCtorExpr { typ, name, args } = x;
+        let params_typ = self.ty_ctx.get_ctor_field_type_by_name(*typ, name);
+        let mut args_value = self.convert_args(
+            builder,
+            args,
+            &params_typ.iter().map(|(ty, _)| *ty).collect(),
+        );
+        let mut v = vec![Value::Imm(Literal::Str(name.clone()))];
+        v.append(&mut args_value);
+        Value::Intrinsic("calocom.construct", v)
     }
 
     fn convert_match_expr(&mut self, x: &TypedMatchExpr) -> Value {
         let TypedMatchExpr { e, arms, typ } = x;
+
         todo!()
     }
 
-    fn convert_call_expr(&mut self, x: &TypedCallExpr) -> Value {
-        let TypedCallExpr { path, gen, args } = x;
-        todo!()
+    fn convert_call_expr(&mut self, builder: &mut FunctionBuilder, x: &TypedCallExpr) -> Value {
+        let TypedCallExpr { path, gen:_, args } = x;
+        let params_typ = &self.ty_ctx.find_function_type(&path.items[0]).unwrap().1.clone();
+        let args_value = self.convert_args(builder, args, params_typ);
+        Value::Call(path.clone(), args_value)
     }
 
-    fn convert_bracket_expr(&mut self, builder: &mut FunctionBuilder, x: &TypedBracketBody) -> Value {
-        let TypedBracketBody { stmts, ret_expr, typ } = x;
+    fn convert_ext_call_expr(
+        &mut self,
+        builder: &mut FunctionBuilder,
+        x: &TypedExternalCallExpr,
+    ) -> Value {
+        let TypedExternalCallExpr { path, gen: _, args } = x;
+        let params_typ = &self.ty_ctx.find_external_polymorphic_function_type(&path.items).unwrap().1.clone();
+        let args_value = self.convert_args(builder, args, params_typ);
+        Value::Call(path.clone(), args_value)
+    }
+
+    fn convert_bracket_expr(
+        &mut self,
+        builder: &mut FunctionBuilder,
+        x: &TypedBracketBody,
+    ) -> Value {
+        let TypedBracketBody {
+            stmts,
+            ret_expr,
+            typ,
+        } = x;
         builder.table.entry();
 
         let bracket_out = self.create_variable_definition("bracket.out", *typ);
@@ -119,7 +156,7 @@ impl MiddleIR {
         if let Some(ret_expr) = ret_expr {
             self.convert_expr(ret_expr, builder, Some(Rc::clone(&bracket_out)));
         }
-        
+
         builder.table.exit();
         Value::VarRef(bracket_out)
     }
@@ -159,9 +196,10 @@ impl MiddleIR {
         match expr {
             ExprEnum::MatchExpr(x) => self.convert_match_expr(x),
             ExprEnum::BraExpr(x) => self.convert_bracket_expr(builder, x),
-            ExprEnum::CallExpr(x) => self.convert_call_expr(x),
+            ExprEnum::CallExpr(x) => self.convert_call_expr(builder, x),
+            ExprEnum::ExtCallExpr(x) => self.convert_ext_call_expr(builder, x),
             ExprEnum::ArithExpr(x) => self.convert_arith_expr(builder, x),
-            ExprEnum::CtorExpr(x) => self.convert_ctor_expr(x),
+            ExprEnum::CtorExpr(x) => self.convert_ctor_expr(builder, x),
             ExprEnum::Var(x) => self.convert_variable_expr(builder, x.as_str()),
             ExprEnum::Lit(x) => self.convert_literal_expr(x),
         }
@@ -413,15 +451,13 @@ impl MiddleIR {
     pub fn create_from_ast(ty_ast: TypedAST) -> Self {
         let TypedAST {
             ty_ctx,
-            imports,
-            constructors,
+            imports: _,
+            constructors: _,
             module,
         } = ty_ast;
 
         let mut mir = MiddleIR {
             ty_ctx,
-            imports,
-            constructors,
             ..Default::default()
         };
 

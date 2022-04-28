@@ -58,14 +58,13 @@ impl DecorationName for Type {
                         .iter()
                         .enumerate()
                         .map(|(idx, (name, ty))| {
-                            if let Some(ty) = ty {
-                                let ty_vec = vec![ty];
+                            if !ty.is_empty() {
                                 format!(
                                     "CFT{}_{}{}{}",
                                     idx,
                                     name.len(),
                                     name,
-                                    ty_vec
+                                    ty
                                         .iter()
                                         .enumerate()
                                         .map(|(idx, ty)| format!(

@@ -54,6 +54,13 @@ pub struct TypedCallExpr {
 }
 
 #[derive(Debug)]
+pub struct TypedExternalCallExpr {
+    pub path: TypedASTRefPath,
+    pub gen: Option<Type>, // generic notation
+    pub args: Vec<TypedArgument>,
+}
+
+#[derive(Debug)]
 pub struct TypedArithExpr {
     pub lhs: TypedExpr,
     pub rhs: TypedExpr,
@@ -85,6 +92,7 @@ pub struct TypedCtorExpr {
 pub enum ExprEnum {
     BraExpr(TypedBracketBody),
     CallExpr(TypedCallExpr),
+    ExtCallExpr(TypedExternalCallExpr),
     ArithExpr(TypedArithExpr),
     MatchExpr(TypedMatchExpr),
     CtorExpr(TypedCtorExpr),
@@ -120,7 +128,7 @@ pub enum TypedASTLiteral {
     Bool(bool),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct TypedASTRefPath {
     pub items: Vec<String>,
 }
@@ -206,13 +214,13 @@ impl TypedAST {
                 let mut ctors = vec![];
 
                 for crate::ast::ConstructorType { name, inner } in e {
-                    let ty = if inner.is_some() {
+                    let tys = if inner.is_some() {
                         let (_, ty) = self.resolve_type(inner.as_ref().unwrap(), allow_opaque);
-                        Some(ty)
+                        vec![ty]
                     } else {
-                        None
+                        vec![]
                     };
-                    ctors.push((name.clone(), ty));
+                    ctors.push((name.clone(), tys));
                 }
 
                 self.ty_ctx.enum_type(ctors)
@@ -497,8 +505,9 @@ impl TypedAST {
                     if let Some(&typ) = self.constructors.get(name) {
                         if self.ty_ctx.is_compatible(typ, match_expr.typ) {
                             if let Some(bind) = inner {
+                                // only one constructor parameter now
                                 let (typ, _) =
-                                    self.ty_ctx.get_ctor_field_type_by_name(typ, name).unwrap();
+                                    self.ty_ctx.get_ctor_field_type_by_name(typ, name)[0];
                                 self.ty_ctx.env.entry();
                                 self.ty_ctx.env.insert_symbol(bind.to_string(), typ);
                                 typed_arms.push(self.check_type_of_expr(expr));

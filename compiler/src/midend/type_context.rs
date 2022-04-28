@@ -12,7 +12,7 @@ pub struct Tuple {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Enum {
-    pub constructors: Vec<(String, Option<Type>)>,
+    pub constructors: Vec<(String, Vec<Type>)>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -50,7 +50,6 @@ impl From<Type> for Opaque {
         }
     }
 }
-
 
 impl From<Tuple> for Type {
     fn from(x: Tuple) -> Self {
@@ -177,7 +176,7 @@ impl TypeContext {
         self.name_typeid_map.insert(name.to_string(), idx);
     }
 
-    pub fn get_ctor_field_type_by_name(&self, typ: usize, name: &str) -> Option<TypeHandle> {
+    pub fn get_ctor_field_type_by_name(&self, typ: usize, name: &str) -> Vec<TypeHandle> {
         match &self.types[typ] {
             Type::Enum(e) => {
                 let ctor_idx = e
@@ -187,8 +186,9 @@ impl TypeContext {
                     .unwrap_or_else(|| panic!("{} not found", name));
                 let ctor = &e.constructors[ctor_idx];
                 ctor.1
-                    .clone()
-                    .map(|ty| (*self.type_typeid_map.get(&ty).unwrap(), ty))
+                    .iter()
+                    .map(|ty| (*self.type_typeid_map.get(&ty).unwrap(), ty.clone()))
+                    .collect()
             }
             _ => panic!("can't get fields of non enum type"),
         }
@@ -205,7 +205,7 @@ impl TypeContext {
         self.insert_type_or_get(res)
     }
 
-    pub fn enum_type(&mut self, constructors: Vec<(String, Option<Type>)>) -> TypeHandle {
+    pub fn enum_type(&mut self, constructors: Vec<(String, Vec<Type>)>) -> TypeHandle {
         let res = Enum { constructors }.into();
         self.insert_type_or_get(res)
     }
