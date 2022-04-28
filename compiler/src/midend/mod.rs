@@ -18,7 +18,7 @@ mod tests {
         let ast = frontend::parse(&s);
         let ty_ast: TypedAST = ast.into();
         fs::write("../typed_ast.ir", format!("{:#?}", ty_ast)).expect("write failed");
-        // let mir: MiddleIR = ty_ast.into();
+        let mir: MiddleIR = ty_ast.into();
         // println!("{:#?}", mir);
     }
 }

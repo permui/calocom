@@ -144,14 +144,10 @@ impl MiddleIR {
     fn convert_trivial_match_expr(
         &mut self,
         builder: &mut FunctionBuilder,
-        typ: usize,
         expr: Rc<VarDef>,
         arms: &[(Pattern, TypedExpr)],
         output: Rc<VarDef>,
     ) {
-        assert!(typ != SingletonType::OBJECT);
-        assert!(typ != SingletonType::UNIT);
-
         let current_bb = Rc::clone(builder.position.as_ref().unwrap());
         let current_terminator = &current_bb.borrow().terminator;
         let next_bb = match current_terminator {
@@ -175,7 +171,10 @@ impl MiddleIR {
 
                     let arm_position = Some(Rc::clone(&arm_block));
                     builder.position = arm_position;
+
+                    builder.table.entry();
                     self.convert_expr(&arm.1, builder, Some(Rc::clone(&output)));
+                    builder.table.exit();
                 }
                 Pattern::Con(_) => panic!("can't use a non-literal match arm"),
             }
@@ -215,44 +214,88 @@ impl MiddleIR {
     fn convert_complex_match_expr(
         &mut self,
         builder: &mut FunctionBuilder,
-        typ: usize,
         expr: Rc<VarDef>,
         arms: &[(Pattern, TypedExpr)],
         output: Rc<VarDef>,
     ) {
-        if !self.ty_ctx.is_enum_type(typ) {
-            panic!("can't match this type");
-        }
-
         let current_bb = Rc::clone(builder.position.as_ref().unwrap());
-        let current_terminator = &current_bb.borrow().terminator;
-        let next_bb = match current_terminator {
-            Terminator::Jump(x) => x,
-            _ => panic!("internal error: expect jump terminator now"),
+        let next_bb = {
+            let current_terminator = &current_bb.borrow().terminator;
+            match current_terminator {
+                Terminator::Jump(x) => Rc::clone(x),
+                _ => panic!("internal error: expect jump terminator now"),
+            }
         };
 
-        let match_value = self.extract_enum_tag(builder, expr);
+        let match_value = self.extract_enum_tag(builder, Rc::clone(&expr));
         let mut v = vec![];
-        for arm in arms {
-            match &arm.0 {
+        for arm in arms.iter().enumerate() {
+            match &arm.1 .0 {
                 Pattern::Lit(_) => panic!("can't use a literal match arm"),
                 Pattern::Con(con) => {
                     let TypedASTConstructorVar { name, inner } = con;
-                    todo!()
+                    let arm_block = Rc::new(RefCell::new(Block {
+                        stmts: vec![],
+                        terminator: Terminator::Jump(Rc::clone(&next_bb)),
+                    }));
+
+                    let choice = (
+                        Box::new(Value::Imm(Literal::Int(arm.0.try_into().unwrap()))),
+                        Rc::clone(&arm_block),
+                    );
+
+                    v.push(choice);
+
+                    let arm_position = Some(Rc::clone(&arm_block));
+                    builder.position = arm_position;
+                    builder.table.entry();
+
+                    if let Some(inner) = inner {
+                        let field_typ = self.ty_ctx.get_ctor_field_type_by_name(expr.typ, name)[0].0;
+                        let name = builder.namer.next_name("field");
+                        let field_var = self.create_variable_definition(name.as_str(), field_typ);
+
+                        let field = Value::Intrinsic(
+                            "calocom.extract_field",
+                            vec![
+                                Value::VarRef(Rc::clone(&expr)),
+                                Value::Imm(Literal::Str(name)),
+                                Value::Imm(Literal::Int(0)),
+                            ],
+                        );
+                        builder
+                            .position
+                            .as_ref()
+                            .unwrap()
+                            .borrow_mut()
+                            .stmts
+                            .push(Stmt {
+                                left: Some(Rc::clone(&field_var)),
+                                right: Some(field),
+                                ..Default::default()
+                            });
+
+                        builder
+                            .table
+                            .insert_symbol(inner.clone(), Rc::clone(&field_var));
+                    }
+                    self.convert_expr(&arm.1 .1, builder, Some(Rc::clone(&output)));
+
+                    builder.table.exit();
                 }
             }
         }
 
         let select = Terminator::Select(Box::new(match_value), v, Rc::clone(&builder.panic_block));
         current_bb.borrow_mut().terminator = select;
-        let next_position = Some(Rc::clone(next_bb));
+        let next_position = Some(Rc::clone(&next_bb));
         builder.position = next_position;
     }
 
     fn convert_match_expr(&mut self, builder: &mut FunctionBuilder, x: &TypedMatchExpr) -> Value {
         let TypedMatchExpr { e, arms, typ } = x;
 
-        let match_expr_var = self.create_variable_definition("match.expr", *typ);
+        let match_expr_var = self.create_variable_definition("match.expr", e.typ);
         let match_output_var = self.create_variable_definition("match.output", *typ);
 
         builder.func.tmp_def.push(Rc::clone(&match_expr_var));
@@ -267,18 +310,21 @@ impl MiddleIR {
             return Value::Unit;
         }
 
-        if SingletonType::is_singleton_type(*typ) {
+        if SingletonType::is_singleton_type(e.typ) {
+            assert!(e.typ != SingletonType::OBJECT);
+            assert!(e.typ != SingletonType::UNIT);
             self.convert_trivial_match_expr(
                 builder,
-                *typ,
                 Rc::clone(&match_expr_var),
                 arms,
                 Rc::clone(&match_output_var),
             )
         } else {
+            if !self.ty_ctx.is_enum_type(e.typ) {
+                panic!("can't match this type {:#?}", self.ty_ctx.get_type_by_idx(e.typ).1);
+            }
             self.convert_complex_match_expr(
                 builder,
-                *typ,
                 Rc::clone(&match_expr_var),
                 arms,
                 Rc::clone(&match_output_var),
@@ -503,7 +549,7 @@ impl MiddleIR {
                     stmt.left = Some(unboxed1);
                     stmt.right = Some(Value::VarRef(unboxed2));
                 } else {
-                    unreachable!()
+                    panic!("t1: {}, t2: {}", t1, t2)
                 }
             }
         } else {
@@ -586,7 +632,7 @@ impl MiddleIR {
             let param = self.create_variable_definition(name.as_str(), *typ);
 
             // insert the parameter into symbol table
-            sym_table.insert_symbol(name, Rc::clone(&param));
+            sym_table.insert_symbol(var_name.to_string(), Rc::clone(&param));
             def.param_def.push((*with_at, param));
         }
 
@@ -617,7 +663,7 @@ impl MiddleIR {
             func: &mut def,
             position: Some(position),
             namer: UniqueName::new(),
-            table: SymTable::<Rc<VarDef>>::new(),
+            table: sym_table,
             panic_block,
         };
 
@@ -625,7 +671,7 @@ impl MiddleIR {
         self.convert_bracket_body(&func.body, &mut fn_builder, Some(Rc::clone(&ret)));
 
         // exit the symbol table scope
-        sym_table.exit();
+        fn_builder.table.exit();
         def
     }
 
