@@ -215,8 +215,12 @@ impl TypedAST {
 
                 for crate::ast::ConstructorType { name, inner } in e {
                     let tys = if inner.is_some() {
-                        let (_, ty) = self.resolve_type(inner.as_ref().unwrap(), allow_opaque);
-                        vec![ty]
+                        let (idx, ty) = self.resolve_type(inner.as_ref().unwrap(), allow_opaque);
+                        if self.ty_ctx.is_enum_type(idx) {
+                            vec![self.ty_ctx.opaque_type(idx).1]
+                        } else {
+                            vec![ty]
+                        }
                     } else {
                         vec![]
                     };
@@ -501,7 +505,7 @@ impl TypedAST {
                     arms: vec![],
                     typ: SingletonType::UNIT,
                 })),
-            }
+            };
         }
 
         let mut typed_arms = vec![];
