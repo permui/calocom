@@ -19,6 +19,6 @@ mod tests {
         let ty_ast: TypedAST = ast.into();
         fs::write("../typed_ast.ir", format!("{:#?}", ty_ast)).expect("write failed");
         let mir: MiddleIR = ty_ast.into();
-        // println!("{:#?}", mir);
+        fs::write("../mir.ir", format!("{}", mir)).expect("write failed");
     }
 }

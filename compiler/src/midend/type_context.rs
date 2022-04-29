@@ -1,9 +1,13 @@
-use std::{collections::HashMap, panic};
+use std::{
+    collections::HashMap,
+    fmt::Debug,
+    fmt::{format, Display},
+    panic,
+};
 
+use super::{middle_ir::SymTable, unique_name::UniqueName};
 use either::Either;
 use Either::{Left, Right};
-
-use super::middle_ir::SymTable;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Tuple {
@@ -93,11 +97,14 @@ impl SingletonType {
     pub const STR: usize = 3;
     pub const UNIT: usize = 4;
     pub fn is_singleton_type(typ: usize) -> bool {
-        matches!(typ, SingletonType::OBJECT
-            | SingletonType::BOOL
-            | SingletonType::I32
-            | SingletonType::UNIT
-            | SingletonType::STR)
+        matches!(
+            typ,
+            SingletonType::OBJECT
+                | SingletonType::BOOL
+                | SingletonType::I32
+                | SingletonType::UNIT
+                | SingletonType::STR
+        )
     }
 }
 
@@ -113,7 +120,7 @@ impl From<PrimitiveType> for usize {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct TypeContext {
     name_typeid_map: HashMap<String, usize>,
     type_typeid_map: HashMap<Type, usize>,
@@ -258,11 +265,11 @@ impl TypeContext {
 
     fn add_primitives(&mut self) {
         // NOTE: be the same order with constants in SingletonType
-        self.add_primitive(PrimitiveType::Object, None);
+        self.add_primitive(PrimitiveType::Object, Some("__object"));
         self.add_primitive(PrimitiveType::Bool, Some("bool"));
         self.add_primitive(PrimitiveType::Int32, Some("i32"));
         self.add_primitive(PrimitiveType::Str, Some("str"));
-        self.add_primitive(PrimitiveType::Unit, None);
+        self.add_primitive(PrimitiveType::Unit, Some("__unit"));
     }
 
     pub fn refine_all_opaque_type(&mut self) {
@@ -368,5 +375,135 @@ impl TypeContext {
             || t2 == SingletonType::OBJECT
             || self.is_t1_opaque_of_t2(t1, t2)
             || self.is_t1_opaque_of_t2(t2, t1)
+    }
+
+    pub fn substitute_all_opaque_references(&mut self, type_map: &HashMap<usize, String>) {
+        for t in self.types.iter_mut() {
+            TypeContext::substitute_opaque_reference(type_map, t)
+        }
+    }
+
+    pub fn substitute_opaque_reference(type_map: &HashMap<usize, String>, t: &mut Type) {
+        match t {
+            Type::Tuple(tuple) => {
+                let Tuple { fields } = tuple.as_mut();
+                for field in fields {
+                    TypeContext::substitute_opaque_reference(type_map, field);
+                }
+            }
+            Type::Enum(enu) => {
+                let Enum { constructors } = enu.as_mut();
+                for ctor in constructors {
+                    for field in &mut ctor.1 {
+                        TypeContext::substitute_opaque_reference(type_map, field);
+                    }
+                }
+            }
+            Type::Primitive(_) => {}
+            Type::Opaque(opaque) => {
+                let Opaque { refer } = opaque;
+                if let Left(typ) = refer {
+                    if !type_map.contains_key(typ) {
+                        panic!("can't found type {}", typ);
+                    }
+                    let name = type_map.get(typ).unwrap().clone();
+                    *refer = Right(name);
+                }
+            }
+        }
+    }
+}
+impl Display for Tuple {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "(")?;
+        let field_str = self.fields.iter().fold(String::new(), |acc, item| {
+            if acc.is_empty() {
+                format!("{}", item)
+            } else {
+                format!("{}, {}", acc, item)
+            }
+        });
+        write!(f, "{}", field_str)?;
+        write!(f, ")")
+    }
+}
+
+impl Display for Primitive {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.typ {
+            PrimitiveType::Object => write!(f, "__object"),
+            PrimitiveType::Str => write!(f, "str"),
+            PrimitiveType::Bool => write!(f, "bool"),
+            PrimitiveType::Int32 => write!(f, "i32"),
+            PrimitiveType::Unit => write!(f, "__unit"),
+        }
+    }
+}
+
+impl Display for Enum {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "[")?;
+        let item2str = |item: &(String, Vec<Type>)| {
+            format!(
+                "<{} {}>",
+                item.0,
+                Tuple {
+                    fields: item.1.clone()
+                }
+            )
+        };
+        let field_str = self.constructors.iter().fold(String::new(), |acc, item| {
+            if acc.is_empty() {
+                item2str(item)
+            } else {
+                format!("{} | {}", acc, item2str(item))
+            }
+        });
+        write!(f, "{}", field_str)?;
+        write!(f, "]")
+    }
+}
+
+impl Display for Opaque {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "ref {}", self.refer.as_ref().right().unwrap())
+    }
+}
+
+impl Display for Type {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Type::Tuple(t) => write!(f, "{}", t),
+            Type::Enum(e) => write!(f, "{}", e),
+            Type::Primitive(p) => write!(f, "{}", p),
+            Type::Opaque(o) => write!(f, "{}", o),
+        }
+    }
+}
+
+impl Display for TypeContext {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut context = self.clone();
+        let mut display_name_map = HashMap::new();
+        let mut namer = UniqueName::new();
+        for (k, v) in context.name_typeid_map.iter() {
+            display_name_map.insert(*v, k.clone());
+        }
+
+        for (idx, _) in context.types.iter().enumerate() {
+            display_name_map
+                .entry(idx)
+                .or_insert_with(|| namer.next_name("anonymous_type"));
+        }
+
+        context.substitute_all_opaque_references(&display_name_map);
+
+        writeln!(f, "TypeContext {{")?;
+
+        for (idx, typ) in context.types.iter().enumerate() {
+            writeln!(f, "    {}: {}", display_name_map.get(&idx).unwrap(), typ)?;
+        }
+
+        write!(f, "}}")
     }
 }

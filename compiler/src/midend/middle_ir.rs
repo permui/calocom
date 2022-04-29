@@ -1,5 +1,6 @@
 use std::cell::RefCell;
 use std::collections::HashSet;
+use std::fmt::Display;
 use std::rc::Rc;
 use std::{collections::HashMap, panic, vec};
 
@@ -104,14 +105,16 @@ impl MiddleIR {
         for x in arg.iter().zip(param) {
             match x.0 {
                 TypedArgument::Expr(expr) => {
-                    let arg_var = self.create_variable_definition("arg", *x.1);
+                    let name = builder.namer.next_name("arg");
+                    let arg_var = self.create_variable_definition(name.as_str(), *x.1);
                     builder.func.tmp_def.push(Rc::clone(&arg_var));
 
                     self.convert_expr(expr, builder, Some(Rc::clone(&arg_var)));
                     v.push(Value::VarRef(arg_var));
                 }
                 TypedArgument::AtVar(name, typ) => {
-                    let arg_var = self.create_variable_definition("at_arg", *x.1);
+                    let var_name = builder.namer.next_name("at_arg");
+                    let arg_var = self.create_variable_definition(var_name.as_str(), *x.1);
                     builder.func.tmp_def.push(Rc::clone(&arg_var));
 
                     self.convert_expr(
@@ -205,7 +208,7 @@ impl MiddleIR {
             .push(Stmt {
                 left: lhs,
                 right: rhs,
-                ..Default::default()
+                note: "extract tag of enum".to_string(),
             });
 
         Value::VarRef(tag_var)
@@ -251,7 +254,8 @@ impl MiddleIR {
                     builder.table.entry();
 
                     if let Some(inner) = inner {
-                        let field_typ = self.ty_ctx.get_ctor_field_type_by_name(expr.typ, name)[0].0;
+                        let field_typ =
+                            self.ty_ctx.get_ctor_field_type_by_name(expr.typ, name)[0].0;
                         let name = builder.namer.next_name("field");
                         let field_var = self.create_variable_definition(name.as_str(), field_typ);
 
@@ -272,7 +276,7 @@ impl MiddleIR {
                             .push(Stmt {
                                 left: Some(Rc::clone(&field_var)),
                                 right: Some(field),
-                                ..Default::default()
+                                note: "extract field of enum".to_string(),
                             });
 
                         builder
@@ -321,7 +325,10 @@ impl MiddleIR {
             )
         } else {
             if !self.ty_ctx.is_enum_type(e.typ) {
-                panic!("can't match this type {:#?}", self.ty_ctx.get_type_by_idx(e.typ).1);
+                panic!(
+                    "can't match this type {:#?}",
+                    self.ty_ctx.get_type_by_idx(e.typ).1
+                );
             }
             self.convert_complex_match_expr(
                 builder,
@@ -458,104 +465,103 @@ impl MiddleIR {
         let TypedExpr { expr, typ } = expr;
         let val = self.create_value_from_expr(builder, expr);
         let insert_position = &mut builder.position.as_ref().unwrap().borrow_mut().stmts;
+
         if let Some(lhs) = out {
             let t1 = lhs.typ;
             let t2 = *typ;
 
-            if !self.ty_ctx.is_type_pure_eq(t1, t2) {
-                if t1 == SingletonType::OBJECT {
-                    stmt.left = Some(Rc::clone(&lhs));
-                    stmt.right = Some(Value::Intrinsic("calocom.erase_type", vec![val]));
-                } else if t2 == SingletonType::OBJECT {
-                    stmt.left = Some(Rc::clone(&lhs));
-                    stmt.right = Some(Value::Intrinsic("calocom.specialize_type", vec![val]));
-                } else if self.ty_ctx.is_t1_opaque_of_t2(t1, t2) {
-                    let unboxed = self.create_unboxed_value(
-                        builder.func,
-                        &mut builder.namer,
-                        format!("{}.unboxed", lhs.name).as_str(),
-                        t1,
-                    );
-                    builder.func.tmp_def.push(Rc::clone(&unboxed));
+            assert!(self.ty_ctx.is_compatible(t1, t2));
 
-                    let unbox_stmt = Stmt {
-                        left: Some(Rc::clone(&unboxed)),
-                        right: Some(Value::Intrinsic(
-                            "calocom.unbox",
-                            vec![Value::VarRef(Rc::clone(&lhs))],
-                        )),
-                        ..Default::default()
-                    };
+            if self.ty_ctx.is_type_pure_eq(t1, t2) {
+                stmt.left = Some(Rc::clone(&lhs));
+                stmt.right = Some(val);
+                stmt.note = "assign".to_string();
+            } else if t1 == SingletonType::OBJECT {
+                stmt.left = Some(Rc::clone(&lhs));
+                stmt.right = Some(Value::Intrinsic("calocom.erase_type", vec![val]));
+                stmt.note = "erase type".to_string();
+            } else if t2 == SingletonType::OBJECT {
+                stmt.left = Some(Rc::clone(&lhs));
+                stmt.right = Some(Value::Intrinsic("calocom.specialize_type", vec![val]));
+                stmt.note = "specialize type".to_string();
+            } else if self.ty_ctx.is_t1_opaque_of_t2(t1, t2) {
+                let unboxed = self.create_unboxed_value(
+                    builder.func,
+                    &mut builder.namer,
+                    format!("{}.unboxed", lhs.name).as_str(),
+                    t1,
+                );
 
-                    insert_position.push(unbox_stmt);
+                let unbox_stmt = Stmt {
+                    left: Some(Rc::clone(&unboxed)),
+                    right: Some(Value::Intrinsic(
+                        "calocom.unbox",
+                        vec![Value::VarRef(Rc::clone(&lhs))],
+                    )),
+                    note: "unbox left hand side".to_string(),
+                };
 
-                    stmt.left = Some(unboxed);
-                    stmt.right = Some(val);
-                } else if self.ty_ctx.is_t1_opaque_of_t2(t2, t1) {
-                    let unboxed = self.create_unboxed_value(
-                        builder.func,
-                        &mut builder.namer,
-                        "expr.unboxed",
-                        t2,
-                    );
-                    builder.func.tmp_def.push(Rc::clone(&unboxed));
+                insert_position.push(unbox_stmt);
 
-                    let unbox_stmt = Stmt {
-                        left: Some(Rc::clone(&unboxed)),
-                        right: Some(val),
-                        ..Default::default()
-                    };
+                stmt.left = Some(unboxed);
+                stmt.right = Some(val);
+                stmt.note = "assign".to_string();
+            } else if self.ty_ctx.is_t1_opaque_of_t2(t2, t1) {
+                let unboxed =
+                    self.create_unboxed_value(builder.func, &mut builder.namer, "expr.unboxed", t2);
 
-                    insert_position.push(unbox_stmt);
+                let unbox_stmt = Stmt {
+                    left: Some(Rc::clone(&unboxed)),
+                    right: Some(val),
+                    note: "unbox right hand side".to_string(),
+                };
 
-                    stmt.left = Some(Rc::clone(&lhs));
-                    stmt.right = Some(Value::VarRef(unboxed));
-                } else if self.ty_ctx.is_type_opaque_eq(t1, t2) {
-                    let unboxed1 = self.create_unboxed_value(
-                        builder.func,
-                        &mut builder.namer,
-                        format!("{}.unboxed", lhs.name).as_str(),
-                        t1,
-                    );
+                insert_position.push(unbox_stmt);
 
-                    let unboxed2 = self.create_unboxed_value(
-                        builder.func,
-                        &mut builder.namer,
-                        "expr.unboxed",
-                        t2,
-                    );
+                stmt.left = Some(Rc::clone(&lhs));
+                stmt.right = Some(Value::VarRef(unboxed));
+                stmt.note = "assign".to_string();
+            } else if self.ty_ctx.is_type_opaque_eq(t1, t2) {
+                let unboxed1 = self.create_unboxed_value(
+                    builder.func,
+                    &mut builder.namer,
+                    format!("{}.unboxed", lhs.name).as_str(),
+                    t1,
+                );
 
-                    let unbox_rhs = Stmt {
-                        left: Some(Rc::clone(&unboxed2)),
-                        right: Some(val),
-                        ..Default::default()
-                    };
+                let unboxed2 =
+                    self.create_unboxed_value(builder.func, &mut builder.namer, "expr.unboxed", t2);
 
-                    let unbox_lhs = Stmt {
-                        left: Some(Rc::clone(&unboxed1)),
-                        right: Some(Value::Intrinsic(
-                            "calocom.unbox",
-                            vec![Value::VarRef(Rc::clone(&lhs))],
-                        )),
-                        ..Default::default()
-                    };
+                let unbox_rhs = Stmt {
+                    left: Some(Rc::clone(&unboxed2)),
+                    right: Some(val),
+                    note: "unbox left hand side".to_string(),
+                };
 
-                    builder.func.tmp_def.push(Rc::clone(&unboxed1));
-                    builder.func.tmp_def.push(Rc::clone(&unboxed2));
+                let unbox_lhs = Stmt {
+                    left: Some(Rc::clone(&unboxed1)),
+                    right: Some(Value::Intrinsic(
+                        "calocom.unbox",
+                        vec![Value::VarRef(Rc::clone(&lhs))],
+                    )),
+                    note: "unbox right hand side".to_string(),
+                };
 
-                    insert_position.push(unbox_lhs);
-                    insert_position.push(unbox_rhs);
+                insert_position.push(unbox_lhs);
+                insert_position.push(unbox_rhs);
 
-                    stmt.left = Some(unboxed1);
-                    stmt.right = Some(Value::VarRef(unboxed2));
-                } else {
-                    panic!("t1: {}, t2: {}", t1, t2)
-                }
+                stmt.left = Some(unboxed1);
+                stmt.right = Some(Value::VarRef(unboxed2));
+                stmt.note = "assign".to_string();
+            } else {
+                panic!("t1: {}, t2: {}", t1, t2)
             }
         } else {
             stmt.right = Some(val);
+            stmt.note = "non-value statement".to_string();
         }
 
+        assert!(stmt.right.is_some());
         insert_position.push(stmt);
     }
 
@@ -704,5 +710,11 @@ impl MiddleIR {
 impl From<TypedAST> for MiddleIR {
     fn from(ty_ast: TypedAST) -> Self {
         MiddleIR::create_from_ast(ty_ast)
+    }
+}
+
+impl Display for MiddleIR {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        writeln!(f, "{}", self.ty_ctx)
     }
 }
