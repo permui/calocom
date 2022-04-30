@@ -1,11 +1,6 @@
-use std::{
-    collections::HashMap,
-    fmt::Debug,
-    fmt::{format, Display},
-    panic,
-};
+use std::{collections::HashMap, fmt::Debug, fmt::Display, panic};
 
-use super::{middle_ir::SymTable, unique_name::UniqueName};
+use super::unique_name::UniqueName;
 use either::Either;
 use Either::{Left, Right};
 
@@ -35,6 +30,11 @@ pub struct Primitive {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Opaque {
+    pub alias: Either<usize, String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct Reference {
     pub refer: Either<usize, String>,
 }
 
@@ -44,13 +44,14 @@ pub enum Type {
     Enum(Box<Enum>),
     Primitive(Primitive),
     Opaque(Opaque),
+    Reference(Reference),
 }
 
-impl From<Type> for Opaque {
+impl From<Type> for Reference {
     fn from(x: Type) -> Self {
         match x {
-            Type::Opaque(x) => x,
-            _ => panic!("not an opaque type"),
+            Type::Reference(x) => x,
+            _ => panic!("not an reference type"),
         }
     }
 }
@@ -76,6 +77,12 @@ impl From<Primitive> for Type {
 impl From<Opaque> for Type {
     fn from(x: Opaque) -> Self {
         Type::Opaque(x)
+    }
+}
+
+impl From<Reference> for Type {
+    fn from(x: Reference) -> Self {
+        Type::Reference(x)
     }
 }
 
@@ -119,6 +126,8 @@ impl From<PrimitiveType> for usize {
         }
     }
 }
+
+pub type SymTable<T> = Vec<HashMap<String, T>>;
 
 #[derive(Debug, Clone)]
 pub struct TypeContext {
@@ -226,7 +235,7 @@ impl TypeContext {
 
     pub fn opaque_name_type(&mut self, name: &str) -> TypeHandle {
         let res = Opaque {
-            refer: Either::Right(name.to_string()),
+            alias: Either::Right(name.to_string()),
         }
         .into();
         self.insert_type_or_get(res)
@@ -235,6 +244,15 @@ impl TypeContext {
     pub fn opaque_type(&mut self, idx: usize) -> TypeHandle {
         assert!(idx < self.types.len());
         let res = Opaque {
+            alias: Either::Left(idx),
+        }
+        .into();
+        self.insert_type_or_get(res)
+    }
+
+    pub fn reference_type(&mut self, idx: usize) -> TypeHandle {
+        assert!(idx < self.types.len());
+        let res = Reference {
             refer: Either::Left(idx),
         }
         .into();
@@ -272,9 +290,9 @@ impl TypeContext {
         self.add_primitive(PrimitiveType::Unit, Some("__unit"));
     }
 
-    pub fn refine_all_opaque_type(&mut self) {
+    pub fn refine_all_type(&mut self) {
         for t in self.types.iter_mut() {
-            TypeContext::refine_opaque_type(&self.name_typeid_map, t)
+            TypeContext::refine_type(&self.name_typeid_map, t)
         }
         let mut new_node_map = HashMap::new();
         for idx in self.type_typeid_map.values() {
@@ -283,25 +301,35 @@ impl TypeContext {
         self.type_typeid_map = new_node_map;
     }
 
-    fn refine_opaque_type(name_map: &HashMap<String, usize>, t: &mut Type) {
+    fn refine_type(name_map: &HashMap<String, usize>, t: &mut Type) {
         match t {
             Type::Tuple(tuple) => {
                 let Tuple { fields } = tuple.as_mut();
                 for field in fields {
-                    TypeContext::refine_opaque_type(name_map, field);
+                    TypeContext::refine_type(name_map, field);
                 }
             }
             Type::Enum(enu) => {
                 let Enum { constructors } = enu.as_mut();
                 for ctor in constructors {
                     for field in &mut ctor.1 {
-                        TypeContext::refine_opaque_type(name_map, field);
+                        TypeContext::refine_type(name_map, field);
                     }
                 }
             }
             Type::Primitive(_) => {}
             Type::Opaque(opaque) => {
-                let Opaque { refer } = opaque;
+                let Opaque { alias } = opaque;
+                if let Right(name) = alias {
+                    if !name_map.contains_key(name) {
+                        panic!("unresolved type {}", name);
+                    }
+                    let idx = *name_map.get(name).unwrap();
+                    *alias = Left(idx);
+                }
+            }
+            Type::Reference(reference) => {
+                let Reference { refer } = reference;
                 if let Right(name) = refer {
                     if !name_map.contains_key(name) {
                         panic!("unresolved type {}", name);
@@ -332,15 +360,26 @@ impl TypeContext {
         let mut typ = typ;
         loop {
             match self.get_type_by_idx(typ) {
-                Type::Opaque(opaque) => typ = opaque.refer.left().unwrap(),
+                Type::Opaque(opaque) => typ = opaque.alias.left().unwrap(),
                 _ => return typ,
             }
         }
     }
 
-    pub fn is_t1_opaque_of_t2(&self, t1: usize, t2: usize) -> bool {
+    pub fn get_reference_base_type(&self, typ: usize) -> Option<usize> {
+        match self.get_type_by_idx(typ) {
+            Type::Reference(refer) => Some(refer.refer.left().unwrap()),
+            _ => None,
+        }
+    }
+
+    pub fn is_t1_reference_of_t2(&self, t1: usize, t2: usize) -> bool {
         match self.get_type_by_idx(t1) {
-            Type::Opaque(opaque) => *opaque.refer.as_ref().left().unwrap() == t2,
+            Type::Reference(refer)
+                if self.is_type_eq(*refer.refer.as_ref().left().unwrap(), t2) =>
+            {
+                true
+            }
             _ => false,
         }
     }
@@ -349,32 +388,39 @@ impl TypeContext {
         matches!(self.get_type_by_idx(t), Type::Enum(_))
     }
 
+    // if true, both types have the same type id
     pub fn is_type_pure_eq(&self, t1: usize, t2: usize) -> bool {
         t1 == t2
     }
 
+    // if true, both types represent the same nominal type
     pub fn is_type_opaque_eq(&self, t1: usize, t2: usize) -> bool {
-        let t1 = self.get_type_by_idx(t1);
-        let t2 = self.get_type_by_idx(t2);
-        match (t1, t2) {
-            (Type::Opaque(opaque1), Type::Opaque(opaque2)) => self.is_type_eq(
-                *opaque1.refer.as_ref().left().unwrap(),
-                *opaque2.refer.as_ref().left().unwrap(),
-            ),
-            _ => false,
-        }
+        self.get_opaque_base_type(t1) == self.get_opaque_base_type(t2)
     }
 
+    // if true, both types are reference type
+    // and the referred types represent the same nominal type
+    pub fn is_type_reference_eq(&self, t1: usize, t2: usize) -> bool {
+        matches!((
+            self.get_reference_base_type(self.get_opaque_base_type(t1)),
+            self.get_reference_base_type(self.get_opaque_base_type(t2)),
+        ), (Some(t1), Some(t2)) if self.is_type_opaque_eq(t1, t2))
+    }
+
+    // if true, both types represent the same nominal type
     pub fn is_type_eq(&self, t1: usize, t2: usize) -> bool {
-        self.is_type_pure_eq(t1, t2) || self.is_type_opaque_eq(t1, t2)
+        self.is_type_pure_eq(t1, t2)
+            || self.is_type_opaque_eq(t1, t2)
+            || self.is_type_reference_eq(t1, t2)
     }
 
+    // if true, both types are compatible when doing assignment
     pub fn is_compatible(&self, t1: usize, t2: usize) -> bool {
-        self.is_type_eq(t1, t2)
-            || t1 == SingletonType::OBJECT
-            || t2 == SingletonType::OBJECT
-            || self.is_t1_opaque_of_t2(t1, t2)
-            || self.is_t1_opaque_of_t2(t2, t1)
+        self.is_type_eq(t1, t2) // the same nominal type
+            || t1 == SingletonType::OBJECT // unsafe cast due to polymorphism
+            || t2 == SingletonType::OBJECT // unsafe cast due to polymorphism
+            || self.is_t1_reference_of_t2(t1, t2) // one is reference and the other is the referred type
+            || self.is_t1_reference_of_t2(t2, t1)
     }
 
     pub fn substitute_all_opaque_references(&mut self, type_map: &HashMap<usize, String>) {
@@ -401,7 +447,17 @@ impl TypeContext {
             }
             Type::Primitive(_) => {}
             Type::Opaque(opaque) => {
-                let Opaque { refer } = opaque;
+                let Opaque { alias } = opaque;
+                if let Left(typ) = alias {
+                    if !type_map.contains_key(typ) {
+                        panic!("can't found type {}", typ);
+                    }
+                    let name = type_map.get(typ).unwrap().clone();
+                    *alias = Right(name);
+                }
+            }
+            Type::Reference(refer) => {
+                let Reference { refer } = refer;
                 if let Left(typ) = refer {
                     if !type_map.contains_key(typ) {
                         panic!("can't found type {}", typ);
@@ -484,6 +540,12 @@ impl Display for Enum {
 
 impl Display for Opaque {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.alias.as_ref().right().unwrap())
+    }
+}
+
+impl Display for Reference {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "ref {}", self.refer.as_ref().right().unwrap())
     }
 }
@@ -495,6 +557,7 @@ impl Display for Type {
             Type::Enum(e) => write!(f, "{}", e),
             Type::Primitive(p) => write!(f, "{}", p),
             Type::Opaque(o) => write!(f, "{}", o),
+            Type::Reference(r) => write!(f, "{}", r),
         }
     }
 }

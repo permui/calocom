@@ -193,7 +193,7 @@ impl TypedAST {
     fn resolve_type_with_at(&mut self, ast_type: &crate::ast::Type) -> (usize, Type) {
         let (idx, _typ) = self.resolve_type(ast_type, false);
 
-        self.ty_ctx.opaque_type(idx)
+        self.ty_ctx.reference_type(idx)
     }
 
     fn resolve_type(&mut self, ast_type: &crate::ast::Type, allow_opaque: bool) -> (usize, Type) {
@@ -494,9 +494,13 @@ impl TypedAST {
     fn check_type_of_match(&mut self, mexp: &crate::ast::MatchExpr) -> TypedExpr {
         let crate::ast::MatchExpr { e, arms } = mexp;
         let mut match_expr = self.check_type_of_expr(e);
-        // we need unboxed type for matching
-        match_expr.typ = self.ty_ctx.get_opaque_base_type(match_expr.typ);
 
+        // we need unboxed type for matching
+        if let Some(ty) = self.ty_ctx.get_reference_base_type(match_expr.typ) {
+            match_expr.typ = ty;
+        }
+
+        // empty match
         if arms.is_empty() {
             return TypedExpr {
                 typ: SingletonType::UNIT,
@@ -545,8 +549,11 @@ impl TypedAST {
 
         let first_arm_typ = typed_arms.first().unwrap().typ;
 
-        // requires same, because we don't expect to infer opaque type
-        if !typed_arms.iter().all(|expr| expr.typ == first_arm_typ) {
+        // requires same
+        if !typed_arms
+            .iter()
+            .all(|expr| self.ty_ctx.is_type_eq(expr.typ, first_arm_typ))
+        {
             panic!("match arm returns incompatible types")
         }
 
@@ -741,7 +748,7 @@ impl TypedAST {
         typed_ast.create_library_function_signature();
         typed_ast.resolve_import(module);
         typed_ast.resolve_all_type(module);
-        typed_ast.ty_ctx.refine_all_opaque_type();
+        typed_ast.ty_ctx.refine_all_type();
         typed_ast
             .ty_ctx
             .collect_all_constructor(&mut typed_ast.constructors);

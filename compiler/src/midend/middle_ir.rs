@@ -1,4 +1,3 @@
-use std::borrow::Borrow;
 use std::cell::RefCell;
 use std::collections::HashSet;
 use std::fmt::Display;
@@ -192,6 +191,8 @@ impl MiddleIR {
                     builder.table.entry();
                     self.convert_expr(&arm.1, builder, Some(Rc::clone(&output)));
                     builder.table.exit();
+
+                    builder.func.blocks.push(arm_block);
                 }
                 Pattern::Con(_) => panic!("can't use a non-literal match arm"),
             }
@@ -273,12 +274,13 @@ impl MiddleIR {
                             self.ty_ctx.get_ctor_field_type_by_name(expr.typ, name)[0].0;
                         let name = builder.namer.next_name("%field");
                         let field_var = self.create_variable_definition(name.as_str(), field_typ);
+                        builder.func.tmp_def.push(Rc::clone(&field_var));
 
                         let field = Value::Intrinsic(
                             "calocom.extract_field",
                             vec![
                                 Value::VarRef(Rc::clone(&expr)),
-                                Value::Imm(Literal::Str(name)),
+                                Value::Imm(Literal::Str(con.name.clone())),
                                 Value::Imm(Literal::Int(0)),
                             ],
                         );
@@ -301,6 +303,7 @@ impl MiddleIR {
                     self.convert_expr(&arm.1 .1, builder, Some(Rc::clone(&output)));
 
                     builder.table.exit();
+                    builder.func.blocks.push(arm_block);
                 }
             }
         }
@@ -466,7 +469,7 @@ impl MiddleIR {
         typ: usize,
     ) -> Rc<VarDef> {
         let name = namer.next_name(name);
-        let base_type: Opaque = self.ty_ctx.get_type_by_idx(typ).into();
+        let base_type: Reference = self.ty_ctx.get_type_by_idx(typ).into();
         let unboxed =
             self.create_variable_definition(name.as_str(), base_type.refer.left().unwrap());
         func.mem_ref.insert(Rc::clone(&unboxed));
@@ -491,43 +494,29 @@ impl MiddleIR {
 
             assert!(self.ty_ctx.is_compatible(t1, t2));
 
-            if self.ty_ctx.is_type_opaque_eq(t1, t2) {
-                let unboxed1 = self.create_unboxed_value(
-                    builder.func,
-                    &mut builder.namer,
-                    format!("{}.unboxed", lhs.name).as_str(),
-                    t1,
-                );
-
-                let unboxed2 = self.create_unboxed_value(
+            if self.ty_ctx.is_type_reference_eq(t1, t2) {
+                let unboxed = self.create_unboxed_value(
                     builder.func,
                     &mut builder.namer,
                     "%expr.unboxed",
                     t2,
                 );
 
-                let unbox_rhs = Stmt {
-                    left: Some(Rc::clone(&unboxed2)),
+                let unbox_stmt = Stmt {
+                    left: Some(Rc::clone(&unboxed)),
                     right: Some(Value::Intrinsic("calocom.unbox", vec![val])),
                     note: "unbox left hand side".to_string(),
                 };
 
-                let unbox_lhs = Stmt {
-                    left: Some(Rc::clone(&unboxed1)),
-                    right: Some(Value::Intrinsic(
-                        "calocom.unbox",
-                        vec![Value::VarRef(Rc::clone(&lhs))],
-                    )),
-                    note: "unbox right hand side".to_string(),
-                };
+                insert_position.push(unbox_stmt);
 
-                insert_position.push(unbox_lhs);
-                insert_position.push(unbox_rhs);
-
-                stmt.left = Some(unboxed1);
-                stmt.right = Some(Value::VarRef(unboxed2));
+                stmt.left = None;
+                stmt.right = Some(Value::Intrinsic(
+                    "calocom.store",
+                    vec![Value::VarRef(lhs), Value::VarRef(unboxed)],
+                ));
                 stmt.note = "assign".to_string();
-            } else if self.ty_ctx.is_type_pure_eq(t1, t2) {
+            } else if self.ty_ctx.is_type_pure_eq(t1, t2) || self.ty_ctx.is_type_opaque_eq(t1, t2) {
                 stmt.left = Some(Rc::clone(&lhs));
                 stmt.right = Some(val);
                 stmt.note = "assign".to_string();
@@ -539,29 +528,14 @@ impl MiddleIR {
                 stmt.left = Some(Rc::clone(&lhs));
                 stmt.right = Some(Value::Intrinsic("calocom.specialize_type", vec![val]));
                 stmt.note = "specialize type".to_string();
-            } else if self.ty_ctx.is_t1_opaque_of_t2(t1, t2) {
-                let unboxed = self.create_unboxed_value(
-                    builder.func,
-                    &mut builder.namer,
-                    format!("{}.unboxed", lhs.name).as_str(),
-                    t1,
-                );
-
-                let unbox_stmt = Stmt {
-                    left: Some(Rc::clone(&unboxed)),
-                    right: Some(Value::Intrinsic(
-                        "calocom.unbox",
-                        vec![Value::VarRef(Rc::clone(&lhs))],
-                    )),
-                    note: "unbox left hand side".to_string(),
-                };
-
-                insert_position.push(unbox_stmt);
-
-                stmt.left = Some(unboxed);
-                stmt.right = Some(val);
+            } else if self.ty_ctx.is_t1_reference_of_t2(t1, t2) {
+                stmt.left = None;
+                stmt.right = Some(Value::Intrinsic(
+                    "calocom.store",
+                    vec![Value::VarRef(lhs), val],
+                ));
                 stmt.note = "assign".to_string();
-            } else if self.ty_ctx.is_t1_opaque_of_t2(t2, t1) {
+            } else if self.ty_ctx.is_t1_reference_of_t2(t2, t1) {
                 let unboxed = self.create_unboxed_value(
                     builder.func,
                     &mut builder.namer,
