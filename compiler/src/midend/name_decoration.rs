@@ -1,3 +1,4 @@
+#[cfg(target_feature = "name_decoration")]
 use super::type_context::*;
 
 /*
@@ -10,6 +11,7 @@ TypeDecorationName  ::= ObjectName
                       | EnumerationName (ConstructorName)+
 ObjectName      ::= 'Co'
 OpaqueName      ::= 'Cp'
+OpaqueName      ::= 'Cr'
 PrimitiveName   ::= 'Cu'
                   | 'Cb'
                   | 'Ci4'
@@ -29,10 +31,13 @@ e.g:
     'Cu' encodes unit type
     'CeCT0_1OCFT1_1SF0_Cp' encodes Nat type
 */
+
+#[cfg(target_feature = "name_decoration")]
 trait DecorationName {
     fn get_decorated_name(&self) -> String;
 }
 
+#[cfg(target_feature = "name_decoration")]
 impl DecorationName for Type {
     fn get_decorated_name(&self) -> String {
         match self {
@@ -90,6 +95,7 @@ impl DecorationName for Type {
             }
             .to_string(),
             Type::Opaque(_) => "Cp".to_string(),
+            Type::Reference(_) => "Cr".to_string(),
         }
     }
 }
@@ -100,7 +106,7 @@ impl DecorationName for Type {
 // FunctionName     ::= 'PF' digits identifier
 // ParametersName   ::= ('P' digits '_' TypeDecorationName)*
 // ReturnTypeName   ::= 'RT' TypeDecorationName
-
+#[cfg(target_feature = "name_decoration")]
 pub fn decorate_polymorphic_function(
     path: &Vec<String>,
     _generic: &[&Type],
@@ -123,6 +129,7 @@ pub fn decorate_polymorphic_function(
     )
 }
 
+#[cfg(target_feature = "name_decoration")]
 #[cfg(test)]
 mod tests {
     use super::*;
