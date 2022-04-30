@@ -1,3 +1,5 @@
+pub mod memory;
+
 use crate::ast::{
     self, ArithExpr, BracketBody, CallExpr, Expr, LetStmt, Literal, MatchExpr, NameTypeBind,
 };
@@ -7,7 +9,7 @@ use inkwell::memory_buffer::MemoryBuffer;
 use inkwell::module::Module;
 use inkwell::types::{BasicMetadataTypeEnum, BasicTypeEnum, PointerType, StructType};
 use inkwell::values::PointerValue;
-use inkwell::values::{BasicValue, FunctionValue, GlobalValue};
+use inkwell::values::{BasicValue, FunctionValue};
 use inkwell::AddressSpace;
 use std::collections::HashMap;
 use std::path::Path;
@@ -365,7 +367,7 @@ impl<'ctx> CodeGen<'ctx> {
             }
 
             Literal::Str(s) => {
-                todo!()
+                todo!();
             }
 
             Literal::Bool(b) => {
