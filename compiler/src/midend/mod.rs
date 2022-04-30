@@ -1,6 +1,6 @@
-mod middle_ir;
+pub mod middle_ir;
 mod name_decoration;
-mod type_context;
+pub mod type_context;
 mod typed_ast;
 mod unique_name;
 

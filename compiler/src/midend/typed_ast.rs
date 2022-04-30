@@ -495,11 +495,6 @@ impl TypedAST {
         let crate::ast::MatchExpr { e, arms } = mexp;
         let mut match_expr = self.check_type_of_expr(e);
 
-        // we need unboxed type for matching
-        if let Some(ty) = self.ty_ctx.get_reference_base_type(match_expr.typ) {
-            match_expr.typ = ty;
-        }
-
         // empty match
         if arms.is_empty() {
             return TypedExpr {

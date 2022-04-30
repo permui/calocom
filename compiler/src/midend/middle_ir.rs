@@ -103,7 +103,7 @@ impl MiddleIR {
                 .find_symbol(name)
                 .unwrap_or_else(|| panic!("variable {} not defined", name)),
         );
-        self.convert_expr(expr, builder, Some(var));
+        self.convert_expr(expr, builder, Some(var), false);
     }
 
     fn convert_args(
@@ -120,7 +120,7 @@ impl MiddleIR {
                     let arg_var = self.create_variable_definition(name.as_str(), *x.1);
                     builder.func.tmp_def.push(Rc::clone(&arg_var));
 
-                    self.convert_expr(expr, builder, Some(Rc::clone(&arg_var)));
+                    self.convert_expr(expr, builder, Some(Rc::clone(&arg_var)), true);
                     v.push(Value::VarRef(arg_var));
                 }
                 TypedArgument::AtVar(name, typ) => {
@@ -135,6 +135,7 @@ impl MiddleIR {
                         },
                         builder,
                         Some(Rc::clone(&arg_var)),
+                        true,
                     );
                     v.push(Value::VarRef(arg_var));
                 }
@@ -189,7 +190,7 @@ impl MiddleIR {
                     builder.position = arm_position;
 
                     builder.table.entry();
-                    self.convert_expr(&arm.1, builder, Some(Rc::clone(&output)));
+                    self.convert_expr(&arm.1, builder, Some(Rc::clone(&output)), false);
                     builder.table.exit();
 
                     builder.func.blocks.push(arm_block);
@@ -300,7 +301,7 @@ impl MiddleIR {
                             .table
                             .insert_symbol(inner.clone(), Rc::clone(&field_var));
                     }
-                    self.convert_expr(&arm.1 .1, builder, Some(Rc::clone(&output)));
+                    self.convert_expr(&arm.1 .1, builder, Some(Rc::clone(&output)), false);
 
                     builder.table.exit();
                     builder.func.blocks.push(arm_block);
@@ -317,15 +318,21 @@ impl MiddleIR {
     fn convert_match_expr(&mut self, builder: &mut FunctionBuilder, x: &TypedMatchExpr) -> Value {
         let TypedMatchExpr { e, arms, typ } = x;
 
+        let mut expr_typ = e.typ;
+
+        if let Some(typ) = self.ty_ctx.get_reference_base_type(expr_typ) {
+            expr_typ = typ;
+        }
+
         let match_expr_var =
-            self.create_variable_definition(builder.namer.next_name("%match.expr").as_str(), e.typ);
+            self.create_variable_definition(builder.namer.next_name("%match.expr").as_str(), expr_typ);
         let match_output_var = self
             .create_variable_definition(builder.namer.next_name("%match.output").as_str(), *typ);
 
         builder.func.tmp_def.push(Rc::clone(&match_expr_var));
         builder.func.tmp_def.push(Rc::clone(&match_output_var));
 
-        self.convert_expr(e, builder, Some(Rc::clone(&match_expr_var)));
+        self.convert_expr(e, builder, Some(Rc::clone(&match_expr_var)), false);
 
         if arms.is_empty() {
             if *typ != SingletonType::UNIT {
@@ -334,7 +341,7 @@ impl MiddleIR {
             return Value::Unit;
         }
 
-        if SingletonType::is_singleton_type(e.typ) {
+        if SingletonType::is_singleton_type(expr_typ) {
             assert!(e.typ != SingletonType::OBJECT);
             assert!(e.typ != SingletonType::UNIT);
             self.convert_trivial_match_expr(
@@ -344,7 +351,7 @@ impl MiddleIR {
                 Rc::clone(&match_output_var),
             )
         } else {
-            if !self.ty_ctx.is_enum_type(e.typ) {
+            if !self.ty_ctx.is_enum_type(expr_typ) {
                 panic!(
                     "can't match this type {:#?}",
                     self.ty_ctx.get_type_by_idx(e.typ)
@@ -408,7 +415,7 @@ impl MiddleIR {
         }
 
         if let Some(ret_expr) = ret_expr {
-            self.convert_expr(ret_expr, builder, Some(Rc::clone(&bracket_out)));
+            self.convert_expr(ret_expr, builder, Some(Rc::clone(&bracket_out)), false);
         }
 
         builder.table.exit();
@@ -426,8 +433,8 @@ impl MiddleIR {
         builder.func.tmp_def.push(Rc::clone(&lhs_out));
         builder.func.tmp_def.push(Rc::clone(&rhs_out));
 
-        self.convert_expr(lhs, builder, Some(Rc::clone(&lhs_out)));
-        self.convert_expr(rhs, builder, Some(Rc::clone(&rhs_out)));
+        self.convert_expr(lhs, builder, Some(Rc::clone(&lhs_out)), false);
+        self.convert_expr(rhs, builder, Some(Rc::clone(&rhs_out)), false);
 
         Value::Op(
             op.clone(),
@@ -481,6 +488,7 @@ impl MiddleIR {
         expr: &TypedExpr,
         builder: &mut FunctionBuilder,
         out: Option<Rc<VarDef>>,
+        get_addr: bool,
     ) {
         let mut stmt = Stmt::default();
 
@@ -531,7 +539,11 @@ impl MiddleIR {
             } else if self.ty_ctx.is_t1_reference_of_t2(t1, t2) {
                 stmt.left = None;
                 stmt.right = Some(Value::Intrinsic(
-                    "calocom.store",
+                    if !get_addr {
+                        "calocom.store"
+                    } else {
+                        "calocom.get_address"
+                    },
                     vec![Value::VarRef(lhs), val],
                 ));
                 stmt.note = "assign".to_string();
@@ -588,7 +600,7 @@ impl MiddleIR {
         match stmt {
             TypedASTStmt::Let(stmt) => self.convert_let(stmt, builder),
             TypedASTStmt::Asgn(stmt) => self.convert_asgn(&stmt.var_name, &stmt.expr, builder),
-            TypedASTStmt::Expr(stmt) => self.convert_expr(stmt, builder, None),
+            TypedASTStmt::Expr(stmt) => self.convert_expr(stmt, builder, None, false),
         }
     }
 
@@ -602,7 +614,7 @@ impl MiddleIR {
             self.convert_stmt(stmt, builder)
         }
         if let Some(ret_expr) = &body.ret_expr {
-            self.convert_expr(ret_expr, builder, out);
+            self.convert_expr(ret_expr, builder, out, false);
         }
     }
 
