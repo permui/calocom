@@ -1,3 +1,4 @@
+use std::borrow::Borrow;
 use std::cell::RefCell;
 use std::collections::HashSet;
 use std::fmt::Display;
@@ -32,8 +33,19 @@ pub struct VarDef {
 
 #[derive(Debug)]
 pub struct Block {
+    pub name: String,
     pub stmts: Vec<Stmt>,
     pub terminator: Terminator,
+}
+
+impl Block {
+    fn new(namer: &mut UniqueName, stmts: Vec<Stmt>, terminator: Terminator) -> Self {
+        Block {
+            name: namer.next_name("block"),
+            stmts,
+            terminator,
+        }
+    }
 }
 
 #[derive(Debug, Default)]
@@ -105,7 +117,7 @@ impl MiddleIR {
         for x in arg.iter().zip(param) {
             match x.0 {
                 TypedArgument::Expr(expr) => {
-                    let name = builder.namer.next_name("arg");
+                    let name = builder.namer.next_name("%arg");
                     let arg_var = self.create_variable_definition(name.as_str(), *x.1);
                     builder.func.tmp_def.push(Rc::clone(&arg_var));
 
@@ -113,7 +125,7 @@ impl MiddleIR {
                     v.push(Value::VarRef(arg_var));
                 }
                 TypedArgument::AtVar(name, typ) => {
-                    let var_name = builder.namer.next_name("at_arg");
+                    let var_name = builder.namer.next_name("%at_arg");
                     let arg_var = self.create_variable_definition(var_name.as_str(), *x.1);
                     builder.func.tmp_def.push(Rc::clone(&arg_var));
 
@@ -124,7 +136,8 @@ impl MiddleIR {
                         },
                         builder,
                         Some(Rc::clone(&arg_var)),
-                    )
+                    );
+                    v.push(Value::VarRef(arg_var));
                 }
             }
         }
@@ -152,7 +165,7 @@ impl MiddleIR {
         output: Rc<VarDef>,
     ) {
         let current_bb = Rc::clone(builder.position.as_ref().unwrap());
-        let current_terminator = &current_bb.borrow().terminator;
+        let current_terminator = &current_bb.as_ref().borrow().terminator;
         let next_bb = match current_terminator {
             Terminator::Jump(x) => x,
             _ => panic!("internal error: expect jump terminator now"),
@@ -163,10 +176,11 @@ impl MiddleIR {
         for arm in arms {
             match &arm.0 {
                 Pattern::Lit(lit) => {
-                    let arm_block = Rc::new(RefCell::new(Block {
-                        stmts: vec![],
-                        terminator: Terminator::Jump(Rc::clone(next_bb)),
-                    }));
+                    let arm_block = Rc::new(RefCell::new(Block::new(
+                        &mut builder.namer,
+                        vec![],
+                        Terminator::Jump(Rc::clone(next_bb)),
+                    )));
 
                     let choice = (Box::new(Value::Imm(lit.clone())), Rc::clone(&arm_block));
 
@@ -190,7 +204,7 @@ impl MiddleIR {
     }
 
     fn extract_enum_tag(&mut self, builder: &mut FunctionBuilder, expr: Rc<VarDef>) -> Value {
-        let name = builder.namer.next_name("enum.tag");
+        let name = builder.namer.next_name("%enum.tag");
         let tag_var = self.create_variable_definition(name.as_str(), SingletonType::I32);
         builder.func.tmp_def.push(Rc::clone(&tag_var));
 
@@ -223,7 +237,7 @@ impl MiddleIR {
     ) {
         let current_bb = Rc::clone(builder.position.as_ref().unwrap());
         let next_bb = {
-            let current_terminator = &current_bb.borrow().terminator;
+            let current_terminator = &current_bb.as_ref().borrow().terminator;
             match current_terminator {
                 Terminator::Jump(x) => Rc::clone(x),
                 _ => panic!("internal error: expect jump terminator now"),
@@ -237,10 +251,11 @@ impl MiddleIR {
                 Pattern::Lit(_) => panic!("can't use a literal match arm"),
                 Pattern::Con(con) => {
                     let TypedASTConstructorVar { name, inner } = con;
-                    let arm_block = Rc::new(RefCell::new(Block {
-                        stmts: vec![],
-                        terminator: Terminator::Jump(Rc::clone(&next_bb)),
-                    }));
+                    let arm_block = Rc::new(RefCell::new(Block::new(
+                        &mut builder.namer,
+                        vec![],
+                        Terminator::Jump(Rc::clone(&next_bb)),
+                    )));
 
                     let choice = (
                         Box::new(Value::Imm(Literal::Int(arm.0.try_into().unwrap()))),
@@ -256,7 +271,7 @@ impl MiddleIR {
                     if let Some(inner) = inner {
                         let field_typ =
                             self.ty_ctx.get_ctor_field_type_by_name(expr.typ, name)[0].0;
-                        let name = builder.namer.next_name("field");
+                        let name = builder.namer.next_name("%field");
                         let field_var = self.create_variable_definition(name.as_str(), field_typ);
 
                         let field = Value::Intrinsic(
@@ -299,8 +314,10 @@ impl MiddleIR {
     fn convert_match_expr(&mut self, builder: &mut FunctionBuilder, x: &TypedMatchExpr) -> Value {
         let TypedMatchExpr { e, arms, typ } = x;
 
-        let match_expr_var = self.create_variable_definition("match.expr", e.typ);
-        let match_output_var = self.create_variable_definition("match.output", *typ);
+        let match_expr_var =
+            self.create_variable_definition(builder.namer.next_name("%match.expr").as_str(), e.typ);
+        let match_output_var = self
+            .create_variable_definition(builder.namer.next_name("%match.output").as_str(), *typ);
 
         builder.func.tmp_def.push(Rc::clone(&match_expr_var));
         builder.func.tmp_def.push(Rc::clone(&match_output_var));
@@ -327,7 +344,7 @@ impl MiddleIR {
             if !self.ty_ctx.is_enum_type(e.typ) {
                 panic!(
                     "can't match this type {:#?}",
-                    self.ty_ctx.get_type_by_idx(e.typ).1
+                    self.ty_ctx.get_type_by_idx(e.typ)
                 );
             }
             self.convert_complex_match_expr(
@@ -398,8 +415,10 @@ impl MiddleIR {
     fn convert_arith_expr(&mut self, builder: &mut FunctionBuilder, x: &TypedArithExpr) -> Value {
         let TypedArithExpr { lhs, rhs, op, typ } = x;
 
-        let lhs_out = self.create_variable_definition("arith.lhs", *typ);
-        let rhs_out = self.create_variable_definition("arith.rhs", *typ);
+        let lhs_out =
+            self.create_variable_definition(builder.namer.next_name("%arith.lhs").as_str(), *typ);
+        let rhs_out =
+            self.create_variable_definition(builder.namer.next_name("%arith.rhs").as_str(), *typ);
 
         builder.func.tmp_def.push(Rc::clone(&lhs_out));
         builder.func.tmp_def.push(Rc::clone(&rhs_out));
@@ -447,7 +466,7 @@ impl MiddleIR {
         typ: usize,
     ) -> Rc<VarDef> {
         let name = namer.next_name(name);
-        let base_type: Opaque = self.ty_ctx.get_type_by_idx(typ).1.into();
+        let base_type: Opaque = self.ty_ctx.get_type_by_idx(typ).into();
         let unboxed =
             self.create_variable_definition(name.as_str(), base_type.refer.left().unwrap());
         func.mem_ref.insert(Rc::clone(&unboxed));
@@ -472,7 +491,43 @@ impl MiddleIR {
 
             assert!(self.ty_ctx.is_compatible(t1, t2));
 
-            if self.ty_ctx.is_type_pure_eq(t1, t2) {
+            if self.ty_ctx.is_type_opaque_eq(t1, t2) {
+                let unboxed1 = self.create_unboxed_value(
+                    builder.func,
+                    &mut builder.namer,
+                    format!("{}.unboxed", lhs.name).as_str(),
+                    t1,
+                );
+
+                let unboxed2 = self.create_unboxed_value(
+                    builder.func,
+                    &mut builder.namer,
+                    "%expr.unboxed",
+                    t2,
+                );
+
+                let unbox_rhs = Stmt {
+                    left: Some(Rc::clone(&unboxed2)),
+                    right: Some(Value::Intrinsic("calocom.unbox", vec![val])),
+                    note: "unbox left hand side".to_string(),
+                };
+
+                let unbox_lhs = Stmt {
+                    left: Some(Rc::clone(&unboxed1)),
+                    right: Some(Value::Intrinsic(
+                        "calocom.unbox",
+                        vec![Value::VarRef(Rc::clone(&lhs))],
+                    )),
+                    note: "unbox right hand side".to_string(),
+                };
+
+                insert_position.push(unbox_lhs);
+                insert_position.push(unbox_rhs);
+
+                stmt.left = Some(unboxed1);
+                stmt.right = Some(Value::VarRef(unboxed2));
+                stmt.note = "assign".to_string();
+            } else if self.ty_ctx.is_type_pure_eq(t1, t2) {
                 stmt.left = Some(Rc::clone(&lhs));
                 stmt.right = Some(val);
                 stmt.note = "assign".to_string();
@@ -507,12 +562,16 @@ impl MiddleIR {
                 stmt.right = Some(val);
                 stmt.note = "assign".to_string();
             } else if self.ty_ctx.is_t1_opaque_of_t2(t2, t1) {
-                let unboxed =
-                    self.create_unboxed_value(builder.func, &mut builder.namer, "expr.unboxed", t2);
+                let unboxed = self.create_unboxed_value(
+                    builder.func,
+                    &mut builder.namer,
+                    "%expr.unboxed",
+                    t2,
+                );
 
                 let unbox_stmt = Stmt {
                     left: Some(Rc::clone(&unboxed)),
-                    right: Some(val),
+                    right: Some(Value::Intrinsic("calocom.unbox", vec![val])),
                     note: "unbox right hand side".to_string(),
                 };
 
@@ -520,38 +579,6 @@ impl MiddleIR {
 
                 stmt.left = Some(Rc::clone(&lhs));
                 stmt.right = Some(Value::VarRef(unboxed));
-                stmt.note = "assign".to_string();
-            } else if self.ty_ctx.is_type_opaque_eq(t1, t2) {
-                let unboxed1 = self.create_unboxed_value(
-                    builder.func,
-                    &mut builder.namer,
-                    format!("{}.unboxed", lhs.name).as_str(),
-                    t1,
-                );
-
-                let unboxed2 =
-                    self.create_unboxed_value(builder.func, &mut builder.namer, "expr.unboxed", t2);
-
-                let unbox_rhs = Stmt {
-                    left: Some(Rc::clone(&unboxed2)),
-                    right: Some(val),
-                    note: "unbox left hand side".to_string(),
-                };
-
-                let unbox_lhs = Stmt {
-                    left: Some(Rc::clone(&unboxed1)),
-                    right: Some(Value::Intrinsic(
-                        "calocom.unbox",
-                        vec![Value::VarRef(Rc::clone(&lhs))],
-                    )),
-                    note: "unbox right hand side".to_string(),
-                };
-
-                insert_position.push(unbox_lhs);
-                insert_position.push(unbox_rhs);
-
-                stmt.left = Some(unboxed1);
-                stmt.right = Some(Value::VarRef(unboxed2));
                 stmt.note = "assign".to_string();
             } else {
                 panic!("t1: {}, t2: {}", t1, t2)
@@ -644,17 +671,20 @@ impl MiddleIR {
 
         // return block
         let ret_block = Rc::new(RefCell::new(Block {
+            name: "exit".to_string(),
             terminator: Terminator::Return,
             stmts: vec![],
         }));
 
         // add an empty entry block and set the insert point
         let entry_block = Rc::new(RefCell::new(Block {
+            name: "entry".to_string(),
             terminator: Terminator::Jump(Rc::clone(&ret_block)),
             stmts: vec![],
         }));
 
         let panic_block = Rc::new(RefCell::new(Block {
+            name: "panic".to_string(),
             terminator: Terminator::Panic,
             stmts: vec![],
         }));
@@ -713,8 +743,155 @@ impl From<TypedAST> for MiddleIR {
     }
 }
 
+impl Display for Literal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TypedASTLiteral::Int(i) => write!(f, "{}", i),
+            TypedASTLiteral::Str(s) => write!(f, "{:?}", s),
+            TypedASTLiteral::Bool(b) => write!(f, "{}", b),
+        }
+    }
+}
+
+impl Display for RefPath {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.items.join("."))
+    }
+}
+
+impl Display for Terminator {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Terminator::Select(val, targets, other) => {
+                write!(f, "select {} [", val)?;
+                for (idx, target) in targets.iter().enumerate() {
+                    if idx != 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{} => {}", target.0, target.1.as_ref().borrow().name)?;
+                }
+                write!(f, ", _ => {}]", other.as_ref().borrow().name)
+            }
+            Terminator::Jump(target) => write!(f, "jump {}", target.as_ref().borrow().name),
+            Terminator::Return => write!(f, "ret"),
+            Terminator::Panic => write!(f, "panic"),
+        }
+    }
+}
+
+impl Display for Block {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        writeln!(f, "{}:", self.name)?;
+        for stmt in &self.stmts {
+            writeln!(f, "    {}", stmt)?;
+        }
+        write!(f, "    {}", self.terminator)
+    }
+}
+
+impl Display for BinOp {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TypedASTBinOp::Plus => write!(f, "add"),
+            TypedASTBinOp::Sub => write!(f, "sub"),
+            TypedASTBinOp::Mult => write!(f, "mul"),
+            TypedASTBinOp::Div => write!(f, "div"),
+            TypedASTBinOp::Mod => write!(f, "mod"),
+        }
+    }
+}
+
+impl Display for Value {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let print_vec_of_values = |f: &mut std::fmt::Formatter<'_>, values: &Vec<Value>| {
+            for (idx, val) in values.iter().enumerate() {
+                if idx != 0 {
+                    write!(f, " ")?;
+                }
+                write!(f, "{}", val)?;
+            }
+            write!(f, "")
+        };
+        match self {
+            Value::Call(path, args) => {
+                write!(f, "({} ", path)?;
+                print_vec_of_values(f, args)?;
+                write!(f, ")")
+            }
+            Value::Op(op, l, r) => write!(f, "({} {} {})", op, l, r),
+            Value::Imm(imm) => write!(f, "{}", imm),
+            Value::Unit => write!(f, "unit"),
+            Value::Intrinsic(name, args) => {
+                write!(f, "(@{} ", name)?;
+                print_vec_of_values(f, args)?;
+                write!(f, ")")
+            }
+            Value::VarRef(var) => write!(f, "{}", var.name),
+        }
+    }
+}
+
+impl Display for Stmt {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if let Some(left) = &self.left {
+            write!(f, "{: <24} = {};", left.name, self.right.as_ref().unwrap())
+        } else {
+            write!(f, "{: <24} = {};", "()", self.right.as_ref().unwrap())
+        }
+    }
+}
+
 impl Display for MiddleIR {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        writeln!(f, "{}", self.ty_ctx)
+        writeln!(f, "{}\n", self.ty_ctx)?;
+        let (_, type_name_map) = self.ty_ctx.get_display_name_map();
+        for func in self.module.iter() {
+            let FuncDef {
+                name,
+                param_def,
+                var_def,
+                tmp_def,
+                mem_ref,
+                ret_def,
+                blocks,
+            } = func;
+
+            writeln!(f, "fn {} {{", name)?;
+            let mut print_var = |var: &Rc<VarDef>| {
+                writeln!(
+                    f,
+                    "    {}: {}",
+                    var.name,
+                    type_name_map.get(&var.typ).unwrap(),
+                )
+            };
+
+            print_var(ret_def.as_ref().unwrap())?;
+            param_def
+                .iter()
+                .map(|x| &x.1)
+                .map(&mut print_var)
+                .collect::<Result<Vec<_>, _>>()?;
+            var_def
+                .iter()
+                .map(&mut print_var)
+                .collect::<Result<Vec<_>, _>>()?;
+            tmp_def
+                .iter()
+                .map(&mut print_var)
+                .collect::<Result<Vec<_>, _>>()?;
+            mem_ref
+                .iter()
+                .map(&mut print_var)
+                .collect::<Result<Vec<_>, _>>()?;
+
+            writeln!(f)?;
+            for block in blocks {
+                writeln!(f, "{}", block.as_ref().borrow())?;
+            }
+
+            writeln!(f, "}}\n")?;
+        }
+        writeln!(f)
     }
 }

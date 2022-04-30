@@ -146,8 +146,8 @@ impl Default for TypeContext {
 }
 
 impl TypeContext {
-    pub fn get_type_by_idx(&self, idx: usize) -> TypeHandle {
-        (idx, self.types[idx].clone())
+    pub fn get_type_by_idx(&self, idx: usize) -> Type {
+        self.types[idx].clone()
     }
 
     pub fn find_external_polymorphic_function_type(
@@ -180,7 +180,7 @@ impl TypeContext {
     }
 
     pub fn singleton_type(&self, typ: PrimitiveType) -> TypeHandle {
-        self.get_type_by_idx(typ.into())
+        (typ.clone().into(), self.get_type_by_idx(typ.into()))
     }
 
     pub fn associate_name_and_idx(&mut self, name: &str, idx: usize) {
@@ -211,7 +211,7 @@ impl TypeContext {
     pub fn get_type_by_name(&self, name: &str) -> Option<TypeHandle> {
         self.name_typeid_map
             .get(name)
-            .map(|x| self.get_type_by_idx(*x))
+            .map(|x| (*x, self.get_type_by_idx(*x)))
     }
 
     pub fn tuple_type(&mut self, fields: Vec<Type>) -> TypeHandle {
@@ -331,7 +331,7 @@ impl TypeContext {
     pub fn get_opaque_base_type(&self, typ: usize) -> usize {
         let mut typ = typ;
         loop {
-            match self.get_type_by_idx(typ).1 {
+            match self.get_type_by_idx(typ) {
                 Type::Opaque(opaque) => typ = opaque.refer.left().unwrap(),
                 _ => return typ,
             }
@@ -339,14 +339,14 @@ impl TypeContext {
     }
 
     pub fn is_t1_opaque_of_t2(&self, t1: usize, t2: usize) -> bool {
-        match self.get_type_by_idx(t1).1 {
+        match self.get_type_by_idx(t1) {
             Type::Opaque(opaque) => *opaque.refer.as_ref().left().unwrap() == t2,
             _ => false,
         }
     }
 
     pub fn is_enum_type(&self, t: usize) -> bool {
-        matches!(self.get_type_by_idx(t).1, Type::Enum(_))
+        matches!(self.get_type_by_idx(t), Type::Enum(_))
     }
 
     pub fn is_type_pure_eq(&self, t1: usize, t2: usize) -> bool {
@@ -354,8 +354,8 @@ impl TypeContext {
     }
 
     pub fn is_type_opaque_eq(&self, t1: usize, t2: usize) -> bool {
-        let t1 = self.get_type_by_idx(t1).1;
-        let t2 = self.get_type_by_idx(t2).1;
+        let t1 = self.get_type_by_idx(t1);
+        let t2 = self.get_type_by_idx(t2);
         match (t1, t2) {
             (Type::Opaque(opaque1), Type::Opaque(opaque2)) => self.is_type_eq(
                 *opaque1.refer.as_ref().left().unwrap(),
@@ -411,6 +411,24 @@ impl TypeContext {
                 }
             }
         }
+    }
+
+    pub fn get_display_name_map(&self) -> (Self, HashMap<usize, String>) {
+        let mut context = self.clone();
+        let mut display_name_map = HashMap::new();
+        let mut namer = UniqueName::new();
+        for (k, v) in context.name_typeid_map.iter() {
+            display_name_map.insert(*v, k.clone());
+        }
+
+        for (idx, _) in context.types.iter().enumerate() {
+            display_name_map
+                .entry(idx)
+                .or_insert_with(|| namer.next_name("anonymous_type"));
+        }
+
+        context.substitute_all_opaque_references(&display_name_map);
+        (context, display_name_map)
     }
 }
 impl Display for Tuple {
@@ -483,27 +501,12 @@ impl Display for Type {
 
 impl Display for TypeContext {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let mut context = self.clone();
-        let mut display_name_map = HashMap::new();
-        let mut namer = UniqueName::new();
-        for (k, v) in context.name_typeid_map.iter() {
-            display_name_map.insert(*v, k.clone());
-        }
-
-        for (idx, _) in context.types.iter().enumerate() {
-            display_name_map
-                .entry(idx)
-                .or_insert_with(|| namer.next_name("anonymous_type"));
-        }
-
-        context.substitute_all_opaque_references(&display_name_map);
+        let (context, map) = self.get_display_name_map();
 
         writeln!(f, "TypeContext {{")?;
-
         for (idx, typ) in context.types.iter().enumerate() {
-            writeln!(f, "    {}: {}", display_name_map.get(&idx).unwrap(), typ)?;
+            writeln!(f, "    {}: {}", map.get(&idx).unwrap(), typ)?;
         }
-
         write!(f, "}}")
     }
 }
