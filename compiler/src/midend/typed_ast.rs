@@ -493,7 +493,7 @@ impl TypedAST {
 
     fn check_type_of_match(&mut self, mexp: &crate::ast::MatchExpr) -> TypedExpr {
         let crate::ast::MatchExpr { e, arms } = mexp;
-        let mut match_expr = self.check_type_of_expr(e);
+        let match_expr = self.check_type_of_expr(e);
 
         // empty match
         if arms.is_empty() {

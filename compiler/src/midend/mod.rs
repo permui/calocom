@@ -1,8 +1,8 @@
-pub mod middle_ir;
-mod name_decoration;
-pub mod type_context;
-mod typed_ast;
-mod unique_name;
+pub(crate) mod middle_ir;
+pub(crate) mod name_decoration;
+pub(crate) mod type_context;
+pub(crate) mod typed_ast;
+pub(crate) mod unique_name;
 
 #[cfg(test)]
 mod tests {

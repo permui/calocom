@@ -21,6 +21,7 @@ pub enum PrimitiveType {
     Bool,
     Int32,
     Unit,
+    CInt32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -103,6 +104,7 @@ impl SingletonType {
     pub const I32: usize = 2;
     pub const STR: usize = 3;
     pub const UNIT: usize = 4;
+    pub const C_I32: usize = 5;
     pub fn is_singleton_type(typ: usize) -> bool {
         matches!(
             typ,
@@ -111,6 +113,7 @@ impl SingletonType {
                 | SingletonType::I32
                 | SingletonType::UNIT
                 | SingletonType::STR
+                | SingletonType::C_I32
         )
     }
 }
@@ -123,6 +126,7 @@ impl From<PrimitiveType> for usize {
             PrimitiveType::Int32 => SingletonType::I32,
             PrimitiveType::Unit => SingletonType::UNIT,
             PrimitiveType::Object => SingletonType::OBJECT,
+            PrimitiveType::CInt32 => SingletonType::C_I32,
         }
     }
 }
@@ -133,7 +137,7 @@ pub type SymTable<T> = Vec<HashMap<String, T>>;
 pub struct TypeContext {
     name_typeid_map: HashMap<String, usize>,
     type_typeid_map: HashMap<Type, usize>,
-    types: Vec<Type>,
+    pub types: Vec<Type>,
     ftypes: HashMap<String, (usize, Vec<usize>)>,
     ext_poly_ftypes: HashMap<Vec<String>, (usize, Vec<usize>)>,
     pub env: SymTable<usize>,
@@ -155,6 +159,10 @@ impl Default for TypeContext {
 }
 
 impl TypeContext {
+    pub fn get_idx_by_type(&self, typ: &Type) -> usize {
+        *self.type_typeid_map.get(typ).unwrap()
+    }
+
     pub fn get_type_by_idx(&self, idx: usize) -> Type {
         self.types[idx].clone()
     }
@@ -288,6 +296,7 @@ impl TypeContext {
         self.add_primitive(PrimitiveType::Int32, Some("i32"));
         self.add_primitive(PrimitiveType::Str, Some("str"));
         self.add_primitive(PrimitiveType::Unit, Some("__unit"));
+        self.add_primitive(PrimitiveType::CInt32, Some("__c_i32"));
     }
 
     pub fn refine_all_type(&mut self) {
@@ -510,6 +519,7 @@ impl Display for Primitive {
             PrimitiveType::Bool => write!(f, "bool"),
             PrimitiveType::Int32 => write!(f, "i32"),
             PrimitiveType::Unit => write!(f, "__unit"),
+            PrimitiveType::CInt32 => write!(f, "__c_i32"),
         }
     }
 }
@@ -568,7 +578,7 @@ impl Display for TypeContext {
 
         writeln!(f, "TypeContext {{")?;
         for (idx, typ) in context.types.iter().enumerate() {
-            writeln!(f, "    {}: {}", map.get(&idx).unwrap(), typ)?;
+            writeln!(f, "    type[{}] {}: {}", idx, map.get(&idx).unwrap(), typ)?;
         }
         write!(f, "}}")
     }

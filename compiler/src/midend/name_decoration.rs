@@ -1,5 +1,4 @@
-#[cfg(target_feature = "name_decoration")]
-use super::type_context::*;
+use super::{type_context::*};
 
 /*
 Type Name Decoration Rules
@@ -11,11 +10,12 @@ TypeDecorationName  ::= ObjectName
                       | EnumerationName (ConstructorName)+
 ObjectName      ::= 'Co'
 OpaqueName      ::= 'Cp'
-OpaqueName      ::= 'Cr'
+ReferenceName   ::= 'Cr'
 PrimitiveName   ::= 'Cu'
                   | 'Cb'
                   | 'Ci4'
                   | 'Cs'
+                  | 'CNi4'
 EmptyTupleName  ::= 'Cy'
 TupleName       ::= 'Ct'
 EnumerationName ::= 'Ce'
@@ -32,12 +32,10 @@ e.g:
     'CeCT0_1OCFT1_1SF0_Cp' encodes Nat type
 */
 
-#[cfg(target_feature = "name_decoration")]
 trait DecorationName {
     fn get_decorated_name(&self) -> String;
 }
 
-#[cfg(target_feature = "name_decoration")]
 impl DecorationName for Type {
     fn get_decorated_name(&self) -> String {
         match self {
@@ -92,6 +90,7 @@ impl DecorationName for Type {
                 PrimitiveType::Bool => "Cb",
                 PrimitiveType::Int32 => "Ci4",
                 PrimitiveType::Unit => "Cu",
+                PrimitiveType::CInt32 => "CNi4",
             }
             .to_string(),
             Type::Opaque(_) => "Cp".to_string(),
@@ -106,12 +105,11 @@ impl DecorationName for Type {
 // FunctionName     ::= 'PF' digits identifier
 // ParametersName   ::= ('P' digits '_' TypeDecorationName)*
 // ReturnTypeName   ::= 'RT' TypeDecorationName
-#[cfg(target_feature = "name_decoration")]
 pub fn decorate_polymorphic_function(
-    path: &Vec<String>,
-    _generic: &[&Type],
+    path: &[String],
+    _generic: &[Type],
     ret: &Type,
-    arg: &[&Type],
+    arg: &[Type],
 ) -> String {
     let fn_name = path.last().unwrap();
     let path = &path[..path.len() - 1];
@@ -129,7 +127,6 @@ pub fn decorate_polymorphic_function(
     )
 }
 
-#[cfg(target_feature = "name_decoration")]
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -13,13 +13,14 @@ use super::unique_name::*;
 pub type SymTable<T> = Vec<HashMap<String, T>>;
 type RefPath = TypedASTRefPath;
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct FuncDef {
     pub name: String,
     pub param_def: Vec<(bool, Rc<VarDef>)>,
-    pub var_def: Vec<Rc<VarDef>>, // represents a reference to a local stack slot
+    pub var_def: Vec<Rc<VarDef>>, // represents a local stack slot containing a pointer to a object
     pub tmp_def: Vec<Rc<VarDef>>, // be the same as var_def but it's not named by users
-    pub mem_ref: HashSet<Rc<VarDef>>, // only represents a reference to a memory position
+    pub mem_ref: Vec<Rc<VarDef>>, // only represents a local stack slot containing a ptr to a ptr to a object
+    pub unwrapped_def: Vec<Rc<VarDef>>, // represents a local slot for unwrapped value
     pub ret_def: Option<Rc<VarDef>>, // represents the reference to the stack slot where the return value locates
     pub blocks: Vec<Rc<RefCell<Block>>>,
 }
@@ -50,15 +51,15 @@ impl Block {
 #[derive(Debug, Default)]
 pub struct Stmt {
     pub left: Option<Rc<VarDef>>,
-    pub right: Option<Value>,
+    pub right: Option<TypedValue>,
     pub note: String,
 }
 
 #[derive(Debug)]
 pub enum Terminator {
     Select(
-        Box<Value>,
-        Vec<(Box<Value>, Rc<RefCell<Block>>)>,
+        Rc<VarDef>,
+        Vec<(Box<Literal>, Rc<RefCell<Block>>)>,
         Rc<RefCell<Block>>,
     ),
     Jump(Rc<RefCell<Block>>),
@@ -69,12 +70,18 @@ pub enum Terminator {
 pub type BinOp = TypedASTBinOp;
 
 #[derive(Debug)]
+pub struct TypedValue {
+    pub typ: usize,
+    pub val: Value,
+}
+
+#[derive(Debug)]
 pub enum Value {
-    Call(RefPath, Vec<Value>),
-    Op(BinOp, Box<Value>, Box<Value>),
+    Call(RefPath, Vec<TypedValue>),
+    Op(BinOp, Box<TypedValue>, Box<TypedValue>),
     Imm(Literal),
     Unit,
-    Intrinsic(&'static str, Vec<Value>),
+    Intrinsic(&'static str, Vec<TypedValue>),
     VarRef(Rc<VarDef>),
 }
 
@@ -89,10 +96,10 @@ struct FunctionBuilder<'a> {
     pub panic_block: Rc<RefCell<Block>>,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct MiddleIR {
-    ty_ctx: TypeContext,
-    module: Vec<FuncDef>,
+    pub ty_ctx: TypeContext,
+    pub module: Vec<FuncDef>,
 }
 
 impl MiddleIR {
@@ -111,20 +118,24 @@ impl MiddleIR {
         builder: &mut FunctionBuilder,
         arg: &[TypedArgument],
         param: &[usize],
-    ) -> Vec<Value> {
+    ) -> Vec<TypedValue> {
         let mut v = vec![];
         for x in arg.iter().zip(param) {
             match x.0 {
                 TypedArgument::Expr(expr) => {
-                    let name = builder.namer.next_name("%arg");
+                    let name = builder.namer.next_name("tmp.arg");
                     let arg_var = self.create_variable_definition(name.as_str(), *x.1);
                     builder.func.tmp_def.push(Rc::clone(&arg_var));
 
                     self.convert_expr(expr, builder, Some(Rc::clone(&arg_var)), true);
-                    v.push(Value::VarRef(arg_var));
+
+                    v.push(TypedValue {
+                        typ: *x.1,
+                        val: Value::VarRef(arg_var),
+                    });
                 }
                 TypedArgument::AtVar(name, typ) => {
-                    let var_name = builder.namer.next_name("%at_arg");
+                    let var_name = builder.namer.next_name("tmp.at_arg");
                     let arg_var = self.create_variable_definition(var_name.as_str(), *x.1);
                     builder.func.tmp_def.push(Rc::clone(&arg_var));
 
@@ -137,14 +148,21 @@ impl MiddleIR {
                         Some(Rc::clone(&arg_var)),
                         true,
                     );
-                    v.push(Value::VarRef(arg_var));
+                    v.push(TypedValue {
+                        typ: *x.1,
+                        val: Value::VarRef(arg_var),
+                    });
                 }
             }
         }
         v
     }
 
-    fn convert_ctor_expr(&mut self, builder: &mut FunctionBuilder, x: &TypedCtorExpr) -> Value {
+    fn convert_ctor_expr(
+        &mut self,
+        builder: &mut FunctionBuilder,
+        x: &TypedCtorExpr,
+    ) -> TypedValue {
         let TypedCtorExpr { typ, name, args } = x;
         let params_typ = self.ty_ctx.get_ctor_field_type_by_name(*typ, name);
         let mut args_value = self.convert_args(
@@ -152,9 +170,13 @@ impl MiddleIR {
             args,
             &params_typ.iter().map(|(ty, _)| *ty).collect::<Vec<usize>>(),
         );
-        let mut v = vec![Value::Imm(Literal::Str(name.clone()))];
+        let mut v = vec![TypedValue {
+            typ: SingletonType::STR,
+            val: Value::Imm(Literal::Str(name.clone())),
+        }];
         v.append(&mut args_value);
-        Value::Intrinsic("calocom.construct", v)
+        let val = Value::Intrinsic("calocom.construct", v);
+        TypedValue { typ: *typ, val }
     }
 
     fn convert_trivial_match_expr(
@@ -171,7 +193,7 @@ impl MiddleIR {
             _ => panic!("internal error: expect jump terminator now"),
         };
 
-        let match_value = Value::VarRef(expr);
+        let match_var = Rc::clone(&expr);
         let mut v = vec![];
         for arm in arms {
             match &arm.0 {
@@ -182,7 +204,7 @@ impl MiddleIR {
                         Terminator::Jump(Rc::clone(next_bb)),
                     )));
 
-                    let choice = (Box::new(Value::Imm(lit.clone())), Rc::clone(&arm_block));
+                    let choice = (Box::new(lit.clone()), Rc::clone(&arm_block));
 
                     v.push(choice);
 
@@ -199,22 +221,29 @@ impl MiddleIR {
             }
         }
 
-        let select = Terminator::Select(Box::new(match_value), v, Rc::clone(&builder.panic_block));
+        let select = Terminator::Select(match_var, v, Rc::clone(&builder.panic_block));
         current_bb.borrow_mut().terminator = select;
         let next_position = Some(Rc::clone(next_bb));
         builder.position = next_position;
     }
 
     fn extract_enum_tag(&mut self, builder: &mut FunctionBuilder, expr: Rc<VarDef>) -> Value {
-        let name = builder.namer.next_name("%enum.tag");
-        let tag_var = self.create_variable_definition(name.as_str(), SingletonType::I32);
-        builder.func.tmp_def.push(Rc::clone(&tag_var));
+        let name = builder.namer.next_name("tmp.enum.tag");
+        let tag_var = self.create_variable_definition(name.as_str(), SingletonType::C_I32);
+        builder.func.unwrapped_def.push(Rc::clone(&tag_var));
 
         let lhs = Some(Rc::clone(&tag_var));
-        let rhs = Some(Value::Intrinsic(
-            "calocom.extract_tag",
-            vec![Value::VarRef(expr)],
-        ));
+        let rhs = Some(TypedValue {
+            typ: tag_var.typ,
+            val: Value::Intrinsic(
+                "calocom.extract_tag",
+                vec![TypedValue {
+                    typ: expr.typ,
+                    val: Value::VarRef(expr),
+                }],
+            ),
+        });
+
         builder
             .position
             .as_ref()
@@ -247,6 +276,10 @@ impl MiddleIR {
         };
 
         let match_value = self.extract_enum_tag(builder, Rc::clone(&expr));
+        let match_var = match match_value {
+            Value::VarRef(var) => var,
+            _ => unimplemented!("match var can only be var ref"),
+        };
         let mut v = vec![];
         for arm in arms.iter().enumerate() {
             match &arm.1 .0 {
@@ -260,7 +293,7 @@ impl MiddleIR {
                     )));
 
                     let choice = (
-                        Box::new(Value::Imm(Literal::Int(arm.0.try_into().unwrap()))),
+                        Box::new(Literal::Int(arm.0.try_into().unwrap())),
                         Rc::clone(&arm_block),
                     );
 
@@ -273,18 +306,30 @@ impl MiddleIR {
                     if let Some(inner) = inner {
                         let field_typ =
                             self.ty_ctx.get_ctor_field_type_by_name(expr.typ, name)[0].0;
-                        let name = builder.namer.next_name("%field");
+                        let name = builder.namer.next_name("tmp.field");
                         let field_var = self.create_variable_definition(name.as_str(), field_typ);
                         builder.func.tmp_def.push(Rc::clone(&field_var));
 
-                        let field = Value::Intrinsic(
-                            "calocom.extract_field",
-                            vec![
-                                Value::VarRef(Rc::clone(&expr)),
-                                Value::Imm(Literal::Str(con.name.clone())),
-                                Value::Imm(Literal::Int(0)),
-                            ],
-                        );
+                        let field = TypedValue {
+                            typ: field_typ,
+                            val: Value::Intrinsic(
+                                "calocom.extract_field",
+                                vec![
+                                    TypedValue {
+                                        typ: expr.typ,
+                                        val: Value::VarRef(Rc::clone(&expr)),
+                                    },
+                                    TypedValue {
+                                        typ: SingletonType::STR,
+                                        val: Value::Imm(Literal::Str(con.name.clone())),
+                                    },
+                                    TypedValue {
+                                        typ: SingletonType::I32,
+                                        val: Value::Imm(Literal::Int(0)),
+                                    },
+                                ],
+                            ),
+                        };
                         builder
                             .position
                             .as_ref()
@@ -309,13 +354,17 @@ impl MiddleIR {
             }
         }
 
-        let select = Terminator::Select(Box::new(match_value), v, Rc::clone(&builder.panic_block));
+        let select = Terminator::Select(match_var, v, Rc::clone(&builder.panic_block));
         current_bb.borrow_mut().terminator = select;
         let next_position = Some(Rc::clone(&next_bb));
         builder.position = next_position;
     }
 
-    fn convert_match_expr(&mut self, builder: &mut FunctionBuilder, x: &TypedMatchExpr) -> Value {
+    fn convert_match_expr(
+        &mut self,
+        builder: &mut FunctionBuilder,
+        x: &TypedMatchExpr,
+    ) -> TypedValue {
         let TypedMatchExpr { e, arms, typ } = x;
 
         let mut expr_typ = e.typ;
@@ -324,10 +373,12 @@ impl MiddleIR {
             expr_typ = typ;
         }
 
-        let match_expr_var =
-            self.create_variable_definition(builder.namer.next_name("%match.expr").as_str(), expr_typ);
+        let match_expr_var = self.create_variable_definition(
+            builder.namer.next_name("tmp.match.expr").as_str(),
+            expr_typ,
+        );
         let match_output_var = self
-            .create_variable_definition(builder.namer.next_name("%match.output").as_str(), *typ);
+            .create_variable_definition(builder.namer.next_name("tmp.match.output").as_str(), *typ);
 
         builder.func.tmp_def.push(Rc::clone(&match_expr_var));
         builder.func.tmp_def.push(Rc::clone(&match_output_var));
@@ -338,7 +389,10 @@ impl MiddleIR {
             if *typ != SingletonType::UNIT {
                 panic!("empty match can't has return type except unit");
             }
-            return Value::Unit;
+            return TypedValue {
+                typ: SingletonType::UNIT,
+                val: Value::Unit,
+            };
         }
 
         if SingletonType::is_singleton_type(expr_typ) {
@@ -364,42 +418,49 @@ impl MiddleIR {
                 Rc::clone(&match_output_var),
             )
         }
-        Value::VarRef(match_output_var)
+        let val = Value::VarRef(match_output_var);
+        TypedValue { typ: *typ, val }
     }
 
-    fn convert_call_expr(&mut self, builder: &mut FunctionBuilder, x: &TypedCallExpr) -> Value {
+    fn convert_call_expr(
+        &mut self,
+        builder: &mut FunctionBuilder,
+        x: &TypedCallExpr,
+    ) -> TypedValue {
         let TypedCallExpr { path, gen: _, args } = x;
-        let params_typ = &self
-            .ty_ctx
-            .find_function_type(&path.items[0])
-            .unwrap()
-            .1
-            .clone();
+        let fn_type = self.ty_ctx.find_function_type(&path.items[0]).unwrap().clone();
+        let params_typ = &fn_type.1;
         let args_value = self.convert_args(builder, args, params_typ);
-        Value::Call(path.clone(), args_value)
+        let val = Value::Call(path.clone(), args_value);
+        TypedValue {
+            typ: fn_type.0,
+            val,
+        }
     }
 
     fn convert_ext_call_expr(
         &mut self,
         builder: &mut FunctionBuilder,
         x: &TypedExternalCallExpr,
-    ) -> Value {
+    ) -> TypedValue {
         let TypedExternalCallExpr { path, gen: _, args } = x;
-        let params_typ = &self
+        let fn_type = &self
             .ty_ctx
             .find_external_polymorphic_function_type(&path.items)
-            .unwrap()
-            .1
-            .clone();
+            .unwrap().clone();
+        let params_typ = &fn_type.1;
+        let typ = fn_type.0;
         let args_value = self.convert_args(builder, args, params_typ);
-        Value::Call(path.clone(), args_value)
+        let val = Value::Call(path.clone(), args_value);
+
+        TypedValue { typ, val }
     }
 
     fn convert_bracket_expr(
         &mut self,
         builder: &mut FunctionBuilder,
         x: &TypedBracketBody,
-    ) -> Value {
+    ) -> TypedValue {
         let TypedBracketBody {
             stmts,
             ret_expr,
@@ -419,16 +480,21 @@ impl MiddleIR {
         }
 
         builder.table.exit();
-        Value::VarRef(bracket_out)
+        let val = Value::VarRef(bracket_out);
+        TypedValue { typ: *typ, val }
     }
 
-    fn convert_arith_expr(&mut self, builder: &mut FunctionBuilder, x: &TypedArithExpr) -> Value {
+    fn convert_arith_expr(
+        &mut self,
+        builder: &mut FunctionBuilder,
+        x: &TypedArithExpr,
+    ) -> TypedValue {
         let TypedArithExpr { lhs, rhs, op, typ } = x;
 
-        let lhs_out =
-            self.create_variable_definition(builder.namer.next_name("%arith.lhs").as_str(), *typ);
-        let rhs_out =
-            self.create_variable_definition(builder.namer.next_name("%arith.rhs").as_str(), *typ);
+        let lhs_out = self
+            .create_variable_definition(builder.namer.next_name("tmp.arith.lhs").as_str(), lhs.typ);
+        let rhs_out = self
+            .create_variable_definition(builder.namer.next_name("tmp.arith.rhs").as_str(), rhs.typ);
 
         builder.func.tmp_def.push(Rc::clone(&lhs_out));
         builder.func.tmp_def.push(Rc::clone(&rhs_out));
@@ -436,26 +502,45 @@ impl MiddleIR {
         self.convert_expr(lhs, builder, Some(Rc::clone(&lhs_out)), false);
         self.convert_expr(rhs, builder, Some(Rc::clone(&rhs_out)), false);
 
-        Value::Op(
+        let val = Value::Op(
             op.clone(),
-            Box::new(Value::VarRef(lhs_out)),
-            Box::new(Value::VarRef(rhs_out)),
-        )
+            Box::new(TypedValue {
+                typ: lhs.typ,
+                val: Value::VarRef(lhs_out),
+            }),
+            Box::new(TypedValue {
+                typ: rhs.typ,
+                val: Value::VarRef(rhs_out),
+            }),
+        );
+
+        TypedValue { typ: *typ, val }
     }
 
-    fn convert_variable_expr(&mut self, builder: &mut FunctionBuilder, x: &str) -> Value {
+    fn convert_variable_expr(&mut self, builder: &mut FunctionBuilder, x: &str) -> TypedValue {
         let var = builder
             .table
             .find_symbol(x)
             .unwrap_or_else(|| panic!("variable {} not defined", x));
-        Value::VarRef(var.clone())
+        let val = Value::VarRef(var.clone());
+        TypedValue { typ: var.typ, val }
     }
 
-    fn convert_literal_expr(&mut self, x: &Literal) -> Value {
-        Value::Imm(x.clone())
+    fn convert_literal_expr(&mut self, x: &Literal) -> TypedValue {
+        let typ = match x {
+            Literal::Int(_) => SingletonType::I32,
+            Literal::Str(_) => SingletonType::STR,
+            Literal::Bool(_) => SingletonType::BOOL,
+        };
+        let val = Value::Imm(x.clone());
+        TypedValue { typ, val }
     }
 
-    fn create_value_from_expr(&mut self, builder: &mut FunctionBuilder, expr: &ExprEnum) -> Value {
+    fn create_value_from_expr(
+        &mut self,
+        builder: &mut FunctionBuilder,
+        expr: &ExprEnum,
+    ) -> TypedValue {
         match expr {
             ExprEnum::MatchExpr(x) => self.convert_match_expr(builder, x),
             ExprEnum::BraExpr(x) => self.convert_bracket_expr(builder, x),
@@ -468,7 +553,7 @@ impl MiddleIR {
         }
     }
 
-    fn create_unboxed_value(
+    fn create_dereferenced_value(
         &self,
         func: &mut FuncDef,
         namer: &mut UniqueName,
@@ -477,10 +562,10 @@ impl MiddleIR {
     ) -> Rc<VarDef> {
         let name = namer.next_name(name);
         let base_type: Reference = self.ty_ctx.get_type_by_idx(typ).into();
-        let unboxed =
+        let dereferenced =
             self.create_variable_definition(name.as_str(), base_type.refer.left().unwrap());
-        func.mem_ref.insert(Rc::clone(&unboxed));
-        unboxed
+        func.mem_ref.push(Rc::clone(&dereferenced));
+        dereferenced
     }
 
     fn convert_expr(
@@ -503,26 +588,42 @@ impl MiddleIR {
             assert!(self.ty_ctx.is_compatible(t1, t2));
 
             if self.ty_ctx.is_type_reference_eq(t1, t2) {
-                let unboxed = self.create_unboxed_value(
+                let dereferenced = self.create_dereferenced_value(
                     builder.func,
                     &mut builder.namer,
-                    "%expr.unboxed",
+                    "ref.expr.dereferenced",
                     t2,
                 );
 
-                let unbox_stmt = Stmt {
-                    left: Some(Rc::clone(&unboxed)),
-                    right: Some(Value::Intrinsic("calocom.unbox", vec![val])),
-                    note: "unbox left hand side".to_string(),
+                let dereference_stmt = Stmt {
+                    left: Some(Rc::clone(&dereferenced)),
+                    right: Some(TypedValue {
+                        typ: dereferenced.typ,
+                        val: Value::Intrinsic("calocom.dereference", vec![val]),
+                    }),
+                    note: "dereference left hand side".to_string(),
                 };
 
-                insert_position.push(unbox_stmt);
+                insert_position.push(dereference_stmt);
 
                 stmt.left = None;
-                stmt.right = Some(Value::Intrinsic(
-                    "calocom.store",
-                    vec![Value::VarRef(lhs), Value::VarRef(unboxed)],
-                ));
+                stmt.right = Some(TypedValue {
+                    typ: SingletonType::UNIT,
+                    val: Value::Intrinsic(
+                        "calocom.store",
+                        vec![
+                            TypedValue {
+                                typ: lhs.typ,
+                                val: Value::VarRef(lhs),
+                            },
+                            TypedValue {
+                                typ: dereferenced.typ,
+                                val: Value::VarRef(dereferenced),
+                            },
+                        ],
+                    ),
+                });
+
                 stmt.note = "assign".to_string();
             } else if self.ty_ctx.is_type_pure_eq(t1, t2) || self.ty_ctx.is_type_opaque_eq(t1, t2) {
                 stmt.left = Some(Rc::clone(&lhs));
@@ -530,41 +631,62 @@ impl MiddleIR {
                 stmt.note = "assign".to_string();
             } else if t1 == SingletonType::OBJECT {
                 stmt.left = Some(Rc::clone(&lhs));
-                stmt.right = Some(Value::Intrinsic("calocom.erase_type", vec![val]));
+                stmt.right = Some(TypedValue {
+                    typ: SingletonType::OBJECT,
+                    val: Value::Intrinsic("calocom.erase_type", vec![val]),
+                });
                 stmt.note = "erase type".to_string();
             } else if t2 == SingletonType::OBJECT {
                 stmt.left = Some(Rc::clone(&lhs));
-                stmt.right = Some(Value::Intrinsic("calocom.specialize_type", vec![val]));
+                stmt.right = Some(TypedValue {
+                    typ: SingletonType::OBJECT,
+                    val: Value::Intrinsic("calocom.specialize_type", vec![val]),
+                });
                 stmt.note = "specialize type".to_string();
             } else if self.ty_ctx.is_t1_reference_of_t2(t1, t2) {
                 stmt.left = None;
-                stmt.right = Some(Value::Intrinsic(
-                    if !get_addr {
-                        "calocom.store"
-                    } else {
-                        "calocom.get_address"
-                    },
-                    vec![Value::VarRef(lhs), val],
-                ));
+                stmt.right = Some(TypedValue {
+                    typ: SingletonType::UNIT,
+                    val: Value::Intrinsic(
+                        if !get_addr {
+                            "calocom.store"
+                        } else {
+                            "calocom.get_address"
+                        },
+                        vec![
+                            TypedValue {
+                                typ: lhs.typ,
+                                val: Value::VarRef(lhs),
+                            },
+                            val,
+                        ],
+                    ),
+                });
                 stmt.note = "assign".to_string();
             } else if self.ty_ctx.is_t1_reference_of_t2(t2, t1) {
-                let unboxed = self.create_unboxed_value(
+                let dereferenced = self.create_dereferenced_value(
                     builder.func,
                     &mut builder.namer,
-                    "%expr.unboxed",
+                    "ref.expr.dereferenced",
                     t2,
                 );
 
-                let unbox_stmt = Stmt {
-                    left: Some(Rc::clone(&unboxed)),
-                    right: Some(Value::Intrinsic("calocom.unbox", vec![val])),
-                    note: "unbox right hand side".to_string(),
+                let dereference_stmt = Stmt {
+                    left: Some(Rc::clone(&dereferenced)),
+                    right: Some(TypedValue {
+                        typ: dereferenced.typ,
+                        val: Value::Intrinsic("calocom.dereference", vec![val]),
+                    }),
+                    note: "dereference right hand side".to_string(),
                 };
 
-                insert_position.push(unbox_stmt);
+                insert_position.push(dereference_stmt);
 
                 stmt.left = Some(Rc::clone(&lhs));
-                stmt.right = Some(Value::VarRef(unboxed));
+                stmt.right = Some(TypedValue {
+                    typ: dereferenced.typ,
+                    val: Value::VarRef(dereferenced),
+                });
                 stmt.note = "assign".to_string();
             } else {
                 panic!("t1: {}, t2: {}", t1, t2)
@@ -787,9 +909,21 @@ impl Display for BinOp {
     }
 }
 
+impl Display for VarDef {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.name)
+    }
+}
+
+impl Display for TypedValue {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "({} : type[{}])", self.val, self.typ)
+    }
+}
+
 impl Display for Value {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let print_vec_of_values = |f: &mut std::fmt::Formatter<'_>, values: &Vec<Value>| {
+        let print_vec_of_values = |f: &mut std::fmt::Formatter<'_>, values: &Vec<TypedValue>| {
             for (idx, val) in values.iter().enumerate() {
                 if idx != 0 {
                     write!(f, " ")?;
@@ -800,19 +934,17 @@ impl Display for Value {
         };
         match self {
             Value::Call(path, args) => {
-                write!(f, "({} ", path)?;
-                print_vec_of_values(f, args)?;
-                write!(f, ")")
+                write!(f, "{} ", path)?;
+                print_vec_of_values(f, args)
             }
-            Value::Op(op, l, r) => write!(f, "({} {} {})", op, l, r),
+            Value::Op(op, l, r) => write!(f, "{} {} {}", op, l, r),
             Value::Imm(imm) => write!(f, "{}", imm),
             Value::Unit => write!(f, "unit"),
             Value::Intrinsic(name, args) => {
-                write!(f, "(@{} ", name)?;
-                print_vec_of_values(f, args)?;
-                write!(f, ")")
+                write!(f, "@{} ", name)?;
+                print_vec_of_values(f, args)
             }
-            Value::VarRef(var) => write!(f, "{}", var.name),
+            Value::VarRef(var) => write!(f, "{}", var),
         }
     }
 }
@@ -840,6 +972,7 @@ impl Display for MiddleIR {
                 mem_ref,
                 ret_def,
                 blocks,
+                unwrapped_def,
             } = func;
 
             writeln!(f, "fn {} {{", name)?;
@@ -867,6 +1000,10 @@ impl Display for MiddleIR {
                 .map(&mut print_var)
                 .collect::<Result<Vec<_>, _>>()?;
             mem_ref
+                .iter()
+                .map(&mut print_var)
+                .collect::<Result<Vec<_>, _>>()?;
+            unwrapped_def
                 .iter()
                 .map(&mut print_var)
                 .collect::<Result<Vec<_>, _>>()?;
