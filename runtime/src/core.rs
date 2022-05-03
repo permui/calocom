@@ -71,6 +71,15 @@ pub unsafe extern "C" fn __calocom_runtime_dummy(
 ///
 /// This function should not be called directly by other crates
 #[no_mangle]
+pub unsafe extern "C" fn __calocom_runtime_entry_panic_block() -> ! {
+    let fmt = const_cstr!("panic: entry the panic basic block");
+    __calocom_runtime_panic(fmt.as_ptr())
+}
+
+/// # Safety
+///
+/// This function should not be called directly by other crates
+#[no_mangle]
 pub unsafe extern "C" fn __calocom_runtime_panic(msg: *const c_char) -> ! {
     let fmt = const_cstr!("calocom runtime panic: %s\n");
     printf(fmt.as_ptr(), msg);

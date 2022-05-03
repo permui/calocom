@@ -2,24 +2,29 @@ use std::path::Path;
 
 use inkwell::context::Context;
 use inkwell::memory_buffer::MemoryBuffer;
-use inkwell::module::{Linkage, Module};
+use inkwell::module::Module;
+use inkwell::types::BasicTypeEnum;
 use inkwell::types::StructType;
-use inkwell::types::{BasicType, BasicTypeEnum};
 use inkwell::values::FunctionValue;
-use inkwell::AddressSpace;
 use paste::paste;
 
-use crate::midend::type_context::{PrimitiveType, SingletonType};
+use crate::midend::type_context::PrimitiveType;
 
 macro_rules! runtime_function {
     ($fn_name:ident, $lf: lifetime) => {
-        paste! { fn [<get_runtime_function_ $fn_name>] (&self) -> FunctionValue<$lf>; }
+        paste! {
+            #[allow(non_snake_case)]
+            fn [<get_runtime_function_ $fn_name>] (&self) -> FunctionValue<$lf>;
+        }
     };
 }
 
 macro_rules! runtime_type {
     ($ty_name:ident, $lf: lifetime) => {
-        paste! { fn [<get_runtime_type_ $ty_name>] (&self) -> StructType<$lf>; }
+        paste! {
+            #[allow(non_snake_case)]
+            fn [<get_runtime_type_ $ty_name>] (&self) -> StructType<$lf>;
+        }
     };
 }
 
@@ -37,22 +42,29 @@ macro_rules! runtime_function_name_string {
 
 macro_rules! runtime_function_getter {
     ($fn_name:ident, $lf: lifetime) => {
-        paste! { fn [<get_runtime_function_ $fn_name>] (&self) -> FunctionValue<$lf> {
-            self.get_function(runtime_function_name_string!($fn_name)).expect("runtime function not found")
-        } }
+        paste! {
+            #[allow(non_snake_case)]
+            fn [<get_runtime_function_ $fn_name>] (&self) -> FunctionValue<$lf> {
+                self.get_function(runtime_function_name_string!($fn_name)).expect("runtime function not found")
+            }
+        }
     };
 }
 
 macro_rules! runtime_type_getter {
     ($ty_name:ident, $lf: lifetime) => {
-        paste! { fn [<get_runtime_type_ $ty_name>] (&self) -> StructType<$lf> {
-            self.get_struct_type(runtime_type_name_string!($ty_name)).expect("runtime type not found")
-        } }
+        paste! {
+            #[allow(non_snake_case)]
+            fn [<get_runtime_type_ $ty_name>] (&self) -> StructType<$lf> {
+                self.get_struct_type(runtime_type_name_string!($ty_name)).expect("runtime type not found")
+            }
+        }
     };
 }
 
 pub trait CoreLibrary<'ctx> {
     runtime_function!(panic, 'ctx);
+    runtime_function!(entry_panic_block, 'ctx);
     runtime_function!(alloc, 'ctx);
     runtime_function!(alloc_object, 'ctx);
     runtime_function!(alloc_unit, 'ctx);
@@ -70,6 +82,7 @@ pub trait CoreLibrary<'ctx> {
 
 impl<'ctx> CoreLibrary<'ctx> for Module<'ctx> {
     runtime_function_getter!(panic, 'ctx);
+    runtime_function_getter!(entry_panic_block, 'ctx);
     runtime_function_getter!(alloc, 'ctx);
     runtime_function_getter!(alloc_object, 'ctx);
     runtime_function_getter!(alloc_unit, 'ctx);
@@ -96,8 +109,7 @@ impl<'ctx> CoreLibrary<'ctx> for Module<'ctx> {
     }
 
     fn link_calocom_runtime_module(&mut self, path: &Path) {
-        let memory_buffer =
-            MemoryBuffer::create_from_file(&path).expect("read runtime file failed");
+        let memory_buffer = MemoryBuffer::create_from_file(path).expect("read runtime file failed");
         let context = unsafe { &*(&*self.get_context() as *const Context) };
         let runtime_module = context
             .create_module_from_ir(memory_buffer)

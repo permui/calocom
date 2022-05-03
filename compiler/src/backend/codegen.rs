@@ -278,17 +278,24 @@ impl<'ctx> CodeGen<'ctx> {
                         })
                         .collect();
                     self.builder
-                        .build_switch(loaded_value.into_int_value(), *other, &choices[..])
+                        .build_switch(loaded_value.into_int_value(), *other, &choices[..]);
                 }
                 middle_ir::Terminator::Jump(x) => {
                     let target = block_map.get(x.as_ref().borrow().name.as_str()).unwrap();
-                    self.builder.build_unconditional_branch(*target)
+                    self.builder.build_unconditional_branch(*target);
                 }
                 middle_ir::Terminator::Return => {
                     let ret_var = self.builder.build_load(ret_var_ptr, "ret.var");
-                    self.builder.build_return(Some(&ret_var))
+                    self.builder.build_return(Some(&ret_var));
                 }
-                middle_ir::Terminator::Panic => self.builder.build_unreachable(),
+                middle_ir::Terminator::Panic => {
+                    self.builder.build_call(
+                        self.module.get_runtime_function_entry_panic_block(),
+                        &[],
+                        "",
+                    );
+                    self.builder.build_unreachable();
+                }
             };
         }
     }
