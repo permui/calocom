@@ -131,6 +131,20 @@ impl From<PrimitiveType> for usize {
     }
 }
 
+impl From<usize> for PrimitiveType {
+    fn from(typ: usize) -> Self {
+        match typ {
+            x if x == SingletonType::STR => PrimitiveType::Str,
+            x if x == SingletonType::BOOL => PrimitiveType::Bool,
+            x if x == SingletonType::I32 => PrimitiveType::Int32,
+            x if x == SingletonType::UNIT => PrimitiveType::Unit,
+            x if x == SingletonType::OBJECT => PrimitiveType::Object,
+            x if x == SingletonType::C_I32 => PrimitiveType::CInt32,
+            _ => panic!("not a singleton type index"),
+        }
+    }
+}
+
 pub type SymTable<T> = Vec<HashMap<String, T>>;
 
 #[derive(Debug, Clone)]

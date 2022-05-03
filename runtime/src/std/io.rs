@@ -13,7 +13,7 @@ use libc::putchar;
 /// Parameter 0: P0_ Calocom.object
 /// Return Type: RT Calocom.unit
 #[no_mangle]
-pub unsafe extern "C" fn _CM3stdM2ioPF5printP0_CoRTCu(p: *const _Object) -> *const _Object {
+pub unsafe extern "C" fn _CM3stdM2ioPF5printP0_CoRTCu(p: *const _Object) -> *const _Unit {
     __calocom_runtime_print_object(p);
     __calocom_runtime_alloc_unit()
 }
@@ -29,7 +29,7 @@ pub unsafe extern "C" fn _CM3stdM2ioPF5printP0_CoRTCu(p: *const _Object) -> *con
 /// Parameter 0: P0_ Calocom.object
 /// Return Type: RT Calocom.unit
 #[no_mangle]
-pub unsafe extern "C" fn _CM3stdM2ioPF7printlnP0_CoRTCu(p: *const _Object) -> *const _Object {
+pub unsafe extern "C" fn _CM3stdM2ioPF7printlnP0_CoRTCu(p: *const _Object) -> *const _Unit {
     __calocom_runtime_print_object(p);
     #[cfg(windows)]
     putchar('\r' as c_int);

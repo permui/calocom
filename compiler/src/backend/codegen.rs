@@ -1,20 +1,20 @@
-use std::{cell::RefCell, collections::HashMap, hash::Hash, rc::Rc};
+use std::{cell::RefCell, collections::HashMap, path::Path, rc::Rc};
 
 use inkwell::{
     basic_block::BasicBlock,
     builder::Builder,
-    context::{self, Context},
+    context::Context,
     module::Module,
-    types::{BasicMetadataTypeEnum, BasicType, BasicTypeEnum},
-    values::{BasicValue, BasicValueEnum, FunctionValue, PointerValue},
+    types::{BasicMetadataTypeEnum, BasicType},
+    values::{AnyValue, BasicValue, BasicValueEnum, FunctionValue, PointerValue},
     AddressSpace,
 };
 
-use super::memory::MemoryLayoutContext;
+use super::{memory::MemoryLayoutContext, runtime::CoreLibrary};
 use crate::{
     midend::middle_ir::FuncDef,
     midend::{
-        middle_ir::{self, BinOp, Block, Literal, MiddleIR, Value, VarDef, TypedValue},
+        middle_ir::{self, BinOp, Block, Literal, MiddleIR, TypedValue, Value, VarDef},
         name_decoration::decorate_polymorphic_function,
         type_context::{SingletonType, Type},
     },
@@ -32,14 +32,20 @@ pub struct CodeGen<'ctx> {
 
 impl<'ctx> CodeGen<'ctx> {
     pub fn new(name: &'ctx str, llvm_ctx: &'ctx Context, mir: &MiddleIR) -> Self {
-        let module = llvm_ctx.create_module(name);
+        let mut module = llvm_ctx.create_module(name);
         let builder = llvm_ctx.create_builder();
         let ty_ctx = mir.ty_ctx.clone();
+        module.link_calocom_runtime_module(Path::new("../calocom_runtime.ll"));
+        let mut calocom_types = vec![];
+        for idx in SingletonType::OBJECT..=SingletonType::C_I32 {
+            calocom_types.push(module.get_calocom_type(idx.into()));
+        }
+        let mem_layout_ctx = MemoryLayoutContext::new(ty_ctx, llvm_ctx, calocom_types.as_slice());
         CodeGen {
             context: llvm_ctx,
             module,
             builder,
-            memory_layout_ctx: MemoryLayoutContext::new(ty_ctx, llvm_ctx),
+            memory_layout_ctx: mem_layout_ctx,
             fn_map: HashMap::new(),
             fn_name_map: HashMap::new(),
             var_map: HashMap::new(),
@@ -115,59 +121,67 @@ impl<'ctx> CodeGen<'ctx> {
         todo!()
     }
 
-
     // create a unboxed llvm value
     // NOTICE: now only calocom.i32 can be unboxed
-    fn emit_unboxed_value(
-        ctx: &'ctx Context,
-        builder: &Builder<'ctx>,
-        module: &Module<'ctx>,
-        value: &TypedValue,
-        var_map: &HashMap<Rc<VarDef>, PointerValue<'ctx>>,
-    ) -> BasicValueEnum<'ctx> {
-        let TypedValue { typ, val } = value;
-        let value = val;
-        match value {
+    fn emit_unboxed_value(&self, typed_value: &TypedValue) -> BasicValueEnum<'ctx> {
+        let TypedValue { typ, val } = typed_value;
+        match val {
             Value::Call(_, _) => {
-                let bv = CodeGen::emit_calocom_value(ctx, builder, module, value, var_map);
-                // unable to check the type here
-                let bv = builder.build_load(bv.into_pointer_value(), "");
+                let mut bv = self.emit_calocom_value(typed_value);
+
+                if matches!(*typ, SingletonType::I32) {
+                    bv = self.builder.build_load(bv.into_pointer_value(), "");
+                }
+
                 bv
             }
             Value::Op(op, l, r) => {
-                let lhs = CodeGen::emit_unboxed_value(ctx, builder, module, l, var_map);
-                let rhs = CodeGen::emit_unboxed_value(ctx, builder, module, r, var_map);
+                let lhs = self.emit_unboxed_value(l);
+                let rhs = self.emit_unboxed_value(r);
 
-                let res = if lhs.is_int_value() && rhs.is_int_value() {
+                let res = if matches!(l.typ, SingletonType::I32 | SingletonType::C_I32)
+                    || matches!(r.typ, SingletonType::I32 | SingletonType::C_I32)
+                {
                     match op {
-                        BinOp::Plus => builder
+                        BinOp::Plus => self
+                            .builder
                             .build_int_add(lhs.into_int_value(), rhs.into_int_value(), "")
                             .as_basic_value_enum(),
-                        BinOp::Sub => builder
+                        BinOp::Sub => self
+                            .builder
                             .build_int_sub(lhs.into_int_value(), rhs.into_int_value(), "")
                             .as_basic_value_enum(),
-                        BinOp::Mult => builder
+                        BinOp::Mult => self
+                            .builder
                             .build_int_mul(lhs.into_int_value(), rhs.into_int_value(), "")
                             .as_basic_value_enum(),
-                        BinOp::Div => builder
+                        BinOp::Div => self
+                            .builder
                             .build_int_signed_div(lhs.into_int_value(), rhs.into_int_value(), "")
                             .as_basic_value_enum(),
-                        BinOp::Mod => builder
+                        BinOp::Mod => self
+                            .builder
                             .build_int_signed_rem(lhs.into_int_value(), rhs.into_int_value(), "")
                             .as_basic_value_enum(),
                     }
                 } else {
-                    panic!("could not take such operation: {:?}", value)
+                    panic!("could not take such operation: {:?}", typed_value)
                 };
+
                 res
             }
             Value::Imm(lit) => match lit {
-                Literal::Int(i) => ctx
+                Literal::Int(i) => self
+                    .context
                     .i32_type()
                     .const_int(*i as u64, false)
                     .as_basic_value_enum(),
-                Literal::Str(s) => panic!("unable to create unboxed string literal"),
-                Literal::Bool(b) => ctx
+                Literal::Str(s) => self
+                    .builder
+                    .build_global_string_ptr(s.as_str(), "")
+                    .as_basic_value_enum(), // NOTE: it's a raw string pointer, not a calocom.str
+                Literal::Bool(b) => self
+                    .context
                     .i32_type()
                     .const_int(*b as u64, false)
                     .as_basic_value_enum(),
@@ -177,24 +191,33 @@ impl<'ctx> CodeGen<'ctx> {
                 todo!()
             }
             Value::VarRef(var) => {
-                let mut bv = CodeGen::emit_calocom_value(ctx, builder, module, value, var_map);
+                let mut bv = self.emit_calocom_value(typed_value);
+                // only promote i32 value
                 if matches!(var.typ, SingletonType::I32) {
-                    bv = builder.build_load(bv.into_pointer_value(), "");
+                    bv = self.builder.build_load(bv.into_pointer_value(), "");
                 }
                 bv
             }
         }
     }
 
-    fn emit_calocom_value(
-        ctx: &'ctx Context,
-        builder: &Builder<'ctx>,
-        module: &Module<'ctx>,
-        value: &Value,
-        var_map: &HashMap<Rc<VarDef>, PointerValue<'ctx>>,
-    ) -> BasicValueEnum<'ctx> {
-        match value {
-            Value::Call(_, _) => todo!(),
+    fn emit_calocom_value(&self, typed_value: &TypedValue) -> BasicValueEnum<'ctx> {
+        let TypedValue { typ, val } = typed_value;
+        match val {
+            Value::Call(path, args) => {
+                let args: Vec<_> = args
+                    .iter()
+                    .map(|arg| self.emit_calocom_value(arg).into())
+                    .collect();
+                let decorated_name = self.fn_name_map.get(path.items[0].as_str()).unwrap();
+                let function = self.fn_map.get(decorated_name).unwrap();
+                // NOTE: void function not allowed in calocom
+                self.builder
+                    .build_call(*function, &args[..], "")
+                    .try_as_basic_value()
+                    .left()
+                    .unwrap()
+            }
             Value::Op(_, _, _) => {
                 todo!()
             }
@@ -202,8 +225,8 @@ impl<'ctx> CodeGen<'ctx> {
             Value::Unit => todo!(),
             Value::Intrinsic(_, _) => todo!(),
             Value::VarRef(var) => {
-                let ptr = var_map.get(var).unwrap();
-                let bv: BasicValueEnum = builder.build_load(*ptr, "");
+                let ptr = self.var_map.get(var).unwrap();
+                let bv: BasicValueEnum = self.builder.build_load(*ptr, "");
                 bv
             }
         }
@@ -220,22 +243,20 @@ impl<'ctx> CodeGen<'ctx> {
     }
 
     fn emit_basic_block_terminators(
-        context: &'ctx Context,
-        builder: &Builder,
+        &self,
         ret_var_ptr: PointerValue<'ctx>,
         blocks: &[Rc<RefCell<Block>>],
         block_map: &HashMap<String, BasicBlock>,
-        var_map: &HashMap<Rc<VarDef>, PointerValue<'ctx>>,
     ) {
         for block in blocks.iter() {
             let llvm_block = block_map
                 .get(block.as_ref().borrow().name.as_str())
                 .unwrap();
-            builder.position_at_end(*llvm_block);
+            self.builder.position_at_end(*llvm_block);
             match &block.as_ref().borrow().terminator {
                 middle_ir::Terminator::Select(var, choices, other) => {
-                    let stack_slot = var_map.get(var).unwrap();
-                    let loaded_value = builder.build_load(*stack_slot, "");
+                    let stack_slot = self.var_map.get(var).unwrap();
+                    let loaded_value = self.builder.build_load(*stack_slot, "");
                     let other = block_map
                         .get(other.as_ref().borrow().name.as_str())
                         .unwrap();
@@ -246,7 +267,8 @@ impl<'ctx> CodeGen<'ctx> {
                                 let block = block_map
                                     .get(block.as_ref().borrow().name.as_str())
                                     .unwrap();
-                                let llvm_const_int = context.i32_type().const_int(*i as u64, false);
+                                let llvm_const_int =
+                                    self.context.i32_type().const_int(*i as u64, false);
                                 (llvm_const_int, *block)
                             } else {
                                 panic!(
@@ -255,17 +277,18 @@ impl<'ctx> CodeGen<'ctx> {
                             }
                         })
                         .collect();
-                    builder.build_switch(loaded_value.into_int_value(), *other, &choices[..])
+                    self.builder
+                        .build_switch(loaded_value.into_int_value(), *other, &choices[..])
                 }
                 middle_ir::Terminator::Jump(x) => {
                     let target = block_map.get(x.as_ref().borrow().name.as_str()).unwrap();
-                    builder.build_unconditional_branch(*target)
+                    self.builder.build_unconditional_branch(*target)
                 }
                 middle_ir::Terminator::Return => {
-                    let ret_var = builder.build_load(ret_var_ptr, "ret.var");
-                    builder.build_return(Some(&ret_var))
+                    let ret_var = self.builder.build_load(ret_var_ptr, "ret.var");
+                    self.builder.build_return(Some(&ret_var))
                 }
-                middle_ir::Terminator::Panic => builder.build_unreachable(),
+                middle_ir::Terminator::Panic => self.builder.build_unreachable(),
             };
         }
     }
@@ -366,14 +389,7 @@ impl<'ctx> CodeGen<'ctx> {
             true,
         );
 
-        CodeGen::emit_basic_block_terminators(
-            self.context,
-            &self.builder,
-            ret_var_ptr,
-            blocks,
-            &block_map,
-            &self.var_map,
-        );
+        self.emit_basic_block_terminators(ret_var_ptr, blocks, &block_map);
     }
 
     pub fn emit_all(&mut self, mir: &MiddleIR) {

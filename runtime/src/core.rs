@@ -13,11 +13,12 @@ use libc::uintptr_t;
 
 #[repr(u8)]
 pub enum _ObjectType {
-    Unit = 0,
-    Str = 1,
-    I32 = 2,
-    Bool = 3,
-    Other = 4,
+    Reserved = 0,
+    Unit = 1,
+    Str = 2,
+    I32 = 3,
+    Bool = 4,
+    Other = 5,
 }
 
 #[repr(C, packed(4))]
@@ -28,23 +29,28 @@ pub struct _Object {
     pub reserved2: u16,
 }
 
-#[repr(C, packed(4))]
+#[repr(C, packed)]
 pub struct _String {
     pub header: _Object,
     pub len: u32,
     pub data: [c_char; 0],
 }
 
-#[repr(C, packed(4))]
+#[repr(C, packed)]
 pub struct _Int32 {
     pub header: _Object,
     pub data: i32,
 }
 
-#[repr(C, packed(4))]
+#[repr(C, packed)]
 pub struct _Tuple {
     pub header: _Object,
     pub data: [*mut c_void; 0],
+}
+
+#[repr(C, packed)]
+pub struct _Unit {
+    pub header: _Object,
 }
 
 /// # Safety
@@ -82,14 +88,14 @@ pub extern "C" fn __calocom_runtime_alloc_object() -> *mut _Object {
 }
 
 #[no_mangle]
-pub extern "C" fn __calocom_runtime_alloc_unit() -> *mut _Object {
-    let obj = __calocom_runtime_alloc_object();
+pub extern "C" fn __calocom_runtime_alloc_unit() -> *mut _Unit {
+    let mem = __calocom_runtime_alloc(::core::mem::size_of::<_Unit>()) as *mut _Unit;
     // TODO: regard keeping a global singleton
     unsafe {
-        (*obj).tag = _ObjectType::Unit;
-        (*obj).ptr = 0;
+        (*mem).header.tag = _ObjectType::Unit;
+        (*mem).header.ptr = 0;
     }
-    obj
+    mem
 }
 
 #[no_mangle]
