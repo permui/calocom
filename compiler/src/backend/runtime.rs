@@ -30,7 +30,7 @@ macro_rules! runtime_type {
 
 macro_rules! runtime_type_name_string {
     ($type_name:ident) => {
-        concat!("core::", stringify!($type_name))
+        concat!("types::", stringify!($type_name))
     };
 }
 
@@ -65,17 +65,27 @@ macro_rules! runtime_type_getter {
 pub trait CoreLibrary<'ctx> {
     runtime_function!(panic, 'ctx);
     runtime_function!(entry_panic_block, 'ctx);
+
+    runtime_function!(print_object, 'ctx);
+
     runtime_function!(alloc, 'ctx);
     runtime_function!(alloc_object, 'ctx);
     runtime_function!(alloc_unit, 'ctx);
     runtime_function!(alloc_string, 'ctx);
     runtime_function!(alloc_string_literal, 'ctx);
-    runtime_function!(print_object, 'ctx);
+    runtime_function!(alloc_i32, 'ctx);
+    runtime_function!(alloc_i32_literal, 'ctx);
+    runtime_function!(alloc_bool, 'ctx);
+    runtime_function!(alloc_bool_literal, 'ctx);
+    runtime_function!(alloc_tuple_literal, 'ctx);
+
     runtime_type!(_Object, 'ctx);
     runtime_type!(_Unit, 'ctx);
     runtime_type!(_Tuple, 'ctx);
     runtime_type!(_Int32, 'ctx);
     runtime_type!(_String, 'ctx);
+    runtime_type!(_Enum, 'ctx);
+
     fn get_calocom_type(&self, ty: PrimitiveType) -> BasicTypeEnum<'ctx>;
     fn link_calocom_runtime_module(&mut self, path: &Path);
 }
@@ -83,18 +93,26 @@ pub trait CoreLibrary<'ctx> {
 impl<'ctx> CoreLibrary<'ctx> for Module<'ctx> {
     runtime_function_getter!(panic, 'ctx);
     runtime_function_getter!(entry_panic_block, 'ctx);
+
+    runtime_function_getter!(print_object, 'ctx);
+
     runtime_function_getter!(alloc, 'ctx);
     runtime_function_getter!(alloc_object, 'ctx);
     runtime_function_getter!(alloc_unit, 'ctx);
     runtime_function_getter!(alloc_string, 'ctx);
     runtime_function_getter!(alloc_string_literal, 'ctx);
-    runtime_function_getter!(print_object, 'ctx);
+    runtime_function_getter!(alloc_i32, 'ctx);
+    runtime_function_getter!(alloc_i32_literal, 'ctx);
+    runtime_function_getter!(alloc_bool, 'ctx);
+    runtime_function_getter!(alloc_bool_literal, 'ctx);
+    runtime_function_getter!(alloc_tuple_literal, 'ctx);
 
     runtime_type_getter!(_Object, 'ctx);
     runtime_type_getter!(_Unit, 'ctx);
     runtime_type_getter!(_Tuple, 'ctx);
     runtime_type_getter!(_Int32, 'ctx);
     runtime_type_getter!(_String, 'ctx);
+    runtime_type_getter!(_Enum, 'ctx);
 
     fn get_calocom_type(&self, ty: PrimitiveType) -> BasicTypeEnum<'ctx> {
         let context = unsafe { &*(&*self.get_context() as *const Context) };

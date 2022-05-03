@@ -102,22 +102,11 @@ impl<'ctx> CodeGen<'ctx> {
         map
     }
 
-    fn emit_calocom_literal(
-        ctx: &'ctx Context,
-        builder: &Builder<'ctx>,
-        module: &Module<'ctx>,
-        value: &TypedValue,
-        var_map: &HashMap<Rc<VarDef>, PointerValue<'ctx>>,
-    ) {
-    }
-
     fn emit_calocom_intrinsic_function(
-        ctx: &'ctx Context,
-        builder: &Builder<'ctx>,
-        module: &Module<'ctx>,
+        &self,
+        need_boxing: bool,
         value: &TypedValue,
-        var_map: &HashMap<Rc<VarDef>, PointerValue<'ctx>>,
-    ) -> (bool, BasicValueEnum<'ctx>) {
+    ) -> BasicValueEnum<'ctx> {
         todo!()
     }
 
@@ -170,26 +159,9 @@ impl<'ctx> CodeGen<'ctx> {
 
                 res
             }
-            Value::Imm(lit) => match lit {
-                Literal::Int(i) => self
-                    .context
-                    .i32_type()
-                    .const_int(*i as u64, false)
-                    .as_basic_value_enum(),
-                Literal::Str(s) => self
-                    .builder
-                    .build_global_string_ptr(s.as_str(), "")
-                    .as_basic_value_enum(), // NOTE: it's a raw string pointer, not a calocom.str
-                Literal::Bool(b) => self
-                    .context
-                    .i32_type()
-                    .const_int(*b as u64, false)
-                    .as_basic_value_enum(),
-            },
+            Value::Imm(lit) => self.emit_literal_value(false, lit),
             Value::Unit => panic!("unable to create unboxed unit value"),
-            Value::Intrinsic(name, params) => {
-                todo!()
-            }
+            Value::Intrinsic(_, _) => self.emit_calocom_intrinsic_function(false, typed_value),
             Value::VarRef(var) => {
                 let mut bv = self.emit_calocom_value(typed_value);
                 // only promote i32 value
@@ -197,6 +169,76 @@ impl<'ctx> CodeGen<'ctx> {
                     bv = self.builder.build_load(bv.into_pointer_value(), "");
                 }
                 bv
+            }
+        }
+    }
+
+    fn emit_literal_value(&self, need_boxing: bool, literal: &Literal) -> BasicValueEnum<'ctx> {
+        match literal {
+            Literal::Int(i) => {
+                let i = self
+                    .context
+                    .i32_type()
+                    .const_int(*i as u64, false)
+                    .as_basic_value_enum();
+                if need_boxing {
+                    self.builder
+                        .build_call(
+                            self.module.get_runtime_function_alloc_i32_literal(),
+                            &[i.into()],
+                            "",
+                        )
+                        .try_as_basic_value()
+                        .left()
+                        .unwrap()
+                } else {
+                    i
+                }
+            }
+            Literal::Str(s) => {
+                let str = self
+                    .builder
+                    .build_global_string_ptr(s.as_str(), "")
+                    .as_pointer_value()
+                    .as_basic_value_enum();
+                if need_boxing {
+                    let len = self
+                        .context
+                        .i64_type()
+                        .const_int(s.as_bytes().len() as u64, false)
+                        .into();
+                    self.builder
+                        .build_call(
+                            self.module.get_runtime_function_alloc_i32_literal(),
+                            &[len, str.into()],
+                            "",
+                        )
+                        .try_as_basic_value()
+                        .left()
+                        .unwrap()
+                } else {
+                    str
+                }
+            }
+            Literal::Bool(b) => {
+                let b = self
+                    .context
+                    .i32_type()
+                    .const_int(*b as u64, false)
+                    .as_basic_value_enum();
+                if need_boxing {
+                    self.builder
+                        .build_call(
+                            self.module.get_runtime_function_alloc_bool_literal(),
+                            &[b.into()],
+                            "",
+                        )
+                        .try_as_basic_value()
+                        .left()
+                        .unwrap()
+                } else {
+                    b
+                }
             }
         }
     }
@@ -218,12 +260,30 @@ impl<'ctx> CodeGen<'ctx> {
                     .left()
                     .unwrap()
             }
-            Value::Op(_, _, _) => {
-                todo!()
+            Value::Op(op, _, _) => {
+                let v = self.emit_unboxed_value(typed_value);
+                if *typ == SingletonType::I32 {
+                    self.builder
+                        .build_call(
+                            self.module.get_runtime_function_alloc_i32_literal(),
+                            &[v.into()],
+                            "",
+                        )
+                        .try_as_basic_value()
+                        .left()
+                        .unwrap()
+                } else {
+                    unimplemented!()
+                }
             }
-            Value::Imm(_) => todo!(),
-            Value::Unit => todo!(),
-            Value::Intrinsic(_, _) => todo!(),
+            Value::Imm(lit) => self.emit_literal_value(true, lit),
+            Value::Unit => self
+                .builder
+                .build_call(self.module.get_runtime_function_alloc_unit(), &[], "")
+                .try_as_basic_value()
+                .left()
+                .unwrap(),
+            Value::Intrinsic(_, _) => self.emit_calocom_intrinsic_function(true, typed_value),
             Value::VarRef(var) => {
                 let ptr = self.var_map.get(var).unwrap();
                 let bv: BasicValueEnum = self.builder.build_load(*ptr, "");
