@@ -1,4 +1,6 @@
-use crate::core::*;
+use crate::alloc::__calocom_runtime_alloc_unit;
+use crate::console::__calocom_runtime_print_object;
+use crate::types::*;
 use libc::c_int;
 use libc::putchar;
 

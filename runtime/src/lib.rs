@@ -2,8 +2,11 @@
 #![feature(lang_items)]
 
 #[macro_use]
-pub mod aux;
-pub mod core;
+mod aux;
+pub mod types;
+pub mod panic;
+pub mod alloc;
+pub mod console;
 pub mod std;
 
 #[cfg(not(test))]
@@ -15,6 +18,6 @@ extern "C" fn eh_personality() {}
 fn panic(_panic: &::core::panic::PanicInfo<'_>) -> ! {
     unsafe {
         let fmt = const_cstr!("");
-        core::__calocom_runtime_panic(fmt.as_ptr())
+        panic::__calocom_runtime_panic(fmt.as_ptr())
     }
 }
