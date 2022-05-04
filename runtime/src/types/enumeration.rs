@@ -1,9 +1,36 @@
-use crate::types::_Enum;
+use super::_Enum;
+use super::_Object;
+use super::_Tuple;
+use super::tuple::extract_tuple_field;
+use crate::alloc::alloc_enum;
+use libc::c_void;
 
 /// # Safety
 ///
 /// This function should not be called directly by other crates
 #[export_name = "__calocom_runtime_extract_enum_tag"]
 pub unsafe extern "C" fn extract_enum_tag(e: *const _Enum) -> i32 {
-    (*e).discriminator as i32
+    (*e).discriminant as i32
+}
+
+/// # Safety
+///
+/// This function should not be called directly by other crates
+#[export_name = "__calocom_runtime_extract_enum_field"]
+pub unsafe extern "C" fn extract_enum_field(e: *mut _Enum, field_index: i32) -> *mut _Object {
+    let variant = (*e).variant as *mut _Tuple;
+    extract_tuple_field(variant, field_index)
+}
+
+/// # Safety
+///
+/// This function should not be called directly by other crates
+#[export_name = "__calocom_runtime_construct_enum"]
+pub extern "C" fn construct(tag: i32, obj: *mut _Object) -> *mut _Enum {
+    let mem = alloc_enum();
+    unsafe {
+        (*mem).discriminant = tag as u32;
+        (*mem).variant = obj as *mut c_void;
+    }
+    mem
 }

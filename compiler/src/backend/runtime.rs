@@ -77,7 +77,13 @@ pub trait CoreLibrary<'ctx> {
     runtime_function!(alloc_i32_literal, 'ctx);
     runtime_function!(alloc_bool, 'ctx);
     runtime_function!(alloc_bool_literal, 'ctx);
-    runtime_function!(alloc_tuple_literal, 'ctx);
+    runtime_function!(alloc_tuple, 'ctx);
+    runtime_function!(alloc_enum, 'ctx);
+
+    runtime_function!(extract_enum_field, 'ctx);
+    runtime_function!(extract_enum_tag, 'ctx);
+    runtime_function!(extract_tuple_field, 'ctx);
+    runtime_function!(construct_enum, 'ctx);
 
     runtime_type!(_Object, 'ctx);
     runtime_type!(_Unit, 'ctx);
@@ -105,7 +111,13 @@ impl<'ctx> CoreLibrary<'ctx> for Module<'ctx> {
     runtime_function_getter!(alloc_i32_literal, 'ctx);
     runtime_function_getter!(alloc_bool, 'ctx);
     runtime_function_getter!(alloc_bool_literal, 'ctx);
-    runtime_function_getter!(alloc_tuple_literal, 'ctx);
+    runtime_function_getter!(alloc_tuple, 'ctx);
+    runtime_function_getter!(alloc_enum, 'ctx);
+
+    runtime_function_getter!(extract_enum_field, 'ctx);
+    runtime_function_getter!(extract_enum_tag, 'ctx);
+    runtime_function_getter!(extract_tuple_field, 'ctx);
+    runtime_function_getter!(construct_enum, 'ctx);
 
     runtime_type_getter!(_Object, 'ctx);
     runtime_type_getter!(_Unit, 'ctx);

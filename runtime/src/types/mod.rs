@@ -3,7 +3,9 @@ use libc::c_void;
 use libc::uintptr_t;
 
 mod enumeration;
+mod tuple;
 pub use enumeration::*;
+pub use tuple::*;
 
 #[repr(u8)]
 pub enum _ObjectType {
@@ -52,6 +54,6 @@ pub struct _Unit {
 #[repr(C, packed)]
 pub struct _Enum {
     pub header: _Object,
-    pub discriminator: u32,
+    pub discriminant: u32,
     pub variant: *mut c_void,
 }

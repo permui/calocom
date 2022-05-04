@@ -45,8 +45,7 @@ pub extern "C" fn alloc_string(length: size_t) -> *mut _String {
             panic(fmt.as_ptr());
         };
         // length size + string length + trailing zero size
-        let mem =
-            alloc(length + 1 + ::core::mem::size_of::<_String>()) as *mut _String;
+        let mem = alloc(length + 1 + ::core::mem::size_of::<_String>()) as *mut _String;
         (*mem).header.tag = _ObjectType::Str;
         (*mem).len = length as u32;
         mem
@@ -55,10 +54,7 @@ pub extern "C" fn alloc_string(length: size_t) -> *mut _String {
 
 #[no_mangle]
 #[export_name = "__calocom_runtime_alloc_string_literal"]
-pub extern "C" fn alloc_string_literal(
-    length: size_t,
-    s: *const c_char,
-) -> *mut _String {
+pub extern "C" fn alloc_string_literal(length: size_t, s: *const c_char) -> *mut _String {
     let buf = alloc_string(length);
     unsafe {
         memcpy(
@@ -113,11 +109,26 @@ pub extern "C" fn alloc_bool_literal(i: bool) -> *mut _Int32 {
 #[no_mangle]
 #[export_name = "__calocom_runtime_alloc_tuple"]
 pub extern "C" fn alloc_tuple(n: size_t) -> *mut _Tuple {
-    let mem = alloc(
-        ::core::mem::size_of::<_Tuple>() + n * ::core::mem::size_of::<*mut c_void>(),
-    ) as *mut _Tuple;
+    let mem = alloc(::core::mem::size_of::<_Tuple>() + n * ::core::mem::size_of::<*mut c_void>())
+        as *mut _Tuple;
     unsafe {
+        if n > u16::MAX as size_t {
+            let fmt = const_cstr!("the number of tuple fields exceeded");
+            panic(fmt.as_ptr());
+        }
         (*mem).header.tag = _ObjectType::Tuple;
+        (*mem).header.reserved2 = n as u16;
+    }
+    mem
+}
+
+#[no_mangle]
+#[export_name = "__calocom_runtime_alloc_enum"]
+pub extern "C" fn alloc_enum() -> *mut _Enum {
+    let mem = alloc(::core::mem::size_of::<_Enum>())
+        as *mut _Enum;
+    unsafe {
+        (*mem).header.tag = _ObjectType::Enum;
     }
     mem
 }
