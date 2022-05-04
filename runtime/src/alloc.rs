@@ -11,7 +11,7 @@ pub extern "C" fn alloc(size: size_t) -> *mut c_void {
     unsafe {
         let ptr = calloc(1, size);
         if ptr.is_null() {
-            let fmt = const_cstr!("allocation returns a null pointer");
+            let fmt = const_cstr!("allocator returns a null pointer");
             panic(fmt.as_ptr());
         }
         ptr

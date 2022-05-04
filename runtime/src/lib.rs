@@ -3,11 +3,11 @@
 
 #[macro_use]
 mod aux;
-pub mod types;
-pub mod panic;
 pub mod alloc;
 pub mod console;
+pub mod panic;
 pub mod std;
+pub mod types;
 
 #[cfg(not(test))]
 #[lang = "eh_personality"]
@@ -20,4 +20,16 @@ fn panic(_panic: &::core::panic::PanicInfo<'_>) -> ! {
         let fmt = const_cstr!("");
         panic::panic(fmt.as_ptr())
     }
+}
+
+extern "C" {
+    #[link_name = "_CPF4mainRTCu"]
+    fn user_main() -> *mut types::_Unit;
+}
+
+#[no_mangle]
+#[export_name = "main"]
+pub extern "C" fn runtime_main(_argc: i32, _argv: *const *const libc::c_char) -> i32 {
+    unsafe { user_main(); }
+    0
 }
