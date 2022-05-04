@@ -1,4 +1,4 @@
-use crate::panic::__calocom_runtime_panic;
+use crate::panic::panic;
 use crate::types::*;
 use core::ptr::addr_of;
 use libc::c_char;
@@ -8,7 +8,8 @@ use libc::puts;
 /// # Safety
 ///
 /// This function should not be called directly by other crates
-pub unsafe fn __calocom_runtime_print_object(p: *const _Object) {
+#[no_mangle]
+pub unsafe fn print_object(p: *const _Object) {
     match (*p).tag {
         _ObjectType::Unit => {
             let fmt = const_cstr!("()");
@@ -36,7 +37,7 @@ pub unsafe fn __calocom_runtime_print_object(p: *const _Object) {
         }
         _ => {
             let msg = const_cstr!("not supported type");
-            __calocom_runtime_panic(msg.as_ptr());
+            panic(msg.as_ptr());
         }
     }
 }

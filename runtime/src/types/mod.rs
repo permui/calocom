@@ -2,6 +2,9 @@ use libc::c_char;
 use libc::c_void;
 use libc::uintptr_t;
 
+mod enumeration;
+pub use enumeration::*;
+
 #[repr(u8)]
 pub enum _ObjectType {
     Reserved = 0,
