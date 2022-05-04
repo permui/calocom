@@ -4,8 +4,11 @@ use libc::uintptr_t;
 
 mod enumeration;
 mod tuple;
+mod int;
+
 pub use enumeration::*;
 pub use tuple::*;
+pub use int::*;
 
 #[repr(u8)]
 pub enum _ObjectType {

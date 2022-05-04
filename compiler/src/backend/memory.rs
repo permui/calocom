@@ -4,10 +4,8 @@ use std::vec;
 use crate::midend::type_context::{SingletonType, Type, TypeContext};
 use crate::midend::*;
 
-use super::runtime::*;
 use inkwell::context::Context;
-use inkwell::module::{self, Module};
-use inkwell::types::{BasicMetadataTypeEnum, BasicType, BasicTypeEnum, FunctionType, PointerType};
+use inkwell::types::{BasicMetadataTypeEnum, BasicType, BasicTypeEnum, FunctionType};
 use inkwell::AddressSpace;
 
 pub struct MemoryLayoutContext<'ctx> {

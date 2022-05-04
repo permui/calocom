@@ -524,7 +524,7 @@ impl TypedAST {
                             if let Some(bind) = inner {
                                 // only one constructor parameter now
                                 let (typ, _) =
-                                    self.ty_ctx.get_ctor_field_type_by_name(typ, name)[0];
+                                    self.ty_ctx.get_ctor_index_and_field_type_by_name(typ, name).1[0];
                                 self.ty_ctx.env.entry();
                                 self.ty_ctx.env.insert_symbol(bind.to_string(), typ);
                                 typed_arms.push(self.check_type_of_expr(expr));

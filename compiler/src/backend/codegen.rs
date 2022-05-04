@@ -1,12 +1,17 @@
-use std::{cell::RefCell, collections::HashMap, path::Path, rc::Rc};
+use std::{
+    cell::{Ref, RefCell},
+    collections::HashMap,
+    path::Path,
+    rc::Rc,
+};
 
 use inkwell::{
     basic_block::BasicBlock,
     builder::Builder,
     context::Context,
     module::Module,
-    types::{BasicMetadataTypeEnum, BasicType},
-    values::{AnyValue, BasicValue, BasicValueEnum, FunctionValue, PointerValue},
+    types::{BasicMetadataTypeEnum, BasicType, PointerType},
+    values::{BasicValue, BasicValueEnum, FunctionValue, PointerValue},
     AddressSpace,
 };
 
@@ -31,11 +36,11 @@ pub struct CodeGen<'ctx> {
 }
 
 impl<'ctx> CodeGen<'ctx> {
-    pub fn new(name: &'ctx str, llvm_ctx: &'ctx Context, mir: &MiddleIR) -> Self {
+    pub fn new(name: &'ctx str, llvm_ctx: &'ctx Context, mir: &MiddleIR, path: &Path) -> Self {
         let mut module = llvm_ctx.create_module(name);
         let builder = llvm_ctx.create_builder();
         let ty_ctx = mir.ty_ctx.clone();
-        module.link_calocom_runtime_module(Path::new("../calocom_runtime.ll"));
+        module.link_calocom_runtime_module(path);
         let mut calocom_types = vec![];
         for idx in SingletonType::OBJECT..=SingletonType::C_I32 {
             calocom_types.push(module.get_calocom_type(idx.into()));
@@ -53,11 +58,11 @@ impl<'ctx> CodeGen<'ctx> {
     }
 
     // set the insert position to the last non-terminator instruction
-    fn set_insert_position(builder: &Builder, block: BasicBlock<'ctx>) {
+    fn set_insert_position_before_terminator(builder: &Builder, block: &BasicBlock<'ctx>) {
         if let Some(terminator) = block.get_terminator() {
             builder.position_before(&terminator);
         } else {
-            builder.position_at_end(block);
+            builder.position_at_end(*block);
         }
     }
 
@@ -70,7 +75,7 @@ impl<'ctx> CodeGen<'ctx> {
         var_map: &mut HashMap<Rc<VarDef>, PointerValue<'ctx>>,
         need_extra_ptr: bool,
     ) {
-        CodeGen::set_insert_position(builder, block);
+        CodeGen::set_insert_position_before_terminator(builder, &block);
         for var in variables {
             let typ = memory_layout_ctx.get_llvm_type_by_idx(var.typ);
             let stack_slot = builder.build_alloca(
@@ -93,6 +98,11 @@ impl<'ctx> CodeGen<'ctx> {
     ) -> HashMap<String, BasicBlock<'ctx>> {
         let mut map = HashMap::new();
         let mut bbs = vec![];
+
+        let alloca_bb = ctx.append_basic_block(func, "alloca");
+        map.insert("alloca".to_string(), alloca_bb);
+        bbs.push(alloca_bb);
+
         for block in blocks {
             let name = block.as_ref().borrow().name.clone();
             let bb = ctx.append_basic_block(func, name.as_str());
@@ -102,12 +112,167 @@ impl<'ctx> CodeGen<'ctx> {
         map
     }
 
+    // NOTICE: 2022.4 clang & llvm begin to fully support opaque pointer type,
+    // llvm may deprecate normal typed pointer in the future
+    fn emit_pointer_cast(
+        &self,
+        ptr: PointerValue<'ctx>,
+        typ: PointerType<'ctx>,
+    ) -> BasicValueEnum<'ctx> {
+        self.builder
+            .build_pointer_cast(ptr, typ, "")
+            .as_basic_value_enum()
+    }
+
     fn emit_calocom_intrinsic_function(
         &self,
-        need_boxing: bool,
-        value: &TypedValue,
+        _need_boxing: bool,
+        typed_value: &TypedValue,
     ) -> BasicValueEnum<'ctx> {
-        todo!()
+        let TypedValue { typ, val } = typed_value;
+        match val {
+            Value::Intrinsic(name, args) => {
+                match *name {
+                    "calocom.extract_tag" => {
+                        assert!(args.len() == 1);
+
+                        let obj = self.emit_calocom_value(&args[0]);
+                        let enum_type = self
+                            .module
+                            .get_runtime_type__Enum()
+                            .ptr_type(AddressSpace::Generic);
+                        let obj = self.emit_pointer_cast(obj.into_pointer_value(), enum_type);
+
+                        self.builder
+                            .build_call(
+                                self.module.get_runtime_function_extract_enum_tag(),
+                                &[obj.into()],
+                                name,
+                            )
+                            .try_as_basic_value()
+                            .left()
+                            .unwrap()
+                            .as_basic_value_enum()
+                    }
+                    "calocom.extract_field" => {
+                        let enum_type = self
+                            .module
+                            .get_runtime_type__Enum()
+                            .ptr_type(AddressSpace::Generic);
+                        let obj = self.emit_calocom_value(&args[0]);
+                        let obj = self.emit_pointer_cast(obj.into_pointer_value(), enum_type);
+
+                        let ctor_idx = match args[1].val {
+                            Value::Imm(Literal::Int(i)) => i,
+                            _ => panic!("internal error: expect a literal here"),
+                        };
+
+                        let field_idx = match args[2].val {
+                            Value::Imm(Literal::Int(i)) => i,
+                            _ => panic!("internal error: expect a literal here"),
+                        };
+
+                        let ctor_idx = self.context.i32_type().const_int(ctor_idx as u64, false);
+                        let field_idx = self.context.i32_type().const_int(field_idx as u64, false);
+
+                        let result = self
+                            .builder
+                            .build_call(
+                                self.module.get_runtime_function_extract_enum_field(),
+                                &[obj.into(), ctor_idx.into(), field_idx.into()],
+                                name,
+                            )
+                            .try_as_basic_value()
+                            .left()
+                            .unwrap()
+                            .as_basic_value_enum();
+
+                        self.emit_pointer_cast(
+                            result.into_pointer_value(),
+                            self.memory_layout_ctx
+                                .get_llvm_type_by_idx(*typ)
+                                .ptr_type(AddressSpace::Generic),
+                        )
+                    }
+                    "calocom.construct" => {
+                        let ctor_idx = match args[0].val {
+                            Value::Imm(Literal::Int(i)) => i,
+                            _ => panic!("internal error: expect a literal here"),
+                        };
+                        let ctor_idx = self.context.i32_type().const_int(ctor_idx as u64, false);
+                        let obj_typ = self
+                            .module
+                            .get_runtime_type__Object()
+                            .ptr_type(AddressSpace::Generic);
+                        let obj = self.emit_calocom_value(&args[0]);
+                        let obj = self.emit_pointer_cast(obj.into_pointer_value(), obj_typ);
+
+                        let result = self
+                            .builder
+                            .build_call(
+                                self.module.get_runtime_function_construct_enum(),
+                                &[ctor_idx.into(), obj.into()],
+                                name,
+                            )
+                            .try_as_basic_value()
+                            .left()
+                            .unwrap()
+                            .as_basic_value_enum();
+
+                        self.emit_pointer_cast(
+                            result.into_pointer_value(),
+                            self.memory_layout_ctx
+                                .get_llvm_type_by_idx(*typ)
+                                .ptr_type(AddressSpace::Generic),
+                        )
+                    }
+                    "calocom.get_address" => {
+                        let lhs = match &args[0].val {
+                            Value::VarRef(val) => val,
+                            _ => panic!(
+                                "internal error: get_address can only be applied to a VarRef"
+                            ),
+                        };
+                        let rhs = match &args[1].val {
+                            Value::VarRef(val) => val,
+                            _ => panic!(
+                                "internal error: get_address can only be applied to a VarRef"
+                            ),
+                        };
+                        let left_ptr = self.var_map.get(lhs).unwrap();
+                        let right_ptr = self.var_map.get(rhs).unwrap();
+                        self.builder
+                            .build_store(*left_ptr, right_ptr.as_basic_value_enum());
+
+                        // dummy: don't use the value
+                        self.context.i32_type().const_zero().as_basic_value_enum()
+                    }
+                    "calocom.dereference" => {
+                        let ptr = self.emit_calocom_value(&args[0]).into_pointer_value();
+                        self.builder.build_load(ptr, "").as_basic_value_enum()
+                    }
+                    "calocom.store" => {
+                        let ptr = self.emit_calocom_value(&args[0]).into_pointer_value();
+                        let rhs = self.emit_calocom_value(&args[1]);
+                        self.builder.build_store(ptr, rhs);
+
+                        // dummy: don't use the value
+                        self.context.i32_type().const_zero().as_basic_value_enum()
+                    }
+                    "calocom.erase_type" => {
+                        let obj_typ = self
+                            .module
+                            .get_runtime_type__Object()
+                            .ptr_type(AddressSpace::Generic);
+                        let ptr = self.emit_calocom_value(&args[0]).into_pointer_value();
+
+                        self.emit_pointer_cast(ptr, obj_typ).as_basic_value_enum()
+                    }
+                    _ => unimplemented!("unimplemented intrinsic {}", name),
+                }
+            }
+            _ => panic!("internal error"),
+        }
     }
 
     // create a unboxed llvm value
@@ -115,6 +280,7 @@ impl<'ctx> CodeGen<'ctx> {
     fn emit_unboxed_value(&self, typed_value: &TypedValue) -> BasicValueEnum<'ctx> {
         let TypedValue { typ, val } = typed_value;
         match val {
+            Value::ExtCall(_, _) => todo!("external call"),
             Value::Call(_, _) => {
                 let mut bv = self.emit_calocom_value(typed_value);
 
@@ -166,7 +332,16 @@ impl<'ctx> CodeGen<'ctx> {
                 let mut bv = self.emit_calocom_value(typed_value);
                 // only promote i32 value
                 if matches!(var.typ, SingletonType::I32) {
-                    bv = self.builder.build_load(bv.into_pointer_value(), "");
+                    bv = self
+                        .builder
+                        .build_call(
+                            self.module.get_runtime_function_extract_i32(),
+                            &[bv.into(), self.context.i32_type().const_zero().into()],
+                            "",
+                        )
+                        .try_as_basic_value()
+                        .left()
+                        .unwrap();
                 }
                 bv
             }
@@ -209,7 +384,7 @@ impl<'ctx> CodeGen<'ctx> {
                         .into();
                     self.builder
                         .build_call(
-                            self.module.get_runtime_function_alloc_i32_literal(),
+                            self.module.get_runtime_function_alloc_string_literal(),
                             &[len, str.into()],
                             "",
                         )
@@ -246,6 +421,7 @@ impl<'ctx> CodeGen<'ctx> {
     fn emit_calocom_value(&self, typed_value: &TypedValue) -> BasicValueEnum<'ctx> {
         let TypedValue { typ, val } = typed_value;
         match val {
+            Value::ExtCall(_, _) => todo!("external call"),
             Value::Call(path, args) => {
                 let args: Vec<_> = args
                     .iter()
@@ -260,7 +436,7 @@ impl<'ctx> CodeGen<'ctx> {
                     .left()
                     .unwrap()
             }
-            Value::Op(op, _, _) => {
+            Value::Op(_, _, _) => {
                 let v = self.emit_unboxed_value(typed_value);
                 if *typ == SingletonType::I32 {
                     self.builder
@@ -285,21 +461,41 @@ impl<'ctx> CodeGen<'ctx> {
                 .unwrap(),
             Value::Intrinsic(_, _) => self.emit_calocom_intrinsic_function(true, typed_value),
             Value::VarRef(var) => {
-                let ptr = self.var_map.get(var).unwrap();
+                let ptr = self
+                    .var_map
+                    .get(var)
+                    .unwrap_or_else(|| panic!("variable map doesn't contains {}", var.name));
                 let bv: BasicValueEnum = self.builder.build_load(*ptr, "");
                 bv
             }
         }
     }
 
-    fn emit_stmt(
-        ctx: &'ctx Context,
-        builder: &Builder,
-        module: &Module,
-        blocks: &Block,
-        llvm_block: &BasicBlock,
+    fn emit_stmts(&self, block: &Ref<Block>, llvm_block: &BasicBlock) {
+        CodeGen::set_insert_position_before_terminator(&self.builder, llvm_block);
+        for stmt in &block.stmts {
+            let rhs = self.emit_calocom_value(stmt.right.as_ref().unwrap());
+            if let Some(left) = &stmt.left {
+                let &ptr = self
+                    .var_map
+                    .get(left)
+                    .unwrap_or_else(|| panic!("variable map doesn't contains {}", left.name));
+                self.builder.build_store(ptr, rhs);
+            }
+        }
+    }
+
+    fn emit_all_stmts(
+        &self,
+        blocks: &Vec<Rc<RefCell<Block>>>,
+        block_map: &HashMap<String, BasicBlock>,
     ) {
-        for stmt in &blocks.stmts {}
+        for bb in blocks {
+            let bb = bb.borrow();
+            let name = &bb.name;
+            let llvm_bb = block_map.get(name.as_str()).unwrap();
+            self.emit_stmts(&bb, llvm_bb);
+        }
     }
 
     fn emit_basic_block_terminators(
@@ -315,7 +511,10 @@ impl<'ctx> CodeGen<'ctx> {
             self.builder.position_at_end(*llvm_block);
             match &block.as_ref().borrow().terminator {
                 middle_ir::Terminator::Select(var, choices, other) => {
-                    let stack_slot = self.var_map.get(var).unwrap();
+                    let stack_slot = self
+                        .var_map
+                        .get(var)
+                        .unwrap_or_else(|| panic!("variable map doesn't contains {}", var.name));
                     let loaded_value = self.builder.build_load(*stack_slot, "");
                     let other = block_map
                         .get(other.as_ref().borrow().name.as_str())
@@ -377,12 +576,12 @@ impl<'ctx> CodeGen<'ctx> {
             .memory_layout_ctx
             .get_llvm_type_by_idx(ret_type_idx)
             .ptr_type(AddressSpace::Generic);
-        let mut param_type: Vec<BasicMetadataTypeEnum<'ctx>> = vec![];
 
+        let mut param_type: Vec<BasicMetadataTypeEnum<'ctx>> = vec![];
         for var in param_def.iter() {
             let typ = self
                 .memory_layout_ctx
-                .get_llvm_type_by_idx(var.1.typ)
+                .get_llvm_type_by_idx(var.typ)
                 .ptr_type(AddressSpace::Generic);
             param_type.push(typ.into());
         }
@@ -392,27 +591,33 @@ impl<'ctx> CodeGen<'ctx> {
             &param_type[..],
             false,
         );
+
         let decorated_name = decorate_polymorphic_function(
             &[name.clone()],
             &[],
             &self.memory_layout_ctx.get_mir_type_idx(ret_type_idx),
             &param_def
                 .iter()
-                .map(|param| self.memory_layout_ctx.get_mir_type_idx(param.1.typ))
+                .map(|param| self.memory_layout_ctx.get_mir_type_idx(param.typ))
                 .collect::<Vec<Type>>()[..],
         );
 
         self.fn_name_map
             .insert(name.clone(), decorated_name.clone());
+
         let func = self
             .module
-            .add_function(decorated_name.as_str(), fn_type, None);
+            .get_function(decorated_name.as_str())
+            .unwrap_or_else(|| {
+                self.module
+                    .add_function(decorated_name.as_str(), fn_type, None)
+            });
 
         self.fn_map.insert(decorated_name, func);
         let block_map = CodeGen::emit_basic_blocks(self.context, func, blocks);
 
-        let entry_block = *block_map.get("entry").unwrap();
-        self.builder.position_at_end(entry_block);
+        let alloca_block = *block_map.get("alloca").unwrap();
+        self.builder.position_at_end(alloca_block);
 
         let typ = self
             .memory_layout_ctx
@@ -420,10 +625,22 @@ impl<'ctx> CodeGen<'ctx> {
             .ptr_type(AddressSpace::Generic);
         let ret_var_ptr = self.builder.build_alloca(typ, "ret.var.ptr");
 
+        self.var_map
+            .insert(Rc::clone(ret_def.as_ref().unwrap()), ret_var_ptr);
+
         CodeGen::emit_local_alloca(
             &self.memory_layout_ctx,
             &self.builder,
-            entry_block,
+            alloca_block,
+            param_def,
+            &mut self.var_map,
+            true,
+        );
+
+        CodeGen::emit_local_alloca(
+            &self.memory_layout_ctx,
+            &self.builder,
+            alloca_block,
             var_def,
             &mut self.var_map,
             true,
@@ -432,7 +649,7 @@ impl<'ctx> CodeGen<'ctx> {
         CodeGen::emit_local_alloca(
             &self.memory_layout_ctx,
             &self.builder,
-            entry_block,
+            alloca_block,
             tmp_def,
             &mut self.var_map,
             true,
@@ -441,7 +658,7 @@ impl<'ctx> CodeGen<'ctx> {
         CodeGen::emit_local_alloca(
             &self.memory_layout_ctx,
             &self.builder,
-            entry_block,
+            alloca_block,
             unwrapped_def,
             &mut self.var_map,
             false,
@@ -450,16 +667,19 @@ impl<'ctx> CodeGen<'ctx> {
         CodeGen::emit_local_alloca(
             &self.memory_layout_ctx,
             &self.builder,
-            entry_block,
+            alloca_block,
             mem_ref,
             &mut self.var_map,
             true,
         );
 
+        self.builder.build_unconditional_branch(*block_map.get("entry").unwrap());
+
+        self.emit_all_stmts(blocks, &block_map);
         self.emit_basic_block_terminators(ret_var_ptr, blocks, &block_map);
     }
 
-    pub fn emit_all(&mut self, mir: &MiddleIR) {
+    pub fn emit_all(&mut self, mir: &MiddleIR, path: &Path) {
         for func in mir.module.iter() {
             self.emit_function_definition(func);
         }
@@ -468,7 +688,7 @@ impl<'ctx> CodeGen<'ctx> {
             &std::fs::File::options()
                 .write(true)
                 .create(true)
-                .open("../bitcode.bc")
+                .open(path)
                 .unwrap(),
             true,
             false,

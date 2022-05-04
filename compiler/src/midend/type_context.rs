@@ -221,7 +221,11 @@ impl TypeContext {
         self.name_typeid_map.insert(name.to_string(), idx);
     }
 
-    pub fn get_ctor_field_type_by_name(&self, typ: usize, name: &str) -> Vec<TypeHandle> {
+    pub fn get_ctor_index_and_field_type_by_name(
+        &self,
+        typ: usize,
+        name: &str,
+    ) -> (usize, Vec<TypeHandle>) {
         match &self.types[typ] {
             Type::Enum(e) => {
                 let ctor_idx = e
@@ -230,10 +234,13 @@ impl TypeContext {
                     .position(|ctor| ctor.0 == name)
                     .unwrap_or_else(|| panic!("{} not found", name));
                 let ctor = &e.constructors[ctor_idx];
-                ctor.1
-                    .iter()
-                    .map(|ty| (*self.type_typeid_map.get(ty).unwrap(), ty.clone()))
-                    .collect()
+                (
+                    ctor_idx,
+                    ctor.1
+                        .iter()
+                        .map(|ty| (*self.type_typeid_map.get(ty).unwrap(), ty.clone()))
+                        .collect(),
+                )
             }
             _ => panic!("can't get fields of non enum type"),
         }

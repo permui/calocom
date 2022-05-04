@@ -83,6 +83,7 @@ pub trait CoreLibrary<'ctx> {
     runtime_function!(extract_enum_field, 'ctx);
     runtime_function!(extract_enum_tag, 'ctx);
     runtime_function!(extract_tuple_field, 'ctx);
+    runtime_function!(extract_i32, 'ctx);
     runtime_function!(construct_enum, 'ctx);
 
     runtime_type!(_Object, 'ctx);
@@ -117,6 +118,7 @@ impl<'ctx> CoreLibrary<'ctx> for Module<'ctx> {
     runtime_function_getter!(extract_enum_field, 'ctx);
     runtime_function_getter!(extract_enum_tag, 'ctx);
     runtime_function_getter!(extract_tuple_field, 'ctx);
+    runtime_function_getter!(extract_i32, 'ctx);
     runtime_function_getter!(construct_enum, 'ctx);
 
     runtime_type_getter!(_Object, 'ctx);
@@ -146,5 +148,6 @@ impl<'ctx> CoreLibrary<'ctx> for Module<'ctx> {
             .expect("unable to make runtime module");
         self.link_in_module(runtime_module)
             .expect("unable to link runtime module");
+        
     }
 }

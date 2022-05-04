@@ -15,7 +15,7 @@ type RefPath = TypedASTRefPath;
 #[derive(Debug, Default, Clone)]
 pub struct FuncDef {
     pub name: String,
-    pub param_def: Vec<(bool, Rc<VarDef>)>,
+    pub param_def: Vec<Rc<VarDef>>,
     pub var_def: Vec<Rc<VarDef>>, // represents a local stack slot containing a pointer to a object
     pub tmp_def: Vec<Rc<VarDef>>, // be the same as var_def but it's not named by users
     pub mem_ref: Vec<Rc<VarDef>>, // only represents a local stack slot containing a ptr to a ptr to a object
@@ -77,6 +77,7 @@ pub struct TypedValue {
 #[derive(Debug)]
 pub enum Value {
     Call(RefPath, Vec<TypedValue>),
+    ExtCall(RefPath, Vec<TypedValue>),
     Op(BinOp, Box<TypedValue>, Box<TypedValue>),
     Imm(Literal),
     Unit,
@@ -163,15 +164,17 @@ impl MiddleIR {
         x: &TypedCtorExpr,
     ) -> TypedValue {
         let TypedCtorExpr { typ, name, args } = x;
-        let params_typ = self.ty_ctx.get_ctor_field_type_by_name(*typ, name);
+        let (ctor_idx, params_typ) = self
+            .ty_ctx
+            .get_ctor_index_and_field_type_by_name(*typ, name);
         let mut args_value = self.convert_args(
             builder,
             args,
             &params_typ.iter().map(|(ty, _)| *ty).collect::<Vec<usize>>(),
         );
         let mut v = vec![TypedValue {
-            typ: SingletonType::STR,
-            val: Value::Imm(Literal::Str(name.clone())),
+            typ: SingletonType::I32,
+            val: Value::Imm(Literal::Int(ctor_idx as i32)),
         }];
         v.append(&mut args_value);
         let val = Value::Intrinsic("calocom.construct", v);
@@ -303,14 +306,16 @@ impl MiddleIR {
                     builder.table.entry();
 
                     if let Some(inner) = inner {
-                        let field_typ =
-                            self.ty_ctx.get_ctor_field_type_by_name(expr.typ, name)[0].0;
+                        let (ctor_idx, field_typ) = self
+                            .ty_ctx
+                            .get_ctor_index_and_field_type_by_name(expr.typ, name);
                         let name = builder.namer.next_name("tmp.field");
-                        let field_var = self.create_variable_definition(name.as_str(), field_typ);
+                        let field_var =
+                            self.create_variable_definition(name.as_str(), field_typ[0].0);
                         builder.func.tmp_def.push(Rc::clone(&field_var));
 
                         let field = TypedValue {
-                            typ: field_typ,
+                            typ: field_typ[0].0,
                             val: Value::Intrinsic(
                                 "calocom.extract_field",
                                 vec![
@@ -319,8 +324,8 @@ impl MiddleIR {
                                         val: Value::VarRef(Rc::clone(&expr)),
                                     },
                                     TypedValue {
-                                        typ: SingletonType::STR,
-                                        val: Value::Imm(Literal::Str(con.name.clone())),
+                                        typ: SingletonType::I32,
+                                        val: Value::Imm(Literal::Int(ctor_idx as i32)),
                                     },
                                     TypedValue {
                                         typ: SingletonType::I32,
@@ -427,7 +432,11 @@ impl MiddleIR {
         x: &TypedCallExpr,
     ) -> TypedValue {
         let TypedCallExpr { path, gen: _, args } = x;
-        let fn_type = self.ty_ctx.find_function_type(&path.items[0]).unwrap().clone();
+        let fn_type = self
+            .ty_ctx
+            .find_function_type(&path.items[0])
+            .unwrap()
+            .clone();
         let params_typ = &fn_type.1;
         let args_value = self.convert_args(builder, args, params_typ);
         let val = Value::Call(path.clone(), args_value);
@@ -446,11 +455,12 @@ impl MiddleIR {
         let fn_type = &self
             .ty_ctx
             .find_external_polymorphic_function_type(&path.items)
-            .unwrap().clone();
+            .unwrap()
+            .clone();
         let params_typ = &fn_type.1;
         let typ = fn_type.0;
         let args_value = self.convert_args(builder, args, params_typ);
-        let val = Value::Call(path.clone(), args_value);
+        let val = Value::ExtCall(path.clone(), args_value);
 
         TypedValue { typ, val }
     }
@@ -763,7 +773,7 @@ impl MiddleIR {
 
         // initialize all parameters
         for TypedBind {
-            with_at,
+            with_at: _,
             var_name,
             typ,
         } in &func.param_list
@@ -773,7 +783,7 @@ impl MiddleIR {
 
             // insert the parameter into symbol table
             sym_table.insert_symbol(var_name.to_string(), Rc::clone(&param));
-            def.param_def.push((*with_at, param));
+            def.param_def.push(param);
         }
 
         // return block
@@ -932,6 +942,10 @@ impl Display for Value {
             write!(f, "")
         };
         match self {
+            Value::ExtCall(path, args) => {
+                write!(f, "extern {} ", path)?;
+                print_vec_of_values(f, args)
+            }
             Value::Call(path, args) => {
                 write!(f, "{} ", path)?;
                 print_vec_of_values(f, args)
@@ -987,7 +1001,6 @@ impl Display for MiddleIR {
             print_var(ret_def.as_ref().unwrap())?;
             param_def
                 .iter()
-                .map(|x| &x.1)
                 .map(&mut print_var)
                 .collect::<Result<Vec<_>, _>>()?;
             var_def
