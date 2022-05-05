@@ -27,7 +27,7 @@ use crate::{
 
 pub struct CodeGen<'ctx> {
     context: &'ctx Context,
-    module: Module<'ctx>,
+    pub module: Module<'ctx>,
     builder: Builder<'ctx>,
     memory_layout_ctx: MemoryLayoutContext<'ctx>,
     fn_map: HashMap<String, FunctionValue<'ctx>>,
@@ -724,20 +724,11 @@ impl<'ctx> CodeGen<'ctx> {
         }
     }
 
-    pub fn emit_all(&mut self, mir: &MiddleIR, path: &Path) {
+    pub fn emit_all(&mut self, mir: &MiddleIR) {
         self.insert_external_function();
         for func in mir.module.iter() {
             self.emit_function_definition(func);
         }
         self.module.verify().unwrap();
-        self.module.write_bitcode_to_file(
-            &std::fs::File::options()
-                .write(true)
-                .create(true)
-                .open(path)
-                .unwrap(),
-            true,
-            false,
-        );
     }
 }
