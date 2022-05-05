@@ -17,6 +17,9 @@ pub struct MemoryLayoutContext<'ctx> {
 }
 
 impl<'ctx> MemoryLayoutContext<'ctx> {
+    pub fn get_mir_type_context(&self) -> &TypeContext {
+        &self.ty_ctx
+    }
     fn initialize(&mut self, calocom_types: &[BasicTypeEnum<'ctx>]) {
         let i64_t = self.llvm_ctx.i64_type();
         let i32_t = self.llvm_ctx.i32_type();

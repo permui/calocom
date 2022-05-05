@@ -465,6 +465,18 @@ impl MiddleIR {
         TypedValue { typ, val }
     }
 
+    fn convert_unit_return_value(&mut self, builder: &mut FunctionBuilder, out: Rc<VarDef>) {
+        let insert_position = &mut builder.position.as_ref().unwrap().borrow_mut().stmts;
+        insert_position.push(Stmt {
+            left: Some(Rc::clone(&out)),
+            right: Some(TypedValue {
+                typ: SingletonType::UNIT,
+                val: Value::Unit,
+            }),
+            note: "unit return value".to_string(),
+        });
+    }
+
     fn convert_bracket_expr(
         &mut self,
         builder: &mut FunctionBuilder,
@@ -486,6 +498,8 @@ impl MiddleIR {
 
         if let Some(ret_expr) = ret_expr {
             self.convert_expr(ret_expr, builder, Some(Rc::clone(&bracket_out)), false);
+        } else if *typ == SingletonType::UNIT {
+            self.convert_unit_return_value(builder, Rc::clone(&bracket_out));
         }
 
         builder.table.exit();
@@ -719,12 +733,13 @@ impl MiddleIR {
         let name = builder.namer.next_name(var_name);
         let new_var = self.create_variable_definition(name.as_str(), *var_typ);
 
+        
+        self.convert_expr(expr, builder, Some(Rc::clone(&new_var)), false);
+
         builder
             .table
             .insert_symbol(var_name.clone(), Rc::clone(&new_var));
         builder.func.var_def.push(new_var);
-
-        self.convert_asgn(var_name, expr, builder);
     }
 
     fn convert_stmt(&mut self, stmt: &TypedASTStmt, builder: &mut FunctionBuilder) {
@@ -746,6 +761,8 @@ impl MiddleIR {
         }
         if let Some(ret_expr) = &body.ret_expr {
             self.convert_expr(ret_expr, builder, out, false);
+        } else if body.typ == SingletonType::UNIT {
+            self.convert_unit_return_value(builder, out.unwrap());
         }
     }
 
@@ -786,6 +803,8 @@ impl MiddleIR {
             def.param_def.push(param);
         }
 
+        sym_table.entry();
+
         // return block
         let ret_block = Rc::new(RefCell::new(Block {
             name: "exit".to_string(),
@@ -823,7 +842,8 @@ impl MiddleIR {
         // convert the function body
         self.convert_bracket_body(&func.body, &mut fn_builder, Some(Rc::clone(&ret)));
 
-        // exit the symbol table scope
+        // exit the symbol table scope (1: bracket scope, 2: parameter scope)
+        fn_builder.table.exit();
         fn_builder.table.exit();
         def
     }

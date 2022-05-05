@@ -31,6 +31,7 @@ pub struct CodeGen<'ctx> {
     builder: Builder<'ctx>,
     memory_layout_ctx: MemoryLayoutContext<'ctx>,
     fn_map: HashMap<String, FunctionValue<'ctx>>,
+    ext_fn_map: HashMap<Vec<String>, FunctionValue<'ctx>>,
     fn_name_map: HashMap<String, String>,
     var_map: HashMap<Rc<VarDef>, PointerValue<'ctx>>,
 }
@@ -54,6 +55,7 @@ impl<'ctx> CodeGen<'ctx> {
             fn_map: HashMap::new(),
             fn_name_map: HashMap::new(),
             var_map: HashMap::new(),
+            ext_fn_map: HashMap::new(),
         }
     }
 
@@ -280,14 +282,21 @@ impl<'ctx> CodeGen<'ctx> {
     fn emit_unboxed_value(&self, typed_value: &TypedValue) -> BasicValueEnum<'ctx> {
         let TypedValue { typ, val } = typed_value;
         match val {
-            Value::ExtCall(_, _) => todo!("external call"),
-            Value::Call(_, _) => {
+            Value::ExtCall(_, _) | Value::Call(_, _) | Value::VarRef(_) => {
                 let mut bv = self.emit_calocom_value(typed_value);
-
+                // only promote i32 value
                 if matches!(*typ, SingletonType::I32) {
-                    bv = self.builder.build_load(bv.into_pointer_value(), "");
+                    bv = self
+                        .builder
+                        .build_call(
+                            self.module.get_runtime_function_extract_i32(),
+                            &[bv.into(), self.context.i32_type().const_zero().into()],
+                            "",
+                        )
+                        .try_as_basic_value()
+                        .left()
+                        .unwrap();
                 }
-
                 bv
             }
             Value::Op(op, l, r) => {
@@ -328,23 +337,6 @@ impl<'ctx> CodeGen<'ctx> {
             Value::Imm(lit) => self.emit_literal_value(false, lit),
             Value::Unit => panic!("unable to create unboxed unit value"),
             Value::Intrinsic(_, _) => self.emit_calocom_intrinsic_function(false, typed_value),
-            Value::VarRef(var) => {
-                let mut bv = self.emit_calocom_value(typed_value);
-                // only promote i32 value
-                if matches!(var.typ, SingletonType::I32) {
-                    bv = self
-                        .builder
-                        .build_call(
-                            self.module.get_runtime_function_extract_i32(),
-                            &[bv.into(), self.context.i32_type().const_zero().into()],
-                            "",
-                        )
-                        .try_as_basic_value()
-                        .left()
-                        .unwrap();
-                }
-                bv
-            }
         }
     }
 
@@ -421,7 +413,22 @@ impl<'ctx> CodeGen<'ctx> {
     fn emit_calocom_value(&self, typed_value: &TypedValue) -> BasicValueEnum<'ctx> {
         let TypedValue { typ, val } = typed_value;
         match val {
-            Value::ExtCall(_, _) => todo!("external call"),
+            Value::ExtCall(path, args) => {
+                let args: Vec<_> = args
+                    .iter()
+                    .map(|arg| self.emit_calocom_value(arg).into())
+                    .collect();
+                let function = self
+                    .ext_fn_map
+                    .get(&path.items)
+                    .unwrap_or_else(|| panic!("can't found called function {}", path));
+                // NOTE: void function not allowed in calocom
+                self.builder
+                    .build_call(*function, &args[..], "")
+                    .try_as_basic_value()
+                    .left()
+                    .unwrap()
+            }
             Value::Call(path, args) => {
                 let args: Vec<_> = args
                     .iter()
@@ -559,6 +566,17 @@ impl<'ctx> CodeGen<'ctx> {
         }
     }
 
+    fn emit_arguments_store(&self, func: FunctionValue, param_def: &[Rc<VarDef>]) {
+        for (idx, var) in param_def.iter().enumerate() {
+            let stack_slot = self
+                .var_map
+                .get(&Rc::clone(var))
+                .expect("expect a slack slot");
+            let arg = func.get_nth_param(idx as u32).expect("expect an argument");
+            self.builder.build_store(*stack_slot, arg);
+        }
+    }
+
     fn emit_function_definition(&mut self, fn_def: &FuncDef) {
         let FuncDef {
             name,
@@ -672,14 +690,42 @@ impl<'ctx> CodeGen<'ctx> {
             &mut self.var_map,
             true,
         );
-
-        self.builder.build_unconditional_branch(*block_map.get("entry").unwrap());
+        self.emit_arguments_store(func, param_def);
+        self.builder
+            .build_unconditional_branch(*block_map.get("entry").unwrap());
 
         self.emit_all_stmts(blocks, &block_map);
         self.emit_basic_block_terminators(ret_var_ptr, blocks, &block_map);
     }
 
+    pub fn insert_external_function(&mut self) {
+        for (path, typ) in self
+            .memory_layout_ctx
+            .get_mir_type_context()
+            .ext_poly_ftypes
+            .iter()
+        {
+            let decorated_name = decorate_polymorphic_function(
+                path.as_slice(),
+                &[],
+                &self.memory_layout_ctx.get_mir_type_idx(typ.0),
+                &typ.1
+                    .iter()
+                    .map(|typ| self.memory_layout_ctx.get_mir_type_idx(*typ))
+                    .collect::<Vec<Type>>()[..],
+            );
+
+            let ext_fn = self
+                .module
+                .get_function(decorated_name.as_str())
+                .unwrap_or_else(|| panic!("can't found function {:?} : {}", path, decorated_name));
+
+            self.ext_fn_map.insert(path.clone(), ext_fn);
+        }
+    }
+
     pub fn emit_all(&mut self, mir: &MiddleIR, path: &Path) {
+        self.insert_external_function();
         for func in mir.module.iter() {
             self.emit_function_definition(func);
         }

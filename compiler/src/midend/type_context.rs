@@ -153,7 +153,7 @@ pub struct TypeContext {
     type_typeid_map: HashMap<Type, usize>,
     pub types: Vec<Type>,
     ftypes: HashMap<String, (usize, Vec<usize>)>,
-    ext_poly_ftypes: HashMap<Vec<String>, (usize, Vec<usize>)>,
+    pub ext_poly_ftypes: HashMap<Vec<String>, (usize, Vec<usize>)>,
     pub env: SymTable<usize>,
 }
 

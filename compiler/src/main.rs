@@ -9,7 +9,7 @@ use calocom_compiler::midend::middle_ir::MiddleIR;
 use calocom_compiler::midend::typed_ast::TypedAST;
 
 fn main() {
-    let s = fs::read_to_string("example/test/simple.mag").expect("read file failed");
+    let s = fs::read_to_string("example/test/opt.mag").expect("read file failed");
     let ast = frontend::parse(&s);
     let ty_ast: TypedAST = ast.into();
     fs::write("typed_ast.ir", format!("{:#?}", ty_ast)).expect("write failed");
