@@ -11,6 +11,7 @@ pub mod sym;
 
 use backend::codegen::*;
 use clap::{ArgEnum, Parser};
+use inkwell::module::Module;
 use inkwell::targets::{
     CodeModel, FileType, InitializationConfig, RelocMode, Target, TargetMachine,
 };
@@ -34,7 +35,7 @@ pub struct Args {
     runtime: PathBuf,
 
     /// Specify the optimizing level
-    #[clap(short, long, arg_enum, default_value_t = OptLevel::O3)]
+    #[clap(short, long = "opt-level", arg_enum,  default_value_t = OptLevel::O3)]
     level: OptLevel,
 
     /// Specify the type of the output file
@@ -52,6 +53,10 @@ pub struct Args {
     /// Specify the relocation type
     #[clap(short, long, arg_enum, default_value_t = Relocate::Pic)]
     relocate: Relocate,
+
+    /// Specify if need to enable debug log for llvm passes
+    #[clap(long)]
+    llvm_pass_debug: bool,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, ArgEnum)]
@@ -112,6 +117,21 @@ fn call_system_linker(input: &Path, output: &Path) -> Result<Output, String> {
     }
 }
 
+fn run_new_passes(module: &Module, machine: &TargetMachine, opt_level: OptLevel, log: bool) {
+    use inkwell::passes::PassBuilderOptions;
+    let pass_options = PassBuilderOptions::create();
+
+    pass_options.set_debug_logging(log);
+
+    let opt_level = match opt_level {
+        OptLevel::O0 => "default<O0>",
+        OptLevel::O1 => "default<O1>",
+        OptLevel::O2 => "default<O2>",
+        OptLevel::O3 => "default<O3>",
+    };
+    module.run_passes(opt_level, machine, pass_options).unwrap();
+}
+
 pub fn compile_with_arguments(args: Args) -> Result<(), ()> {
     let input_file = args.file.canonicalize().unwrap();
     if input_file.is_dir() {
@@ -162,26 +182,6 @@ pub fn compile_with_arguments(args: Args) -> Result<(), ()> {
     let mut codegen = CodeGen::new(module_name.as_ref(), &ctx, &mir, args.runtime.as_path());
     codegen.emit_all(&mir);
 
-    check_flag_and_do(&mut output_kinds, OutputType::LLVMBitcode, || {
-        let output_file = output_file.with_extension("bc");
-        codegen.module.write_bitcode_to_path(&output_file);
-        println!(
-            "{} Write llvm bitcode into {:?}",
-            "::".green(),
-            output_file.as_os_str().blue()
-        )
-    })?;
-
-    check_flag_and_do(&mut output_kinds, OutputType::LLVMAsm, || {
-        let output_file = output_file.with_extension("ll");
-        codegen.module.print_to_file(&output_file).unwrap();
-        println!(
-            "{} Write llvm assembly into {:?}",
-            "::".green(),
-            output_file.as_os_str().blue()
-        )
-    })?;
-
     Target::initialize_native(&InitializationConfig::default())
         .expect("Failed to initialize native target");
 
@@ -205,6 +205,33 @@ pub fn compile_with_arguments(args: Args) -> Result<(), ()> {
     let target_machine = target
         .create_target_machine(&triple, &cpu, &features, opt, reloc, CodeModel::Default)
         .unwrap();
+
+    run_new_passes(
+        &codegen.module,
+        &target_machine,
+        args.level,
+        args.llvm_pass_debug,
+    );
+
+    check_flag_and_do(&mut output_kinds, OutputType::LLVMBitcode, || {
+        let output_file = output_file.with_extension("bc");
+        codegen.module.write_bitcode_to_path(&output_file);
+        println!(
+            "{} Write llvm bitcode into {:?}",
+            "::".green(),
+            output_file.as_os_str().blue()
+        )
+    })?;
+
+    check_flag_and_do(&mut output_kinds, OutputType::LLVMAsm, || {
+        let output_file = output_file.with_extension("ll");
+        codegen.module.print_to_file(&output_file).unwrap();
+        println!(
+            "{} Write llvm assembly into {:?}",
+            "::".green(),
+            output_file.as_os_str().blue()
+        )
+    })?;
 
     check_flag_and_do(&mut output_kinds, OutputType::Asm, || {
         let output_file = output_file.with_extension("s");
