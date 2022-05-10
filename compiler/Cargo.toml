@@ -12,3 +12,4 @@ inkwell = { git = "https://github.com/TheDan64/inkwell", branch = "master", feat
 paste = "1.0"
 petgraph = "0.6"
 either = "1.6"
+frontend = { path = "../frontend" }

@@ -127,13 +127,13 @@ pub fn decorate_polymorphic_function(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{frontend, midend::typed_ast::TypedAST};
+    use crate::{parser, midend::typed_ast::TypedAST};
     use std::fs;
 
     #[test]
     fn test_type_decoration() {
         let s = fs::read_to_string("../example/test/simple.mag").expect("read file fail");
-        let ast = frontend::parse(&s);
+        let ast = parser::parse(&s);
         let tast: TypedAST = ast.into();
         println!(
             "{:#?}",

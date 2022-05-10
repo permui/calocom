@@ -1,5 +1,5 @@
 use std::fs;
-use frontend::frontend;
+use frontend::parser;
 
 fn main() {
     let tmp = "./frontend/src/tmp.mag";
@@ -11,7 +11,7 @@ fn main() {
 
     for p in tests {
         let s = fs::read_to_string(p).expect("read file fail");
-        let m = frontend::parse(&s);
+        let m = parser::parse(&s);
         println!("{:#?}", m);
     }
 }

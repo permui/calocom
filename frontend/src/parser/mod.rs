@@ -1,7 +1,7 @@
 use pest::Parser;
 
 #[derive(Parser)]
-#[grammar = "frontend/grammar.pest"]
+#[grammar = "parser/grammar.pest"]
 pub struct CaloParser;
 
 use pest::iterators::Pair;
