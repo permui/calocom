@@ -10,5 +10,5 @@ f: (n: i32) -> i32 {
 main: () -> () {
 	let x : i32 = 10;
 	let y : i32 = f(x);
-	io.print<i32>(y);
+	io.println<i32>(y);
 }

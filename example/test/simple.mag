@@ -44,6 +44,6 @@ main: () -> () {
 	let z : i32 = f(w);
 	let n : Nat = S(S(O));
 	swap(@x, @y);
-	std.io.print<i32>(w);
-	io.print<i32>(z);
+	std.io.println<i32>(w);
+	io.println<i32>(z);
 }

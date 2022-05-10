@@ -1,0 +1,293 @@
+// auxiliary
+
+WHITESPACE = _{ " " | "\t" | "\n" }
+COMMENT = _{ "/*" ~ (!"*/" ~ ANY)* ~ "*/" | "//" ~ (!"\n" ~ ANY)* ~ "\n" }
+
+// Basics
+
+ident = @{ (LETTER | "_") ~ (LETTER | NUMBER | "_")* }
+
+// literals
+
+integer_lit = @{ ("+" | "-")? ~ ASCII_DIGIT+ }
+
+float_lit = @{ 
+    ("+" | "-")? ~ "." ~ ASCII_DIGIT+ ~ float_exp?
+  | ("+" | "-")? ~ ASCII_DIGIT+ ~ "." ~ ASCII_DIGIT* ~ float_exp?
+  | ("+" | "-")? ~ ASCII_DIGIT+ ~ float_exp
+}
+float_exp = @{
+    ("e" | "E") ~ ("+" | "-")? ~ ASCII_DIGIT+
+}
+
+string_lit = ${ "\"" ~ string_lit_inner ~ "\"" }
+string_lit_inner = @{ ("\\\\" | "\\\"" | (!"\"" ~ ANY))* }
+
+bool_lit = @{ "true" | "false" }
+
+char_lit = ${ "'" ~ char_lit_inner ~ "'" }
+char_lit_inner = @{ !"'" ~ ANY }
+
+Literal = { float_lit | integer_lit | string_lit | bool_lit | char_lit }
+
+// path
+
+Path = { ident ~ ( "." ~ ident)* }
+
+// Names
+
+DataTypeName = @{ ident }
+ConstructorName = @{ ident }
+TypeName = @{ ident }
+FunctionName = @{ ident }
+VariableName = @{ ident } 
+
+
+// The Code File
+
+// module
+
+Module = { SOI ~ ImportBlock ~ DefinitionBlock ~ EOI }
+
+ImportBlock = { ImportItem* }
+ImportItem = _{ "import" ~ Path }
+
+DefinitionBlock = { Definition* }
+Definition = _{ DataDefinition | FunctionDefinition }
+
+// data definition
+
+DataDefinition = { "data" ~ DataTypeName ~ "=" ~ ConstructorList ~ ";" }
+ConstructorList = { Constructor ~ ("|" ~ Constructor)* }
+Constructor = { ConstructorName ~ ( "(" ~ ConstructorArgTypes ~ ")" )? }
+ConstructorArgTypes = { Type ~ ("," ~  Type)* }
+
+// function definition
+
+FunctionDefinition = {
+    FunctionName ~ ":" ~ "(" ~ ParameterList ~ ")" ~ "->" ~ Type ~
+    BracketExpression
+}
+
+// function - head part
+
+ParameterList = {
+    ( NameTypeBind ~ ( "," ~ NameTypeBind )* ) | ""
+}
+
+NameTypeBind = _{
+    AtNameTypeBind 
+  | OrdNameTypeBind 
+}
+
+AtNameTypeBind = { "@" ~ VariableName ~ ":" ~ Type }
+OrdNameTypeBind = { VariableName ~ ":" ~ Type }
+
+// function - body part
+
+BracketExpression = { "{" ~ BracketBody ~ "}" }
+BracketBody = { (Statement)* ~ Expression? }
+Statement = { StatementBody ~ ";" }
+
+// statement body
+
+StatementBody = {
+    Let
+  | While
+  | For
+  | Return
+  | Break
+  | Continue
+  | Asgn
+  | Expression
+}
+
+Let = { "let" ~ VariableName ~ ":" ~ Type ~ "=" ~ Expression }
+
+While = { "while" ~ Expression ~ BracketExpression }
+
+For = { "for" ~ VariableName ~ "in" ~ ForRange ~ BracketExpression }
+
+ForRange = { Expression ~ ".." ~ Expression } // 0..n means [0, n)
+
+Return = { "return" }
+
+Break = { "break" }
+
+Continue = { "continue" }
+
+Asgn = { Expression ~ "=" ~ Expression }
+
+// expression
+
+Expression = { Closure }
+
+// closure
+
+Closure = { 
+    "\\" ~ "(" ~ ParameterList ~ ")" ~ "->" ~ Type ~ "=>" ~ Closure
+  | ControlFlow
+}
+
+// control flow expression
+
+ControlFlow = {
+    Match
+  | If
+  | Or
+}
+
+// match
+
+Match = {
+    "match" ~ Expression ~ "{" ~ MatchArms ~ "}"
+}
+
+MatchArms = { MatchArm ~ ("," ~ MatchArm)* }
+
+MatchArm = { Pattern ~ "=>" ~ Expression } 
+
+Pattern = {
+    ConstructorPattern
+  | TuplePattern
+  | Wildcard
+  | Literal
+}
+
+ConstructorPattern = { ConstructorName ~ ( "(" ~ Pattern ~ ("," ~ Pattern)* ~ ")" )? }
+
+TuplePattern = { "(" ~ Pattern ~ ("," ~ Pattern)* ~ ")" }
+
+Wildcard = { "_" }
+
+// if
+
+If = {
+    "if" ~ Or ~ BracketExpression ~ "else" ~ BracketExpression
+  | "if" ~ Or ~ BracketExpression
+}
+
+// or
+
+Or = { And ~ ("||" ~ And)* } 
+
+// and
+
+And = { Not ~ ("&&" ~ Not)* }
+
+// not
+
+Not = { 
+    NotC
+  | Compare
+}
+
+NotC = { "!" ~ Compare }
+
+// compare
+
+Compare = {
+    Arith1 ~ CompareOp ~ Arith1
+  | Arith1
+}
+
+CompareOp = { "<=" | ">=" | "==" | "!=" | "<" | ">" }
+
+// arithmetic 1
+
+Arith1 = { Arith2 ~ (Arith1Op ~ Arith2)* } // left associative
+
+Arith1Op = { "+" | "-" }
+
+// arithmetic 2
+
+Arith2 = { Arith3 ~ (Arith2Op ~ Arith3)* } // left associative
+
+Arith2Op = { "*" | "/" | "%" }
+
+// arithmetic 3
+
+Arith3 = {
+    Arith3Op ~ Arith3 // positive / negative, like   -a[5]
+  | Subscript
+}
+
+Arith3Op = { "+" | "-" }
+
+// subscript
+
+Subscript = {
+    Call ~ ("[" ~ Expression ~ "]")*
+}
+
+// function call
+
+Call = {
+    Tuple ~ GenericNotation ~ "(" ~ CallArguments ~ ")"
+  | Tuple ~ "(" ~ CallArguments ~ ")"
+  | Tuple
+}
+
+GenericNotation = { "<" ~ Type ~ ">" }
+
+CallArguments = {
+    CallArgument ~ ("," ~ CallArgument)*
+  | ""
+}
+
+CallArgument = {
+    "@" ~ VariableName
+  | Expression
+}
+
+// tuple (x, y, z)
+
+Tuple = {
+    "(" ~ Expression ~ ("," ~ Expression)+ ~ ")"
+  | High
+}
+
+// expressions of highest level
+
+High = {
+    BracketExpression
+  | Literal
+  | Path
+  | UnitVal
+  | "(" ~ Expression ~ ")"
+}
+
+UnitVal = { "(" ~ ")" }
+
+// type
+
+// type constructors: arrow, unit, tuple, named
+
+// we don't allow tuple of 1 element
+// or say, (T) will not be considered a tuple, 
+// but a parenthesis around T
+// this will be used in cases like a function returning
+// (i32 -> i32) -> i32
+
+Type = { ArrowT }
+
+ArrowT = { TupleT ~ ("->" ~ TupleT)* }
+
+TupleT = {
+    "(" ~ Type ~ ("," ~ Type)+ ~ ")"
+  | ArrayT
+}
+
+ArrayT = {
+    "[" ~ Type ~ "]"
+  | HighT
+}
+
+HighT = {
+    UnitT
+  | NamedT
+}
+
+UnitT = { "(" ~ ")" }
+
+NamedT = { TypeName }

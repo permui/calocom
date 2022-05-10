@@ -64,7 +64,10 @@ fn parse_constructor_type<'i>(p: Pair<'i, Rule>) -> ConstructorType {
 
     let mut it = p.into_inner();
     let name = it.next().unwrap().as_str().to_string();
-    let inner = it.next().map(parse_type);
+    let inner = match it.next() {
+        None => Vec::new(),
+        Some(pr) => pr.into_inner().map(parse_type).collect()
+    };
     ConstructorType { name, inner }
 }
 

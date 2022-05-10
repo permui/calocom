@@ -20,7 +20,7 @@ pub struct DataDef {
 #[derive(Debug)]
 pub struct ConstructorType {
     pub name: String,
-    pub inner: Option<Type>
+    pub inner: Vec<Type>
 }
 
 #[derive(Debug)]

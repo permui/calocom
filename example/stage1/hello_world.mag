@@ -1,5 +1,5 @@
 import std.io
 
 main: () -> () {
-	io.print<str>("hello world!");
+	io.println<str>("hello world!");
 }

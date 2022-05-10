@@ -1,16 +1,43 @@
+// Basics
+
+ident = @{ (LETTER | "_") ~ (LETTER | NUMBER | "_")* }
+
+integer_lit = @{ ("+" | "-")? ~ ASCII_DIGIT+ }
+string_lit = ${ "\"" ~ string_lit_inner ~ "\"" }
+string_lit_inner = @{ ("\\\\" | "\\\"" | (!"\"" ~ ANY))* }
+bool_lit = @{ "true" | "false" }
+
+Path = { ident ~ ( "." ~ ident)* }
+
+// Names
+
+DataTypeName = @{ ident }
+ConstructorName = @{ ident }
+TypeName = @{ ident }
+FunctionName = @{ ident }
+VariableName = @{ ident } 
+
+
+// The Code File
+
+// module
+
 Module = { SOI ~ ImportBlock ~ DefinitionBlock ~ EOI }
 
 ImportBlock = { ImportItem* }
 ImportItem = _{ "import" ~ Path }
 
-Path = { ident ~ ( "." ~ ident)* }
-
 DefinitionBlock = { Definition* }
 Definition = _{ DataDefinition | FunctionDefinition }
 
+// data definition
+
 DataDefinition = { "data" ~ DataTypeName ~ "=" ~ ConstructorList ~ ";" }
 ConstructorList = { Constructor ~ ("|" ~ Constructor)* }
-Constructor = { ConstructorName ~ ( "(" ~ Type ~ ")" )? }
+Constructor = { ConstructorName ~ ( "(" ~ ConstructorArgTypes ~ ")" )? }
+ConstructorArgTypes = { Type ~ ("," ~  Type)* }
+
+// function definition
 
 FunctionDefinition = {
     FunctionName ~ ":" ~ "(" ~ ParameterList ~ ")" ~ "->" ~ Type ~
@@ -20,6 +47,7 @@ FunctionDefinition = {
 ParameterList = {
     ( NameTypeBind ~ ( "," ~ NameTypeBind )* ) | ""
 }
+
 NameTypeBind = _{
     AtNameTypeBind 
   | OrdNameTypeBind 
@@ -111,17 +139,7 @@ tuple_type = { "(" ~ type0 ~ ("," ~ type0)* ~ ")" }
 
 // type part end
 
-DataTypeName = @{ ident }
-ConstructorName = @{ ident }
-TypeName = @{ ident }
-FunctionName = @{ ident }
-VariableName = @{ ident } 
 
-ident = @{ (LETTER | "_") ~ (LETTER | NUMBER | "_")* }
-integer_lit = @{ ("+" | "-")? ~ ASCII_DIGIT+ }
-string_lit = ${ "\"" ~ string_lit_inner ~ "\"" }
-string_lit_inner = @{ ("\\\\" | "\\\"" | (!"\"" ~ ANY))* }
-bool_lit = @{ "true" | "false" }
 
 WHITESPACE = _{ " " | "\t" | "\n" }
-COMMENT = _{ "/*" ~ (!"*/" ~ ANY)* ~ "*/" }
+COMMENT = _{ "/*" ~ (!"*/" ~ ANY)* ~ "*/" | "//" ~ (!"\n" ~ ANY)* ~ "\n" }
