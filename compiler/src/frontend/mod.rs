@@ -1,12 +1,15 @@
 use pest::Parser;
 
 #[derive(Parser)]
-#[grammar = "parser/grammar.pest"]
+#[grammar = "frontend/grammar.pest"]
 pub struct CaloParser;
 
 use pest::iterators::Pair;
 
 use crate::ast::*;
+
+#[cfg(test)]
+mod tests;
 
 pub fn parse<'a>(s: &'a str) -> Module {
     let mut prs = CaloParser::parse(Rule::Module, s).unwrap();
