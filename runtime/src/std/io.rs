@@ -1,4 +1,6 @@
-use crate::core::*;
+use crate::alloc::alloc_unit;
+use crate::console::print_object;
+use crate::types::*;
 use libc::c_int;
 use libc::putchar;
 
@@ -13,9 +15,10 @@ use libc::putchar;
 /// Parameter 0: P0_ Calocom.object
 /// Return Type: RT Calocom.unit
 #[no_mangle]
-pub unsafe extern "C" fn _CM3stdM2ioPF5printP0_CoRTCu(p: *const _Object) -> *const _Object {
-    __calocom_runtime_print_object(p);
-    __calocom_runtime_alloc_unit()
+#[export_name = "_CM3stdM2ioPF5printP0_CoRTCu"]
+pub unsafe extern "C" fn print(p: *const _Object) -> *const _Unit {
+    print_object(p);
+    alloc_unit()
 }
 
 /// # Safety
@@ -29,10 +32,11 @@ pub unsafe extern "C" fn _CM3stdM2ioPF5printP0_CoRTCu(p: *const _Object) -> *con
 /// Parameter 0: P0_ Calocom.object
 /// Return Type: RT Calocom.unit
 #[no_mangle]
-pub unsafe extern "C" fn _CM3stdM2ioPF7printlnP0_CoRTCu(p: *const _Object) -> *const _Object {
-    __calocom_runtime_print_object(p);
+#[export_name = "_CM3stdM2ioPF7printlnP0_CoRTCu"]
+pub unsafe extern "C" fn println(p: *const _Object) -> *const _Unit {
+    print_object(p);
     #[cfg(windows)]
     putchar('\r' as c_int);
     putchar('\n' as c_int);
-    __calocom_runtime_alloc_unit()
+    alloc_unit()
 }

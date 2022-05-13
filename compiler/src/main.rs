@@ -1,8 +1,7 @@
-use std::fs;
-use calocom_compiler::frontend;
+use calocom_compiler::compile_with_arguments;
+use calocom_compiler::Args;
+use clap::Parser;
 
 fn main() {
-    let s = fs::read_to_string("./example/tmp/while.mag").expect("read file fail");
-    let m = frontend::parse(&s);
-    println!("{:#?}", m);
+    compile_with_arguments(Args::parse()).unwrap_or(());
 }

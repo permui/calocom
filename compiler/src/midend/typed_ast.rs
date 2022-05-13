@@ -54,6 +54,13 @@ pub struct TypedCallExpr {
 }
 
 #[derive(Debug)]
+pub struct TypedExternalCallExpr {
+    pub path: TypedASTRefPath,
+    pub gen: Option<Type>, // generic notation
+    pub args: Vec<TypedArgument>,
+}
+
+#[derive(Debug)]
 pub struct TypedArithExpr {
     pub lhs: TypedExpr,
     pub rhs: TypedExpr,
@@ -85,6 +92,7 @@ pub struct TypedCtorExpr {
 pub enum ExprEnum {
     BraExpr(TypedBracketBody),
     CallExpr(TypedCallExpr),
+    ExtCallExpr(TypedExternalCallExpr),
     ArithExpr(TypedArithExpr),
     MatchExpr(TypedMatchExpr),
     CtorExpr(TypedCtorExpr),
@@ -120,7 +128,7 @@ pub enum TypedASTLiteral {
     Bool(bool),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct TypedASTRefPath {
     pub items: Vec<String>,
 }
@@ -185,7 +193,7 @@ impl TypedAST {
     fn resolve_type_with_at(&mut self, ast_type: &crate::ast::Type) -> (usize, Type) {
         let (idx, _typ) = self.resolve_type(ast_type, false);
 
-        self.ty_ctx.opaque_type(idx)
+        self.ty_ctx.reference_type(idx)
     }
 
     fn resolve_type(&mut self, ast_type: &crate::ast::Type, allow_opaque: bool) -> (usize, Type) {
@@ -206,13 +214,17 @@ impl TypedAST {
                 let mut ctors = vec![];
 
                 for crate::ast::ConstructorType { name, inner } in e {
-                    let ty = if inner.is_some() {
-                        let (_, ty) = self.resolve_type(inner.as_ref().unwrap(), allow_opaque);
-                        Some(ty)
+                    let tys = if inner.is_some() {
+                        let (idx, ty) = self.resolve_type(inner.as_ref().unwrap(), allow_opaque);
+                        if self.ty_ctx.is_enum_type(idx) {
+                            vec![self.ty_ctx.opaque_type(idx).1]
+                        } else {
+                            vec![ty]
+                        }
                     } else {
-                        None
+                        vec![]
                     };
-                    ctors.push((name.clone(), ty));
+                    ctors.push((name.clone(), tys));
                 }
 
                 self.ty_ctx.enum_type(ctors)
@@ -367,7 +379,7 @@ impl TypedAST {
                 }
             }
 
-            let typed_call = TypedCallExpr {
+            let typed_call = TypedExternalCallExpr {
                 path: TypedASTRefPath { items: full_path },
                 gen,
                 args: typed_args,
@@ -375,7 +387,7 @@ impl TypedAST {
 
             TypedExpr {
                 typ: ty.0,
-                expr: Box::new(ExprEnum::CallExpr(typed_call)),
+                expr: Box::new(ExprEnum::ExtCallExpr(typed_call)),
             }
         } else {
             panic!("not callable: {}", full_path.join(""));
@@ -482,6 +494,19 @@ impl TypedAST {
     fn check_type_of_match(&mut self, mexp: &crate::ast::MatchExpr) -> TypedExpr {
         let crate::ast::MatchExpr { e, arms } = mexp;
         let match_expr = self.check_type_of_expr(e);
+
+        // empty match
+        if arms.is_empty() {
+            return TypedExpr {
+                typ: SingletonType::UNIT,
+                expr: Box::new(ExprEnum::MatchExpr(TypedMatchExpr {
+                    e: match_expr,
+                    arms: vec![],
+                    typ: SingletonType::UNIT,
+                })),
+            };
+        }
+
         let mut typed_arms = vec![];
         for (pat, expr) in arms {
             match pat {
@@ -497,8 +522,9 @@ impl TypedAST {
                     if let Some(&typ) = self.constructors.get(name) {
                         if self.ty_ctx.is_compatible(typ, match_expr.typ) {
                             if let Some(bind) = inner {
+                                // only one constructor parameter now
                                 let (typ, _) =
-                                    self.ty_ctx.get_ctor_field_type_by_name(typ, name).unwrap();
+                                    self.ty_ctx.get_ctor_index_and_field_type_by_name(typ, name).1[0];
                                 self.ty_ctx.env.entry();
                                 self.ty_ctx.env.insert_symbol(bind.to_string(), typ);
                                 typed_arms.push(self.check_type_of_expr(expr));
@@ -518,8 +544,11 @@ impl TypedAST {
 
         let first_arm_typ = typed_arms.first().unwrap().typ;
 
-        // requires same, because we don't expect to infer opaque type
-        if !typed_arms.iter().all(|expr| expr.typ == first_arm_typ) {
+        // requires same
+        if !typed_arms
+            .iter()
+            .all(|expr| self.ty_ctx.is_type_eq(expr.typ, first_arm_typ))
+        {
             panic!("match arm returns incompatible types")
         }
 
@@ -723,7 +752,7 @@ impl TypedAST {
 
         // resolve type, second pass, replace previously opaque
         // named type [Right(name)] with type index [Left(idx)].
-        typed_ast.ty_ctx.refine_all_opaque_type();
+        typed_ast.ty_ctx.refine_all_type();
 
         // All opaque types cleared. No more opaque types allowed.
 

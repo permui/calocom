@@ -1,4 +1,4 @@
-use super::type_context::*;
+use super::{type_context::*};
 
 /*
 Type Name Decoration Rules
@@ -10,10 +10,12 @@ TypeDecorationName  ::= ObjectName
                       | EnumerationName (ConstructorName)+
 ObjectName      ::= 'Co'
 OpaqueName      ::= 'Cp'
+ReferenceName   ::= 'Cr'
 PrimitiveName   ::= 'Cu'
                   | 'Cb'
                   | 'Ci4'
                   | 'Cs'
+                  | 'CNi4'
 EmptyTupleName  ::= 'Cy'
 TupleName       ::= 'Ct'
 EnumerationName ::= 'Ce'
@@ -29,6 +31,7 @@ e.g:
     'Cu' encodes unit type
     'CeCT0_1OCFT1_1SF0_Cp' encodes Nat type
 */
+
 trait DecorationName {
     fn get_decorated_name(&self) -> String;
 }
@@ -58,14 +61,13 @@ impl DecorationName for Type {
                         .iter()
                         .enumerate()
                         .map(|(idx, (name, ty))| {
-                            if let Some(ty) = ty {
-                                let ty_vec = vec![ty];
+                            if !ty.is_empty() {
                                 format!(
                                     "CFT{}_{}{}{}",
                                     idx,
                                     name.len(),
                                     name,
-                                    ty_vec
+                                    ty
                                         .iter()
                                         .enumerate()
                                         .map(|(idx, ty)| format!(
@@ -88,9 +90,11 @@ impl DecorationName for Type {
                 PrimitiveType::Bool => "Cb",
                 PrimitiveType::Int32 => "Ci4",
                 PrimitiveType::Unit => "Cu",
+                PrimitiveType::CInt32 => "CNi4",
             }
             .to_string(),
             Type::Opaque(_) => "Cp".to_string(),
+            Type::Reference(_) => "Cr".to_string(),
         }
     }
 }
@@ -101,12 +105,11 @@ impl DecorationName for Type {
 // FunctionName     ::= 'PF' digits identifier
 // ParametersName   ::= ('P' digits '_' TypeDecorationName)*
 // ReturnTypeName   ::= 'RT' TypeDecorationName
-
 pub fn decorate_polymorphic_function(
-    path: &Vec<String>,
-    _generic: &[&Type],
+    path: &[String],
+    _generic: &[Type],
     ret: &Type,
-    arg: &[&Type],
+    arg: &[Type],
 ) -> String {
     let fn_name = path.last().unwrap();
     let path = &path[..path.len() - 1];

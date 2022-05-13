@@ -2,3 +2,7 @@
 
 [workspace]
 members = ["runtime", "compiler"]
+
+[profile.release]
+strip = true
+lto = true

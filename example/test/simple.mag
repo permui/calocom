@@ -8,9 +8,10 @@ data T2 = C2(T1) ;
 
 data Nat = O | S(Nat);
 
-f: (n: i32) -> i32 {
-	let x: i32 = 2 + 3 + 4 + 5;
-    x
+data Wrapper = C(i32);
+
+g: () -> str {
+	"hello, world"
 }
 
 swap: (@x: A, @y: A) -> () {
@@ -19,8 +20,13 @@ swap: (@x: A, @y: A) -> () {
 	y = tmp;
 }
 
-g: () -> str {
-	"hello, world"
+f: (n: i32) -> i32 {
+	let x: i32 = 2 + 3 + 4 + 5;
+    x
+}
+
+add_i32: (n: i32, m: i32) -> i32 {
+	n + m
 }
 
 add: (n: Nat, m: Nat) -> Nat {
@@ -30,7 +36,7 @@ add: (n: Nat, m: Nat) -> Nat {
 	}
 }
 
-prim: (n : Nat) -> i32 {
+prim: (@n : Nat) -> i32 {
 	match n {
 		O => 0,
 		S(k) => prim(k) + 1
@@ -43,6 +49,10 @@ main: () -> () {
 	let w : i32 = 10;
 	let z : i32 = f(w);
 	let n : Nat = S(S(O));
+	let a : Wrapper = C(10);
+	match a {
+		C(i) => i + 1
+	};
 	swap(@x, @y);
 	std.io.println<i32>(w);
 	io.println<i32>(z);

@@ -1,2 +1,6 @@
 /target
 .vscode
+*.ll
+*.bc
+*.ir
+*.s
