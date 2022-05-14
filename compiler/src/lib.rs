@@ -169,7 +169,7 @@ pub fn compile_with_arguments(args: Args) -> Result<(), ()> {
 
     check_flag_and_do(&mut output_kinds, OutputType::MiddleIR, || {
         let output_file = output_file.with_extension("mir.ir");
-        fs::write(&output_file, format!("{:#?}", mir)).expect("Write Middle IR failed");
+        fs::write(&output_file, format!("{}", mir)).expect("Write Middle IR failed");
         println!(
             "{} Write middle IR into {:?}",
             "::".green(),

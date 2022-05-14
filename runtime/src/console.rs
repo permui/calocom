@@ -29,7 +29,7 @@ pub unsafe fn print_object(p: *const _Object) {
             let i = p as *const _Int32;
             let true_s = const_cstr!("true");
             let false_s = const_cstr!("false");
-            puts(if (*i).data == 0 {
+            puts(if (*i).data != 0 {
                 true_s.as_ptr()
             } else {
                 false_s.as_ptr()
