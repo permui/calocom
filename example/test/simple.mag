@@ -54,8 +54,6 @@ main: () -> () {
 		C(i) => i + 1
 	};
 	swap(@x, @y);
-	prim(@n);
-	prim(n);
-	/* std.io.print<i32>(w);
-	io.print<i32>(z); */
+	std.io.println<i32>(w);
+	io.println<i32>(z);
 }

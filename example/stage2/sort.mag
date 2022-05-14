@@ -17,5 +17,5 @@ sort: (a : [i32], cmp : i32 i32 -> bool) -> () {
 main: () -> () {
 	let a : [i32] = [2,3,1,5,4];
 	sort(a, cmp);
-	array.map<i32 -> ()>(a, io.print<i32>);
+	array.map<i32 -> ()>(a, io.println<i32>);
 }

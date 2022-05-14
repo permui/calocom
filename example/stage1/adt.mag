@@ -17,9 +17,11 @@ prim: (n : Nat) -> i32 {
 }
 
 main: () -> () {
-	let n : Nat = S(S(Z));
+    /* a multiline
+       comment */
+	let n : Nat = S(S(Z)); // single line comment
 	let m : Nat = S(S(S(Z)));
 	let z : Nat = add(n, m);
 	let w : i32 = prim(z);
-	io.print<i32>(w);
+	io.println<i32>(w);
 }
