@@ -15,3 +15,13 @@ paste = "1.0"
 either = "1.6"
 clap = { version = "3.1", features = ["derive"] }
 owo-colors = "3"
+num_enum = "0.5.7"
+strum = { version = "0.24", features = ["derive"] }
+
+[features]
+frontend = []
+typed-ast = ["frontend"]
+#middle-ir = ["typed-ast"]
+#midend = ["middle-ir", "typed-ast"]
+#backend = ["midend"]
+default = ["frontend"]

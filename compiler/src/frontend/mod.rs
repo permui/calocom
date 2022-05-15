@@ -212,7 +212,7 @@ fn parse_statement_body<'i>(p: Pair<'i, Rule>) -> Stmt {
             let mut it = p.into_inner();
             let lexp = Box::new(parse_expression(it.next().unwrap()));
             let rexp = Box::new(parse_expression(it.next().unwrap()));
-            Stmt::Asgn(Box::new(AsgnStmt { lexp, rexp }))
+            Stmt::Asgn(Box::new(AsgnStmt { lhs: lexp, rhs: rexp }))
         }
         Rule::Expression => {
             let t = parse_expression(p);
@@ -266,7 +266,7 @@ fn parse_expression<'i>(p: Pair<'i, Rule>) -> Expr {
             let mut fir = parse_expression(it.next().unwrap());
             while let Some(q) = it.next() {
                 let sec = parse_expression(q);
-                fir = Expr::BinOper(BinOperExpr {
+                fir = Expr::BinOp(BinOpExpr {
                     lhs: Box::new(fir),
                     rhs: Box::new(sec),
                     op: BinOp::Or
@@ -279,7 +279,7 @@ fn parse_expression<'i>(p: Pair<'i, Rule>) -> Expr {
             let mut fir = parse_expression(it.next().unwrap());
             while let Some(q) = it.next() {
                 let sec = parse_expression(q);
-                fir = Expr::BinOper(BinOperExpr {
+                fir = Expr::BinOp(BinOpExpr {
                     lhs: Box::new(fir),
                     rhs: Box::new(sec),
                     op: BinOp::And
@@ -290,9 +290,9 @@ fn parse_expression<'i>(p: Pair<'i, Rule>) -> Expr {
         Rule::Not => parse_expression(get_first(p)),
         Rule::NotC => {
             let fir = parse_expression(get_first(p));
-            Expr::UnaOper(UnaOperExpr {
-                x: Box::new(fir),
-                op: UnaOp::Not
+            Expr::UnaryOp(UnaryOpExpr {
+                expr: Box::new(fir),
+                op: UnaryOp::Not
             })
         }
         Rule::Compare => {
@@ -303,7 +303,7 @@ fn parse_expression<'i>(p: Pair<'i, Rule>) -> Expr {
                 Some(q) => {
                     let op = parse_bin_op(q);
                     let sec = parse_expression(it.next().unwrap());
-                    Expr::BinOper(BinOperExpr {
+                    Expr::BinOp(BinOpExpr {
                         lhs: Box::new(fir),
                         rhs: Box::new(sec),
                         op
@@ -317,7 +317,7 @@ fn parse_expression<'i>(p: Pair<'i, Rule>) -> Expr {
             while let Some(q) = it.next() {
                 let op = parse_bin_op(q);
                 let sec = parse_expression(it.next().unwrap());
-                fir = Expr::BinOper(BinOperExpr {
+                fir = Expr::BinOp(BinOpExpr {
                     lhs: Box::new(fir),
                     rhs: Box::new(sec),
                     op
@@ -331,7 +331,7 @@ fn parse_expression<'i>(p: Pair<'i, Rule>) -> Expr {
             while let Some(q) = it.next() {
                 let op = parse_bin_op(q);
                 let sec = parse_expression(it.next().unwrap());
-                fir = Expr::BinOper(BinOperExpr {
+                fir = Expr::BinOp(BinOpExpr {
                     lhs: Box::new(fir),
                     rhs: Box::new(sec),
                     op
@@ -346,8 +346,8 @@ fn parse_expression<'i>(p: Pair<'i, Rule>) -> Expr {
                 Rule::Arith3Op => {
                     let op = parse_una_op(fir);
                     let x = parse_expression(it.next().unwrap());
-                    Expr::UnaOper(UnaOperExpr {
-                        x: Box::new(x),
+                    Expr::UnaryOp(UnaryOpExpr {
+                        expr: Box::new(x),
                         op
                     })
                 }
@@ -377,7 +377,7 @@ fn parse_expression<'i>(p: Pair<'i, Rule>) -> Expr {
                         Rule::GenericNotation => {
                             let gen = Some(parse_generic_notation(q));
                             let args = parse_call_arguments(it.next().unwrap());
-                            Expr::CallExpr(CallExpr {
+                            Expr::Call(CallExpr {
                                 func: Box::new(fir),
                                 gen,
                                 args
@@ -385,7 +385,7 @@ fn parse_expression<'i>(p: Pair<'i, Rule>) -> Expr {
                         }
                         Rule::CallArguments => {
                             let args = parse_call_arguments(q);
-                            Expr::CallExpr(CallExpr {
+                            Expr::Call(CallExpr {
                                 func: Box::new(fir),
                                 gen: None,
                                 args
@@ -410,15 +410,15 @@ fn parse_expression<'i>(p: Pair<'i, Rule>) -> Expr {
             }
         }
         Rule::High => parse_expression(get_first(p)),
-        Rule::BracketExpression => Expr::BraExpr(parse_bracket_expression(p)),
+        Rule::BracketExpression => Expr::Bracket(parse_bracket_expression(p)),
         Rule::Literal => Expr::Lit(parse_literal(p)),
         Rule::Path => Expr::Path(parse_path(p)),
-        Rule::UnitVal => Expr::UnitVal,
+        Rule::UnitVal => Expr::Lit(Literal::Unit),
         _ => unreachable!()
     }
 }
 
-fn parse_match_arm<'i>(p: Pair<'i, Rule>) -> (Pattern, Box<Expr>) {
+fn parse_match_arm<'i>(p: Pair<'i, Rule>) -> (ComplexPattern, Box<Expr>) {
     assert_eq!(p.as_rule(), Rule::MatchArm);
 
     let mut it = p.into_inner();
@@ -427,7 +427,7 @@ fn parse_match_arm<'i>(p: Pair<'i, Rule>) -> (Pattern, Box<Expr>) {
     (pattern, Box::new(expr))
 }
 
-fn parse_pattern<'i>(p: Pair<'i, Rule>) -> Pattern {
+fn parse_pattern<'i>(p: Pair<'i, Rule>) -> ComplexPattern {
     assert_eq!(p.as_rule(), Rule::Pattern);
 
     let p = get_first(p);
@@ -436,16 +436,16 @@ fn parse_pattern<'i>(p: Pair<'i, Rule>) -> Pattern {
             let mut it = p.into_inner();
             let con_name = it.next().unwrap().as_str().to_string();
             let inner = it.map(parse_pattern).collect();
-            Pattern::Con(ConPattern { con_name, inner })
+            ComplexPattern::Ctor(CtorPattern { name: con_name, inner })
         }
         Rule::TuplePattern => {
             let inner = p.into_inner().map(parse_pattern).collect();
-            Pattern::Tuple(inner)
+            ComplexPattern::Tuple(inner)
         }
-        Rule::Wildcard => Pattern::Wildcard,
+        Rule::Wildcard => ComplexPattern::Wildcard,
         Rule::Literal => {
             let l = parse_literal(p);
-            Pattern::Literal(l)
+            ComplexPattern::Literal(l)
         }
         _ => unreachable!()
     }
@@ -460,11 +460,6 @@ fn parse_literal<'i>(p: Pair<'i, Rule>) -> Literal {
         Rule::integer_lit => Literal::Int(p.as_str().parse().expect("parse integer literal fail")),
         Rule::string_lit => Literal::Str(get_first(p).as_str().to_string()),
         Rule::bool_lit => Literal::Bool(p.as_str().parse().unwrap()),
-        Rule::char_lit => {
-            let s = get_first(p).as_str();
-            let c = s.parse().expect("parse char literal fail");
-            Literal::Char(c)
-        }
         _ => unreachable!()
     }
 }
@@ -493,7 +488,7 @@ fn parse_bin_op<'i>(p: Pair<'i, Rule>) -> BinOp {
         }
         Rule::Arith2Op => {
             match p.as_str() {
-                "*" => Mult,
+                "*" => Mul,
                 "/" => Div,
                 "%" => Mod,
                 _ => unreachable!()
@@ -503,8 +498,8 @@ fn parse_bin_op<'i>(p: Pair<'i, Rule>) -> BinOp {
     }
 }
 
-fn parse_una_op<'i>(p: Pair<'i, Rule>) -> UnaOp {
-    use UnaOp::*;
+fn parse_una_op<'i>(p: Pair<'i, Rule>) -> UnaryOp {
+    use UnaryOp::*;
 
     match p.as_rule() {
         Rule::Arith3Op => {

@@ -20,7 +20,7 @@ pub unsafe fn print_object(p: *const _Object) {
             let fmt = const_cstr!("%.*s");
             printf(fmt.as_ptr(), (*s).len, addr_of!((*s).data) as *const c_char);
         }
-        _ObjectType::I32 => {
+        _ObjectType::Int32 => {
             let i = p as *const _Int32;
             let fmt = const_cstr!("%d");
             printf(fmt.as_ptr(), (*i).data);

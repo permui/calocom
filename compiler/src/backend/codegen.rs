@@ -315,7 +315,7 @@ impl<'ctx> CodeGen<'ctx> {
                             .builder
                             .build_int_sub(lhs.into_int_value(), rhs.into_int_value(), "")
                             .as_basic_value_enum(),
-                        BinOp::Mult => self
+                        BinOp::Mul => self
                             .builder
                             .build_int_mul(lhs.into_int_value(), rhs.into_int_value(), "")
                             .as_basic_value_enum(),

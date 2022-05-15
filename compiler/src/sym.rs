@@ -4,7 +4,6 @@ pub trait SymbolTable<K, V>
 where
     K: Eq + Hash,
 {
-    fn new() -> Self;
     fn find_symbol<Q: ?Sized>(&self, key: &Q) -> Option<&V>
     where
         K: Borrow<Q>,
@@ -18,9 +17,6 @@ impl<K, V> SymbolTable<K, V> for Vec<HashMap<K, V>>
 where
     K: Eq + Hash,
 {
-    fn new() -> Self {
-        Default::default()
-    }
     fn find_symbol<Q: ?Sized>(&self, key: &Q) -> Option<&V>
     where
         K: Borrow<Q>,

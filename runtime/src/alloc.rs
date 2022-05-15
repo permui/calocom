@@ -71,7 +71,7 @@ pub extern "C" fn alloc_string_literal(length: size_t, s: *const c_char) -> *mut
 pub extern "C" fn alloc_i32() -> *mut _Int32 {
     let mem = alloc(::core::mem::size_of::<_Int32>()) as *mut _Int32;
     unsafe {
-        (*mem).header.tag = _ObjectType::I32;
+        (*mem).header.tag = _ObjectType::Int32;
     }
     mem
 }
