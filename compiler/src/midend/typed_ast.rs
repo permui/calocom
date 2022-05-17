@@ -1,6 +1,9 @@
 use std::{panic, rc::Rc, vec};
 
-use crate::common::{name_context::NameContext, type_context::{TypeContext, Type, Primitive, CallKind}};
+use crate::common::{
+    name_context::NameContext,
+    type_context::{CallKind, Primitive, Type, TypeContext},
+};
 
 #[derive(Debug)]
 pub struct TypedFuncDef {
@@ -157,7 +160,7 @@ pub struct TypedASTConstructorVar {
 
 #[derive(Debug, Default)]
 pub struct TypedAST {
-    pub name_ctx: NameContext,
+    pub name_ctx: NameContext<usize>,
     pub ty_ctx: TypeContext,
     pub module: Vec<TypedFuncDef>,
 }
@@ -335,102 +338,101 @@ impl TypedAST {
             panic!("try to call a non-callable entity");
         }
 
-        if let Type::Callable {
+        let Type::Callable {
             ret_type,
             parameters,
             kind,
-        } = self.ty_ctx.get_type_by_idx(typ)
-        {
-            let args: Vec<_> = args
-                .iter()
-                .map(|arg| self.check_type_of_argument(arg))
-                .collect();
+        } = self.ty_ctx.get_type_by_idx(typ) else {
+            unreachable!()
+        };
 
-            if parameters.len() != args.len() {
-                panic!(
-                    "wrong number of arguments: expect {} but given {}",
-                    parameters.len(),
-                    args.len()
-                );
-            }
+        let args: Vec<_> = args
+            .iter()
+            .map(|arg| self.check_type_of_argument(arg))
+            .collect();
 
-            let ret_type = self.ty_ctx.get_idx_by_type(&*ret_type);
+        if parameters.len() != args.len() {
+            panic!(
+                "wrong number of arguments: expect {} but given {}",
+                parameters.len(),
+                args.len()
+            );
+        }
 
-            match kind {
-                CallKind::Constructor => {
-                    for (idx, (typ, typed_arg)) in parameters.iter().zip(args.iter()).enumerate() {
-                        let typ = self.ty_ctx.get_idx_by_type(typ);
-                        match typed_arg {
-                            TypedArgument::Expr(e) => {
-                                if !self.ty_ctx.is_compatible(typ, e.typ) {
-                                    panic!("argument {} type incorrect", idx);
-                                }
+        let ret_type = self.ty_ctx.get_idx_by_type(&*ret_type);
+
+        match kind {
+            CallKind::Constructor => {
+                for (idx, (typ, typed_arg)) in parameters.iter().zip(args.iter()).enumerate() {
+                    let typ = self.ty_ctx.get_idx_by_type(typ);
+                    match typed_arg {
+                        TypedArgument::Expr(e) => {
+                            if !self.ty_ctx.is_compatible(typ, e.typ) {
+                                panic!("argument {} type incorrect", idx);
                             }
-                            TypedArgument::AtVar(_, _) => {
-                                panic!("at expression was not allowed in constructor")
+                        }
+                        TypedArgument::AtVar(_, _) => {
+                            panic!("at expression was not allowed in constructor")
+                        }
+                    }
+                }
+
+                let path = match &*expr {
+                    ExprEnum::Path { path } => path,
+                    _ => panic!("not a path in a constructor expression"),
+                };
+
+                assert!(path.len() == 1);
+
+                TypedExpr {
+                    expr: Box::new(ExprEnum::Ctor {
+                        args,
+                        name: path[0].clone(),
+                    }),
+                    typ: ret_type,
+                }
+            }
+            CallKind::Function | CallKind::ClosureValue => {
+                for (idx, (typ, typed_arg)) in parameters.iter().zip(args.iter()).enumerate() {
+                    let typ = self.ty_ctx.get_idx_by_type(typ);
+                    match typed_arg {
+                        TypedArgument::Expr(e) => {
+                            if !self.ty_ctx.is_compatible(typ, e.typ) {
+                                panic!("argument {} type incorrect", idx);
+                            }
+                        }
+                        TypedArgument::AtVar(_, atvar_typ) => {
+                            if !self.ty_ctx.is_compatible(typ, *atvar_typ) {
+                                panic!("argument {} type incorrect", idx);
                             }
                         }
                     }
+                }
 
+                if kind == CallKind::ClosureValue {
+                    TypedExpr {
+                        expr: Box::new(ExprEnum::ClosureCall {
+                            expr: TypedExpr { typ, expr },
+                            args,
+                        }),
+                        typ: ret_type,
+                    }
+                } else {
                     let path = match &*expr {
                         ExprEnum::Path { path } => path,
-                        _ => panic!("not a path in a constructor expression"),
+                        _ => panic!("not a path in a function call expression"),
                     };
 
-                    assert!(path.len() == 1);
-
                     TypedExpr {
-                        expr: Box::new(ExprEnum::Ctor {
+                        expr: Box::new(ExprEnum::Call {
+                            path: path.clone(),
+                            gen: None,
                             args,
-                            name: path[0].clone(),
                         }),
                         typ: ret_type,
                     }
                 }
-                CallKind::Function | CallKind::ClosureValue => {
-                    for (idx, (typ, typed_arg)) in parameters.iter().zip(args.iter()).enumerate() {
-                        let typ = self.ty_ctx.get_idx_by_type(typ);
-                        match typed_arg {
-                            TypedArgument::Expr(e) => {
-                                if !self.ty_ctx.is_compatible(typ, e.typ) {
-                                    panic!("argument {} type incorrect", idx);
-                                }
-                            }
-                            TypedArgument::AtVar(_, atvar_typ) => {
-                                if !self.ty_ctx.is_compatible(typ, *atvar_typ) {
-                                    panic!("argument {} type incorrect", idx);
-                                }
-                            }
-                        }
-                    }
-
-                    if kind == CallKind::ClosureValue {
-                        TypedExpr {
-                            expr: Box::new(ExprEnum::ClosureCall {
-                                expr: TypedExpr { typ, expr },
-                                args,
-                            }),
-                            typ: ret_type,
-                        }
-                    } else {
-                        let path = match &*expr {
-                            ExprEnum::Path { path } => path,
-                            _ => panic!("not a path in a function call expression"),
-                        };
-
-                        TypedExpr {
-                            expr: Box::new(ExprEnum::Call {
-                                path: path.clone(),
-                                gen: None,
-                                args,
-                            }),
-                            typ: ret_type,
-                        }
-                    }
-                }
             }
-        } else {
-            unreachable!()
         }
     }
 
@@ -471,51 +473,43 @@ impl TypedAST {
         use TypedASTComplexPattern::*;
         match pattern {
             Ctor { name, inner } => {
-                if let Some(typ) = self.name_ctx.find_ctor(name) {
-                    if !self.ty_ctx.is_compatible(typ, matched_type) {
-                        panic!("invalid constructor for match arm: constructor belongs to another type")
-                    }
-                    let ctor_type = self.ty_ctx.get_type_by_idx(typ);
-                    if let Type::Callable {
-                        kind,
-                        ret_type: _,
-                        parameters,
-                    } = ctor_type
-                    {
-                        assert_eq!(kind, CallKind::Constructor);
-                        if parameters.len() != inner.len() {
-                            panic!(
-                                "requires {} parameters for constructor but got {}",
-                                parameters.len(),
-                                inner.len()
-                            );
-                        }
+                let Some(typ) = self.name_ctx.find_ctor(name) else { unreachable!()};
+                if !self.ty_ctx.is_compatible(typ, matched_type) {
+                    panic!("invalid constructor for match arm: constructor belongs to another type")
+                }
+                let ctor_type = self.ty_ctx.get_type_by_idx(typ);
+                let Type::Callable {
+                    kind,
+                    ret_type: _,
+                    parameters,
+                } = ctor_type else {
+                    panic!("constructor type is not callable")
+                };
+                assert_eq!(kind, CallKind::Constructor);
+                if parameters.len() != inner.len() {
+                    panic!(
+                        "requires {} parameters for constructor but got {}",
+                        parameters.len(),
+                        inner.len()
+                    );
+                }
 
-                        for (param, pattern) in parameters.iter().zip(inner.iter()) {
-                            let typ = self.ty_ctx.get_idx_by_type(param);
-                            self.insert_pattern_symbol_binding(typ, pattern);
-                        }
-                    } else {
-                        panic!("constructor type is not callable")
-                    }
-                } else {
-                    // It is sure to be a ctor.
-                    unreachable!()
+                for (param, pattern) in parameters.iter().zip(inner.iter()) {
+                    let typ = self.ty_ctx.get_idx_by_type(param);
+                    self.insert_pattern_symbol_binding(typ, pattern);
                 }
             }
             Tuple { fields: vec } => {
                 let tuple_type = self.ty_ctx.get_type_by_idx(matched_type);
-                if let Type::Tuple { fields } = tuple_type {
-                    if fields.len() != vec.len() {
-                        panic!("requires {} fields but got {}", fields.len(), vec.len());
-                    }
-
-                    for (field, pattern) in fields.iter().zip(vec.iter()) {
-                        let typ = self.ty_ctx.get_idx_by_type(field);
-                        self.insert_pattern_symbol_binding(typ, pattern);
-                    }
-                } else {
+                let Type::Tuple { fields } = tuple_type else {
                     panic!("invalid tuple pattern")
+                };
+                if fields.len() != vec.len() {
+                    panic!("requires {} fields but got {}", fields.len(), vec.len());
+                }
+                for (field, pattern) in fields.iter().zip(vec.iter()) {
+                    let typ = self.ty_ctx.get_idx_by_type(field);
+                    self.insert_pattern_symbol_binding(typ, pattern);
                 }
             }
             Wildcard => {}
@@ -1013,55 +1007,54 @@ impl TypedAST {
 
         let typ = &self.ty_ctx.get_type_by_idx(typ);
 
-        if let Type::Callable {
+        let Type::Callable {
             kind: _,
             ret_type,
             parameters,
-        } = typ
-        {
-            self.name_ctx.entry_scope();
-            let mut param_vec = vec![];
-
-            for (
-                idx,
-                crate::ast::NameTypeBind {
-                    with_at,
-                    var_name,
-                    typ: _,
-                },
-            ) in func.param_list.iter().enumerate()
-            {
-                let tp = &parameters[idx];
-                let tp = self.ty_ctx.get_idx_by_type(tp);
-
-                param_vec.push(TypedBind {
-                    with_at: *with_at,
-                    var_name: var_name.clone(),
-                    typ: tp,
-                });
-
-                self.name_ctx
-                    .insert_symbol(var_name.to_string(), tp)
-                    .and_then(|_| -> Option<()> { panic!("parameter redefined") });
-            }
-
-            let body = self.check_type_of_bracket_body(&func.body);
-            let ret_type = self.ty_ctx.get_idx_by_type(ret_type);
-            if !self.ty_ctx.is_compatible(body.typ, ret_type) {
-                panic!("return type inconsistent: {}", func.name);
-            }
-
-            self.name_ctx.exit_scope();
-
-            self.module.push(TypedFuncDef {
-                name: func.name.to_string(),
-                ret_type,
-                body: Box::new(body),
-                params: param_vec,
-            });
-        } else {
+        } = typ else {
             panic!("not a callable type: {}", name);
+        };
+
+        self.name_ctx.entry_scope();
+        let mut param_vec = vec![];
+
+        for (
+            idx,
+            crate::ast::NameTypeBind {
+                with_at,
+                var_name,
+                typ: _,
+            },
+        ) in func.param_list.iter().enumerate()
+        {
+            let tp = &parameters[idx];
+            let tp = self.ty_ctx.get_idx_by_type(tp);
+
+            param_vec.push(TypedBind {
+                with_at: *with_at,
+                var_name: var_name.clone(),
+                typ: tp,
+            });
+
+            self.name_ctx
+                .insert_symbol(var_name.to_string(), tp)
+                .and_then(|_| -> Option<()> { panic!("parameter redefined") });
         }
+
+        let body = self.check_type_of_bracket_body(&func.body);
+        let ret_type = self.ty_ctx.get_idx_by_type(ret_type);
+        if !self.ty_ctx.is_compatible(body.typ, ret_type) {
+            panic!("return type inconsistent: {}", func.name);
+        }
+
+        self.name_ctx.exit_scope();
+
+        self.module.push(TypedFuncDef {
+            name: func.name.to_string(),
+            ret_type,
+            body: Box::new(body),
+            params: param_vec,
+        });
     }
 
     fn create_library_function_signature(&mut self) {

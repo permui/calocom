@@ -2,24 +2,27 @@ use super::ref_path::ReferencePath;
 use super::sym::SymbolTable;
 use std::{borrow::Borrow, cell::RefCell, collections::HashMap, rc::Rc};
 
-pub type SymTable<K, T> = Vec<HashMap<K, T>>;
+type SymTable<K, T> = Vec<HashMap<K, T>>;
 
 // map name into context
-#[derive(Debug, Default)]
-pub struct NameContext {
+#[derive(Debug, Clone, Default)]
+pub struct NameContext<T> {
     pub import_env: HashMap<String, Vec<String>>,
-    pub fully_qualified_name_env: HashMap<Vec<String>, usize>,
-    pub env: SymTable<String, usize>,
-    pub ctor_env: Option<Rc<RefCell<HashMap<String, usize>>>>, // share with type context
+    pub fully_qualified_name_env: HashMap<Vec<String>, T>,
+    pub env: SymTable<String, T>,
+    pub ctor_env: Option<Rc<RefCell<HashMap<String, T>>>>, // share with type context
 }
 
-impl NameContext {
-    pub fn find_ctor(&self, key: &str) -> Option<usize> {
+impl<T> NameContext<T>
+where
+    T: Clone,
+{
+    pub fn find_ctor(&self, key: &str) -> Option<T> {
         let rc = self.ctor_env.as_ref().unwrap();
-        rc.take().borrow().get(key).copied()
+        rc.take().borrow().get(key).cloned()
     }
 
-    pub fn find_symbol(&self, key: &[String]) -> Option<usize> {
+    pub fn find_symbol(&self, key: &[String]) -> Option<T> {
         if key.is_empty() {
             panic!("empty symbol name")
         }
@@ -38,7 +41,7 @@ impl NameContext {
                     .take()
                     .borrow()
                     .get(key[0].as_str())
-                    .copied()
+                    .cloned()
             };
         } else if let Some(path) = self.import_env.get(key.root()) {
             let fully_qualified_name = key.suffix().unwrap().with_prefix(path);
@@ -53,16 +56,12 @@ impl NameContext {
     }
 
     #[must_use = "check if symbol exists"]
-    pub fn insert_symbol(&mut self, key: String, value: usize) -> Option<usize> {
+    pub fn insert_symbol(&mut self, key: String, value: T) -> Option<T> {
         self.env.insert_symbol(key, value)
     }
 
     #[must_use = "check if symbol exists"]
-    pub fn insert_fully_qualified_symbol(
-        &mut self,
-        key: Vec<String>,
-        value: usize,
-    ) -> Option<usize> {
+    pub fn insert_fully_qualified_symbol(&mut self, key: Vec<String>, value: T) -> Option<T> {
         self.fully_qualified_name_env.insert(key, value)
     }
 
