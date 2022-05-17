@@ -62,7 +62,7 @@ satisfy_or: (r: OrRequire, alr: StrList) -> bool {
     match r {
         OrNil => false,
         OrCon(al, tail) => {
-            if satisfy_and(l, alr) { true } else { satisfy_or(tail, alr) }
+            if satisfy_and(al, alr) { true } else { satisfy_or(tail, alr) }
         }
     }
 }
