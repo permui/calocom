@@ -40,107 +40,107 @@ to_score: (s: str) -> f64 {
     }
 }
 
-element: (s: str, alr: StrList) -> bool {
-    match alr {
-        StrNil => false,
-        StrCon(h, tail) => {
-            if s == h { true } else { element(s, tail) }
-        }
-    }
-}
+// element: (s: str, alr: StrList) -> bool {
+//     match alr {
+//         StrNil => false,
+//         StrCon(h, tail) => {
+//             if s == h { true } else { element(s, tail) }
+//         }
+//     }
+// }
 
-satisfy_and: (l: StrList, alr: StrList) -> bool {
-    match l {
-        StrNil => true,
-        StrCon(s, tail) => {
-            if element(s, alr) { satisfy_and(tail, alr) } else { false }
-        }
-    }
-}
+// satisfy_and: (l: StrList, alr: StrList) -> bool {
+//     match l {
+//         StrNil => true,
+//         StrCon(s, tail) => {
+//             if element(s, alr) { satisfy_and(tail, alr) } else { false }
+//         }
+//     }
+// }
 
-satisfy_or: (r: OrRequire, alr: StrList) -> bool {
-    match r {
-        OrNil => false,
-        OrCon(al, tail) => {
-            if satisfy_and(l, alr) { true } else { satisfy_or(tail, alr) }
-        }
-    }
-}
+// satisfy_or: (r: OrRequire, alr: StrList) -> bool {
+//     match r {
+//         OrNil => false,
+//         OrCon(al, tail) => {
+//             if satisfy_and(l, alr) { true } else { satisfy_or(tail, alr) }
+//         }
+//     }
+// }
 
-satisfy: (r: OrRequire, alr: StrList) -> bool {
-    match r {
-        OrNil => true,
-        _ => satisfy_or(r, alr)
-    }
-}
+// satisfy: (r: OrRequire, alr: StrList) -> bool {
+//     match r {
+//         OrNil => true,
+//         _ => satisfy_or(r, alr)
+//     }
+// }
 
-recommend: (l: ReqList, alr: StrList) -> () {
-    match l {
-        ReqNil => (),
-        ReqCon((name, req), tail) => {
-            if satisfy(req, alr) {
-                io.print<str>("  ");
-                io.println<str>(name);
-            };
-            recommend(tail, alr);
-        }
-    }
-}
+// recommend: (l: ReqList, alr: StrList) -> () {
+//     match l {
+//         ReqNil => (),
+//         ReqCon((name, req), tail) => {
+//             if satisfy(req, alr) {
+//                 io.print<str>("  ");
+//                 io.println<str>(name);
+//             };
+//             recommend(tail, alr);
+//         }
+//     }
+// }
 
-main: () -> () {
-    let gpa : f64 = 0;
-    let att_sum : f64 = 0;
-    let acq_sum : f64 = 0;
-    let rem_sum : f64 = 0;
-    let alr : StrList = StrNil;
-    let c : ReqList = ReqNil;
+// main: () -> () {
+//     let gpa : f64 = 0;
+//     let att_sum : f64 = 0;
+//     let acq_sum : f64 = 0;
+//     let rem_sum : f64 = 0;
+//     let alr : StrList = StrNil;
+//     let c : ReqList = ReqNil;
 
-    while true {
-        // readline returns an `str`
-        let line : str = io.readline(); 
+//     while true {
+//         // readline returns an `str`
+//         let line : str = io.readline(); 
 
-        if line == "" { break; };
+//         if line == "" { break; };
 
-        let a : [str] = string.split(line, "|");
-        let name : str = a[0];
-        let credit : f64 = to_credit(a[1]);
-        let req : OrRequire = to_require(a[2]);
-        let score : f64 = to_score(a[3]);
+//         let a : [str] = string.split(line, "|");
+//         let name : str = a[0];
+//         let credit : f64 = to_credit(a[1]);
+//         let req : OrRequire = to_require(a[2]);
+//         let score : f64 = to_score(a[3]);
 
-        if score >= 0 { gpa = gpa + score * credit; };
-        if score >= 0 { att_sum = att_sum + credit; };
-        if score >  0 { acq_sum = acq_sum + credit; };
-        if score <= 0 { rem_sum = rem_sum + credit; };
+//         if score >= 0 { gpa = gpa + score * credit; };
+//         if score >= 0 { att_sum = att_sum + credit; };
+//         if score >  0 { acq_sum = acq_sum + credit; };
+//         if score <= 0 { rem_sum = rem_sum + credit; };
 
-        if score >  0 { alr = StrCon(name, alr); };
-        if score <= 0 { c = ReqCon((name, req), c); };
-    };
+//         if score >  0 { alr = StrCon(name, alr); };
+//         if score <= 0 { c = ReqCon((name, req), c); };
+//     };
 
-    if att_sum > 0 { gpa = gpa / att_sum; } else { gpa = 0; };
+//     if att_sum > 0 { gpa = gpa / att_sum; } else { gpa = 0; };
 
-    io.print<str>("GPA: ");
-    io.print_float(gpa, 1);
-    io.print_newline();
+//     io.print<str>("GPA: ");
+//     io.print_float(gpa, 1);
+//     io.print_newline();
     
-    io.print<str>("Hours Attempted: ");
-    io.print_float(att_sum, 0);
-    io.print_newline();
+//     io.print<str>("Hours Attempted: ");
+//     io.print_float(att_sum, 0);
+//     io.print_newline();
 
-    io.print<str>("Hours Completed: ");
-    io.print_float(acq_sum, 0);
-    io.print_newline();
+//     io.print<str>("Hours Completed: ");
+//     io.print_float(acq_sum, 0);
+//     io.print_newline();
 
-    io.print<str>("Credits Remaining: ");
-    io.print_float(rem_sum, 0);
-    io.print_newline();
+//     io.print<str>("Credits Remaining: ");
+//     io.print_float(rem_sum, 0);
+//     io.print_newline();
 
-    io.print_newline();
-    io.println("Possible Courses to Take Next");
-    if rem_sum == 0 {
-        io.println("  None - Congratulations!");
-        return;
-    };
+//     io.print_newline();
+//     io.println("Possible Courses to Take Next");
+//     if rem_sum == 0 {
+//         io.println("  None - Congratulations!");
+//         return;
+//     };
     
-    c = rev_reqlist(c);
-    recommend(c, alr);
-}
+//     c = rev_reqlist(c);
+//     recommend(c, alr);
+// }
