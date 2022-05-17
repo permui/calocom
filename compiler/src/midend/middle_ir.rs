@@ -9,7 +9,7 @@ use super::type_context::*;
 use super::typed_ast::*;
 use super::unique_name::*;
 
-pub type SymTable<T> = Vec<HashMap<String, T>>;
+type SymTable<T> = Vec<HashMap<String, T>>;
 type RefPath = TypedASTRefPath;
 
 #[derive(Debug, Default, Clone)]

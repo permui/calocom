@@ -40,7 +40,7 @@ pub use export_frontend::*;
 #[cfg(feature = "backend")]
 pub use export_backend::*;
 
-pub mod sym;
+mod common;
 
 use clap::{ArgEnum, Parser};
 use owo_colors::OwoColorize;

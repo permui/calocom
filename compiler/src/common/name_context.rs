@@ -1,5 +1,5 @@
 use super::ref_path::ReferencePath;
-use crate::sym::SymbolTable;
+use super::sym::SymbolTable;
 use std::{borrow::Borrow, cell::RefCell, collections::HashMap, rc::Rc};
 
 pub type SymTable<K, T> = Vec<HashMap<K, T>>;

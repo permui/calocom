@@ -1,5 +1,3 @@
-use super::{ref_path::ReferencePath, type_context::*};
-
 /*
 Name Mangling Rules
 
@@ -34,6 +32,11 @@ context ::= '$'     // Current context
 polymorphic-function-name ::= '_CALOCOM_PF' context name function-signature
 specialized-function-name ::= '_CALOCOM_F'  context name generic-function-signature specialization
 */
+
+use crate::common::{
+    ref_path::ReferencePath,
+    type_context::{Type, TypeContext, Primitive},
+};
 
 pub trait Mangling {
     fn get_mangled_specialization(&self, list: &[Type]) -> String;

@@ -1,6 +1,7 @@
 use std::{panic, rc::Rc, vec};
 
-use super::{name_context::NameContext, type_context::*};
+use crate::common::{name_context::NameContext, type_context::{TypeContext, Type, Primitive, CallKind}};
+
 #[derive(Debug)]
 pub struct TypedFuncDef {
     pub name: String,
@@ -404,7 +405,6 @@ impl TypedAST {
                     }
 
                     if kind == CallKind::ClosureValue {
-                        
                         TypedExpr {
                             expr: Box::new(ExprEnum::ClosureCall {
                                 expr: TypedExpr { typ, expr },
@@ -759,10 +759,7 @@ impl TypedAST {
         };
 
         TypedExpr {
-            expr: Box::new(ExprEnum::UnaryOp {
-                expr,
-                op: *op,
-            }),
+            expr: Box::new(ExprEnum::UnaryOp { expr, op: *op }),
             typ: ret_typ,
         }
     }
@@ -1071,18 +1068,22 @@ impl TypedAST {
         let unit = self.ty_ctx.singleton_type(Primitive::Unit).1;
         let object = self.ty_ctx.singleton_type(Primitive::Object).1;
 
-        self.name_ctx.insert_fully_qualified_symbol(
-            ["std", "io", "print"].map(|s| s.to_string()).to_vec(),
-            self.ty_ctx
-                .callable_type(CallKind::Function, unit.clone(), [object.clone()].to_vec())
-                .0,
-        ).and_then(|_| -> Option<()> { unreachable!( )});
-        self.name_ctx.insert_fully_qualified_symbol(
-            ["std", "io", "println"].map(|s| s.to_string()).to_vec(),
-            self.ty_ctx
-                .callable_type(CallKind::Function, unit, [object].to_vec())
-                .0,
-        ).and_then(|_| -> Option<()> { unreachable!( )});
+        self.name_ctx
+            .insert_fully_qualified_symbol(
+                ["std", "io", "print"].map(|s| s.to_string()).to_vec(),
+                self.ty_ctx
+                    .callable_type(CallKind::Function, unit.clone(), [object.clone()].to_vec())
+                    .0,
+            )
+            .and_then(|_| -> Option<()> { unreachable!() });
+        self.name_ctx
+            .insert_fully_qualified_symbol(
+                ["std", "io", "println"].map(|s| s.to_string()).to_vec(),
+                self.ty_ctx
+                    .callable_type(CallKind::Function, unit, [object].to_vec())
+                    .0,
+            )
+            .and_then(|_| -> Option<()> { unreachable!() });
     }
 
     pub fn create_from_ast(module: &crate::ast::Module) -> Self {
