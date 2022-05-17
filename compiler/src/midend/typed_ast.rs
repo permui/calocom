@@ -1,14 +1,17 @@
 use std::{panic, rc::Rc, vec};
 
-use crate::common::{
-    name_context::NameContext,
-    type_context::{CallKind, Primitive, Type, TypeContext},
+use crate::{
+    ast::CallExpr,
+    common::{
+        name_context::NameContext,
+        type_context::{CallKind, Primitive, Type, TypeContext, TypeRef},
+    },
 };
 
 #[derive(Debug)]
 pub struct TypedFuncDef {
     pub name: String,
-    pub ret_type: usize,
+    pub ret_type: TypeRef,
     pub params: Vec<TypedBind>,
     pub body: Box<TypedBracketBody>,
 }
@@ -17,20 +20,20 @@ pub struct TypedFuncDef {
 pub struct TypedBind {
     pub with_at: bool,
     pub var_name: String,
-    pub typ: usize,
+    pub typ: TypeRef,
 }
 
 #[derive(Debug)]
 pub struct TypedBracketBody {
     pub stmts: Vec<TypedASTStmt>,
     pub ret_expr: Option<TypedExpr>,
-    pub typ: usize,
+    pub typ: TypeRef,
 }
 
 #[derive(Debug)]
 pub struct TypedLetStmt {
     pub var_name: String,
-    pub var_typ: usize,
+    pub var_typ: TypeRef,
     pub expr: TypedExpr,
 }
 
@@ -69,14 +72,14 @@ pub enum TypedASTStmt {
 #[derive(Debug)]
 pub struct TypedExpr {
     pub expr: Box<ExprEnum>,
-    pub typ: usize,
+    pub typ: TypeRef,
 }
 
 #[derive(Debug)]
 pub enum ExprEnum {
     Closure {
         param_list: Vec<TypedBind>,
-        ret_type: usize,
+        ret_type: TypeRef,
         body: TypedExpr,
     },
     Match {
@@ -144,7 +147,7 @@ pub enum TypedASTComplexPattern {
 #[derive(Debug)]
 pub enum TypedArgument {
     Expr(TypedExpr),
-    AtVar(String, usize),
+    AtVar(String, TypeRef),
 }
 
 pub type TypedASTBinOp = crate::ast::BinOp;
@@ -160,7 +163,7 @@ pub struct TypedASTConstructorVar {
 
 #[derive(Debug, Default)]
 pub struct TypedAST {
-    pub name_ctx: NameContext<usize>,
+    pub name_ctx: NameContext<TypeRef>,
     pub ty_ctx: TypeContext,
     pub module: Vec<TypedFuncDef>,
 }
@@ -183,10 +186,9 @@ impl From<&crate::ast::ComplexPattern> for TypedASTComplexPattern {
 }
 
 impl TypedAST {
-    fn resolve_type_with_at(&mut self, ast_type: &crate::ast::Type) -> (usize, Type) {
-        let (idx, _typ) = self.resolve_type(None, ast_type, false);
-
-        self.ty_ctx.reference_type(idx)
+    fn resolve_type_with_at(&mut self, ast_type: &crate::ast::Type) -> TypeRef {
+        let type_ref = self.resolve_type(None, ast_type, false);
+        self.ty_ctx.reference_type(type_ref)
     }
 
     fn resolve_type(
@@ -194,18 +196,18 @@ impl TypedAST {
         name: Option<&str>,
         ast_type: &crate::ast::Type,
         allow_opaque: bool,
-    ) -> (usize, Type) {
+    ) -> TypeRef {
         match ast_type {
             crate::ast::Type::Arrow(_, _) => unimplemented!(),
             crate::ast::Type::Array(ty) => {
-                let (_, elem_ty) = self.resolve_type(None, ty, allow_opaque);
+                let elem_ty = self.resolve_type(None, ty, allow_opaque);
                 self.ty_ctx.array_type(elem_ty)
             }
             crate::ast::Type::Tuple(tuple) => {
                 let mut fields = vec![];
                 for ty in tuple {
-                    let (_, field) = self.resolve_type(None, ty, allow_opaque);
-                    fields.push(field);
+                    let field_ty = self.resolve_type(None, ty, allow_opaque);
+                    fields.push(field_ty);
                 }
 
                 self.ty_ctx.tuple_type(fields)
@@ -218,9 +220,9 @@ impl TypedAST {
                     let tys = inner
                         .iter()
                         .map(|ty| {
-                            let (idx, ty) = self.resolve_type(None, ty, allow_opaque);
-                            if self.ty_ctx.is_enum_type(idx) {
-                                self.ty_ctx.opaque_type(idx).1
+                            let ty = self.resolve_type(None, ty, allow_opaque);
+                            if self.ty_ctx.is_enum_type(ty) {
+                                self.ty_ctx.opaque_type(ty)
                             } else {
                                 ty
                             }
@@ -236,10 +238,9 @@ impl TypedAST {
             }
 
             crate::ast::Type::Unit => self.ty_ctx.singleton_type(Primitive::Unit),
-
             crate::ast::Type::Named(s) => {
-                if let Some(handle) = self.ty_ctx.get_type_by_name(s) {
-                    handle
+                if let Some(type_ref) = self.ty_ctx.get_type_ref_by_name(s) {
+                    type_ref
                 } else if allow_opaque {
                     self.ty_ctx.opaque_name_type(s)
                 } else {
@@ -251,8 +252,8 @@ impl TypedAST {
 
     fn resolve_all_type(&mut self, module: &crate::ast::Module) {
         for crate::ast::DataDef { name, con_list } in &module.data_defs {
-            let (idx, _typ) = self.resolve_type(Some(name), con_list, true);
-            self.ty_ctx.associate_name_and_idx(name, idx)
+            let type_ref = self.resolve_type(Some(name), con_list, true);
+            self.ty_ctx.associate_name_and_ref(name, type_ref)
         }
     }
 
@@ -295,23 +296,21 @@ impl TypedAST {
             expr,
         } = stmt;
 
-        let (t, _) = self.resolve_type(None, typ, false);
-
+        let type_ref = self.resolve_type(None, typ, false);
         let typed_expr = self.check_type_of_expr(expr);
-
-        if !self.ty_ctx.is_compatible(t, typed_expr.typ) {
+        if !self.ty_ctx.is_compatible(type_ref, typed_expr.typ) {
             panic!("initializer of variable {} has incorrect type", var_name);
         }
 
         if var_name != "_" {
             self.name_ctx
-                .insert_symbol(var_name.clone(), t)
-                .unwrap_or(0);
+                .insert_symbol(var_name.clone(), type_ref)
+                .and_then(|_| -> Option<()> { panic!("duplicate definition {}", var_name) });
         }
 
         TypedLetStmt {
             var_name: var_name.to_string(),
-            var_typ: t,
+            var_typ: type_ref,
             expr: typed_expr,
         }
     }
@@ -342,7 +341,7 @@ impl TypedAST {
             ret_type,
             parameters,
             kind,
-        } = self.ty_ctx.get_type_by_idx(typ) else {
+        } = self.ty_ctx.get_type_by_ref(typ) else {
             unreachable!()
         };
 
@@ -359,12 +358,9 @@ impl TypedAST {
             );
         }
 
-        let ret_type = self.ty_ctx.get_idx_by_type(&*ret_type);
-
         match kind {
             CallKind::Constructor => {
-                for (idx, (typ, typed_arg)) in parameters.iter().zip(args.iter()).enumerate() {
-                    let typ = self.ty_ctx.get_idx_by_type(typ);
+                for (idx, (&typ, typed_arg)) in parameters.iter().zip(args.iter()).enumerate() {
                     match typed_arg {
                         TypedArgument::Expr(e) => {
                             if !self.ty_ctx.is_compatible(typ, e.typ) {
@@ -393,8 +389,7 @@ impl TypedAST {
                 }
             }
             CallKind::Function | CallKind::ClosureValue => {
-                for (idx, (typ, typed_arg)) in parameters.iter().zip(args.iter()).enumerate() {
-                    let typ = self.ty_ctx.get_idx_by_type(typ);
+                for (idx, (&typ, typed_arg)) in parameters.iter().zip(args.iter()).enumerate() {
                     match typed_arg {
                         TypedArgument::Expr(e) => {
                             if !self.ty_ctx.is_compatible(typ, e.typ) {
@@ -467,24 +462,24 @@ impl TypedAST {
 
     fn insert_pattern_symbol_binding(
         &mut self,
-        matched_type: usize,
+        matched_type: TypeRef,
         pattern: &TypedASTComplexPattern,
     ) {
         use TypedASTComplexPattern::*;
         match pattern {
             Ctor { name, inner } => {
-                let Some(typ) = self.name_ctx.find_ctor(name) else { unreachable!()};
-                if !self.ty_ctx.is_compatible(typ, matched_type) {
-                    panic!("invalid constructor for match arm: constructor belongs to another type")
-                }
-                let ctor_type = self.ty_ctx.get_type_by_idx(typ);
+                let Some(typ) = self.name_ctx.find_ctor(name) else { unreachable!("{}", name)};
+                let ctor_type = self.ty_ctx.get_type_by_ref(typ);
                 let Type::Callable {
                     kind,
-                    ret_type: _,
+                    ret_type,
                     parameters,
                 } = ctor_type else {
                     panic!("constructor type is not callable")
                 };
+                if !self.ty_ctx.is_compatible(ret_type, matched_type) {
+                    panic!("invalid constructor for match arm: constructor belongs to another type")
+                }
                 assert_eq!(kind, CallKind::Constructor);
                 if parameters.len() != inner.len() {
                     panic!(
@@ -494,22 +489,20 @@ impl TypedAST {
                     );
                 }
 
-                for (param, pattern) in parameters.iter().zip(inner.iter()) {
-                    let typ = self.ty_ctx.get_idx_by_type(param);
-                    self.insert_pattern_symbol_binding(typ, pattern);
+                for (&param, pattern) in parameters.iter().zip(inner.iter()) {
+                    self.insert_pattern_symbol_binding(param, pattern);
                 }
             }
             Tuple { fields: vec } => {
-                let tuple_type = self.ty_ctx.get_type_by_idx(matched_type);
+                let tuple_type = self.ty_ctx.get_type_by_ref(matched_type);
                 let Type::Tuple { fields } = tuple_type else {
                     panic!("invalid tuple pattern")
                 };
                 if fields.len() != vec.len() {
                     panic!("requires {} fields but got {}", fields.len(), vec.len());
                 }
-                for (field, pattern) in fields.iter().zip(vec.iter()) {
-                    let typ = self.ty_ctx.get_idx_by_type(field);
-                    self.insert_pattern_symbol_binding(typ, pattern);
+                for (&field, pattern) in fields.iter().zip(vec.iter()) {
+                    self.insert_pattern_symbol_binding(field, pattern);
                 }
             }
             Wildcard => {}
@@ -533,7 +526,7 @@ impl TypedAST {
         &mut self,
         pattern: &crate::ast::ComplexPattern,
         expr: &crate::ast::Expr,
-        matched_type: usize,
+        matched_type: TypeRef,
     ) -> (TypedASTComplexPattern, TypedExpr) {
         self.name_ctx.entry_scope();
 
@@ -587,8 +580,7 @@ impl TypedAST {
             Str(_) => self.ty_ctx.singleton_type(Primitive::Str),
             Bool(_) => self.ty_ctx.singleton_type(Primitive::Bool),
             Unit => self.ty_ctx.singleton_type(Primitive::Unit),
-        }
-        .0;
+        };
 
         TypedExpr {
             typ,
@@ -661,9 +653,8 @@ impl TypedAST {
             body,
         } = expr;
 
-        let (ret_type_idx, ret_type) = self.resolve_type(None, ret_type, false);
-
-        let params_type: (Vec<_>, Vec<_>) = param_list
+        let ret_type = self.resolve_type(None, ret_type, false);
+        let params_type: Vec<_> = param_list
             .iter()
             .map(
                 |crate::ast::NameTypeBind {
@@ -678,13 +669,11 @@ impl TypedAST {
                     }
                 },
             )
-            .collect::<Vec<(_, _)>>()
-            .into_iter()
-            .unzip();
+            .collect();
 
         let params_vec: Vec<TypedBind> = param_list
             .iter()
-            .zip(params_type.0.iter())
+            .zip(params_type.iter())
             .map(
                 |(
                     crate::ast::NameTypeBind {
@@ -701,12 +690,12 @@ impl TypedAST {
             )
             .collect();
 
-        let (fn_ty_idx, _) = self
+        let fn_ty = self
             .ty_ctx
-            .callable_type(CallKind::Function, ret_type, params_type.1);
+            .callable_type(CallKind::Function, ret_type, params_type.clone());
 
         self.name_ctx.entry_scope();
-        for (tp, var_name) in params_type.0.iter().zip(param_list.iter().map(
+        for (tp, var_name) in params_type.iter().zip(param_list.iter().map(
             |crate::ast::NameTypeBind {
                  with_at: _,
                  var_name,
@@ -719,7 +708,7 @@ impl TypedAST {
         }
 
         let body = self.check_type_of_expr(body);
-        if !self.ty_ctx.is_compatible(body.typ, ret_type_idx) {
+        if !self.ty_ctx.is_compatible(body.typ, ret_type) {
             panic!("return type inconsistent of lambda expression");
         }
 
@@ -728,10 +717,10 @@ impl TypedAST {
         TypedExpr {
             expr: Box::new(ExprEnum::Closure {
                 param_list: params_vec,
-                ret_type: ret_type_idx,
+                ret_type,
                 body,
             }),
-            typ: fn_ty_idx,
+            typ: fn_ty,
         }
     }
 
@@ -748,7 +737,7 @@ impl TypedAST {
         }
 
         let ret_typ = match op {
-            Not => Primitive::Bool.into(),
+            Not => self.ty_ctx.singleton_type(Primitive::Bool),
             Positive | Negative => expr.typ,
         };
 
@@ -767,9 +756,9 @@ impl TypedAST {
             panic!("invalid subscript operation on non-array type")
         }
 
-        let array_type = &self.ty_ctx.get_type_by_idx(arr.typ);
+        let array_type = &self.ty_ctx.get_type_by_ref(arr.typ);
         let elem_type = match array_type {
-            Type::Array(elem) => elem,
+            Type::Array(elem) => *elem,
             _ => panic!("not a array type"),
         };
 
@@ -779,7 +768,7 @@ impl TypedAST {
 
         TypedExpr {
             expr: Box::new(ExprEnum::Subscript { arr, index }),
-            typ: self.ty_ctx.get_idx_by_type(elem_type),
+            typ: elem_type,
         }
     }
 
@@ -788,17 +777,14 @@ impl TypedAST {
             .iter()
             .map(|expr| self.check_type_of_expr(expr))
             .collect();
-        let fields_type: Vec<_> = typed_expr
-            .iter()
-            .map(|expr| self.ty_ctx.get_type_by_idx(expr.typ))
-            .collect();
+        let fields_type: Vec<_> = typed_expr.iter().map(|expr| expr.typ).collect();
         let tuple_type = self.ty_ctx.tuple_type(fields_type);
 
         TypedExpr {
             expr: Box::new(ExprEnum::Tuple {
                 elements: typed_expr,
             }),
-            typ: tuple_type.0,
+            typ: tuple_type,
         }
     }
 
@@ -808,6 +794,25 @@ impl TypedAST {
             .name_ctx
             .find_symbol(items)
             .unwrap_or_else(|| panic!("unable to find symbol {}", items.join(".")));
+
+        // force non-parameter ctor from callable into its return type
+
+        if let Type::Callable {
+            kind: CallKind::Constructor,
+            ret_type,
+            parameters,
+        } = self.ty_ctx.get_type_by_ref(typ)
+        {
+            if parameters.is_empty() {
+                return TypedExpr {
+                    expr: Box::new(ExprEnum::Path {
+                        path: items.clone(),
+                    }),
+                    typ: ret_type,
+                };
+            }
+        }
+
         TypedExpr {
             expr: Box::new(ExprEnum::Path {
                 path: items.clone(),
@@ -816,15 +821,19 @@ impl TypedAST {
         }
     }
 
-    fn determine_promoted_type(&self, t1: usize, t2: usize) -> usize {
+    fn determine_promoted_type(&self, t1: TypeRef, t2: TypeRef) -> TypeRef {
         match (
-            self.ty_ctx.is_type_eq(t1, Primitive::Float64.into()),
-            self.ty_ctx.is_type_eq(t1, Primitive::Int32.into()),
-            self.ty_ctx.is_type_eq(t2, Primitive::Float64.into()),
-            self.ty_ctx.is_type_eq(t2, Primitive::Int32.into()),
+            self.ty_ctx
+                .is_type_eq(t1, self.ty_ctx.singleton_type(Primitive::Float64)),
+            self.ty_ctx
+                .is_type_eq(t1, self.ty_ctx.singleton_type(Primitive::Int32)),
+            self.ty_ctx
+                .is_type_eq(t2, self.ty_ctx.singleton_type(Primitive::Float64)),
+            self.ty_ctx
+                .is_type_eq(t2, self.ty_ctx.singleton_type(Primitive::Int32)),
         ) {
-            (true, _, _, _) | (_, _, true, _) => Primitive::Float64.into(),
-            (_, true, _, true) => Primitive::Int32.into(),
+            (true, _, _, _) | (_, _, true, _) => self.ty_ctx.singleton_type(Primitive::Float64),
+            (_, true, _, true) => self.ty_ctx.singleton_type(Primitive::Int32),
             _ => panic!("unable to determine promote type"),
         }
     }
@@ -861,9 +870,9 @@ impl TypedAST {
         }
 
         let ret_typ = match op {
-            Or | And => Primitive::Bool.into(),
-            Eq | Ne => Primitive::Bool.into(),
-            Le | Ge | Lt | Gt => Primitive::Bool.into(),
+            Or | And => self.ty_ctx.singleton_type(Primitive::Bool),
+            Eq | Ne => self.ty_ctx.singleton_type(Primitive::Bool),
+            Le | Ge | Lt | Gt => self.ty_ctx.singleton_type(Primitive::Bool),
             Plus | Sub | Mul | Div | Mod => self.determine_promoted_type(left.typ, right.typ),
         };
 
@@ -963,7 +972,7 @@ impl TypedAST {
             .as_ref()
             .map(|expr| self.check_type_of_expr(expr));
         let typ = typed_expr.as_ref().map_or_else(
-            || self.ty_ctx.singleton_type(Primitive::Unit).0,
+            || self.ty_ctx.singleton_type(Primitive::Unit),
             |expr| expr.typ,
         );
 
@@ -977,23 +986,31 @@ impl TypedAST {
     }
 
     fn check_type_of_function_signature(&mut self, func: &crate::ast::FuncDef) {
-        let (_, ret_type) = self.resolve_type(None, &func.ret_type, false);
+        let ret_type = self.resolve_type(None, &func.ret_type, false);
 
-        let params_type : Vec<_>= func.param_list.iter().map(| crate::ast::NameTypeBind {
-            with_at,
-            var_name: _,
-            typ, }
-        | if !*with_at {
-            self.resolve_type(None, typ, false)
-        } else {
-            self.resolve_type_with_at(typ)
-        }.1).collect();
+        let params_type: Vec<_> = func
+            .param_list
+            .iter()
+            .map(
+                |crate::ast::NameTypeBind {
+                     with_at,
+                     var_name: _,
+                     typ,
+                 }| {
+                    if !*with_at {
+                        self.resolve_type(None, typ, false)
+                    } else {
+                        self.resolve_type_with_at(typ)
+                    }
+                },
+            )
+            .collect();
 
-        let (fn_ty, _) = self
+        let fn_type = self
             .ty_ctx
             .callable_type(CallKind::Function, ret_type, params_type);
         self.name_ctx
-            .insert_symbol(func.name.clone(), fn_ty)
+            .insert_symbol(func.name.clone(), fn_type)
             .and_then(|_| -> Option<()> { panic!("function {} redefined", func.name) });
     }
 
@@ -1005,7 +1022,7 @@ impl TypedAST {
             .find_symbol(&[name.clone()])
             .unwrap_or_else(|| panic!("unable to find {}", name));
 
-        let typ = &self.ty_ctx.get_type_by_idx(typ);
+        let typ = &self.ty_ctx.get_type_by_ref(typ);
 
         let Type::Callable {
             kind: _,
@@ -1027,9 +1044,7 @@ impl TypedAST {
             },
         ) in func.param_list.iter().enumerate()
         {
-            let tp = &parameters[idx];
-            let tp = self.ty_ctx.get_idx_by_type(tp);
-
+            let tp = parameters[idx];
             param_vec.push(TypedBind {
                 with_at: *with_at,
                 var_name: var_name.clone(),
@@ -1042,8 +1057,7 @@ impl TypedAST {
         }
 
         let body = self.check_type_of_bracket_body(&func.body);
-        let ret_type = self.ty_ctx.get_idx_by_type(ret_type);
-        if !self.ty_ctx.is_compatible(body.typ, ret_type) {
+        if !self.ty_ctx.is_compatible(body.typ, *ret_type) {
             panic!("return type inconsistent: {}", func.name);
         }
 
@@ -1051,30 +1065,36 @@ impl TypedAST {
 
         self.module.push(TypedFuncDef {
             name: func.name.to_string(),
-            ret_type,
+            ret_type: *ret_type,
             body: Box::new(body),
             params: param_vec,
         });
     }
 
+    fn entry_scope(&mut self) {
+        self.name_ctx.entry_scope();
+    }
+
+    fn exit_scope(&mut self) {
+        self.name_ctx.exit_scope();
+    }
+
     fn create_library_function_signature(&mut self) {
-        let unit = self.ty_ctx.singleton_type(Primitive::Unit).1;
-        let object = self.ty_ctx.singleton_type(Primitive::Object).1;
+        let unit = self.ty_ctx.singleton_type(Primitive::Unit);
+        let object = self.ty_ctx.singleton_type(Primitive::Object);
 
         self.name_ctx
             .insert_fully_qualified_symbol(
                 ["std", "io", "print"].map(|s| s.to_string()).to_vec(),
                 self.ty_ctx
-                    .callable_type(CallKind::Function, unit.clone(), [object.clone()].to_vec())
-                    .0,
+                    .callable_type(CallKind::Function, unit, [object].to_vec()),
             )
             .and_then(|_| -> Option<()> { unreachable!() });
         self.name_ctx
             .insert_fully_qualified_symbol(
                 ["std", "io", "println"].map(|s| s.to_string()).to_vec(),
                 self.ty_ctx
-                    .callable_type(CallKind::Function, unit, [object].to_vec())
-                    .0,
+                    .callable_type(CallKind::Function, unit, [object].to_vec()),
             )
             .and_then(|_| -> Option<()> { unreachable!() });
     }
@@ -1082,8 +1102,9 @@ impl TypedAST {
     pub fn create_from_ast(module: &crate::ast::Module) -> Self {
         let mut typed_ast = TypedAST::default();
 
-        typed_ast.name_ctx.ctor_env = Some(Rc::clone(&typed_ast.ty_ctx.get_ctor_map()));
+        typed_ast.name_ctx.ctor_env = Some(typed_ast.ty_ctx.get_ctor_map());
 
+        typed_ast.entry_scope();
         typed_ast.create_library_function_signature();
         typed_ast.resolve_import(module);
 
@@ -1101,6 +1122,7 @@ impl TypedAST {
         // All opaque types cleared. No more opaque types allowed.
 
         typed_ast.check_type(module);
+        typed_ast.exit_scope();
 
         typed_ast
     }

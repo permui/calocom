@@ -1,11 +1,4 @@
-use std::{
-    cell::RefCell,
-    collections::{HashMap, HashSet},
-    fmt::Debug,
-    fmt::Display,
-    panic,
-    rc::Rc,
-};
+use std::{cell::RefCell, collections::HashMap, fmt::Debug, fmt::Display, panic, rc::Rc};
 
 use super::unique_name::UniqueName;
 use either::Either;
@@ -95,20 +88,20 @@ impl TypeContext {
         &self.types
     }
 
-    pub fn get_idx_by_type(&self, typ: &Type) -> TypeRef {
+    pub fn get_ref_by_type(&self, typ: &Type) -> TypeRef {
         *self.type_ref_map.get(typ).unwrap()
     }
 
-    pub fn get_type_by_idx(&self, idx: TypeRef) -> Type {
-        self.types[idx].clone()
+    pub fn get_type_by_ref(&self, type_ref: TypeRef) -> Type {
+        self.types.get(type_ref).unwrap().clone()
     }
 
-    pub fn singleton_type_ref(&self, typ: Primitive) -> TypeRef {
+    pub fn singleton_type(&self, typ: Primitive) -> TypeRef {
         let index: usize = typ.into();
         self.prim_ref_map[index]
     }
 
-    fn associate_name_and_ref(&mut self, name: &str, idx: TypeRef) {
+    pub fn associate_name_and_ref(&mut self, name: &str, idx: TypeRef) {
         if self.name_ref_map.contains_key(name) {
             panic!("data type redefinition: {}", name);
         }
@@ -120,7 +113,7 @@ impl TypeContext {
     }
 
     pub fn get_ctor_map(&self) -> Rc<RefCell<HashMap<String, TypeRef>>> {
-        self.ctor_map.clone()
+        Rc::clone(&self.ctor_map)
     }
 
     pub fn get_ctor_index_and_field_type_ref_by_name(
@@ -135,7 +128,7 @@ impl TypeContext {
                     .position(|ctor| ctor.0 == name)
                     .unwrap_or_else(|| panic!("{} not found", name));
                 let ctor = &ctors[ctor_idx];
-                (ctor_idx, ctor.1.iter().copied().collect())
+                (ctor_idx, ctor.1.to_vec())
             }
             _ => panic!("can't get fields of non enum type"),
         }
@@ -249,7 +242,7 @@ impl TypeContext {
     }
 
     pub fn refine_all_type(&mut self) {
-        let refine_map: HashMap<TypeRef, TypeRef> = Default::default();
+        let mut refine_map: HashMap<TypeRef, TypeRef> = Default::default();
         for t in self.types.iter() {
             self.mark_to_be_refined_type(t.0, &mut refine_map);
         }
@@ -290,7 +283,7 @@ impl TypeContext {
             }
             Type::Enum { ctors, name: _ } => {
                 for ctor in ctors {
-                    for field in ctor.1 {
+                    for &field in ctor.1.iter() {
                         self.mark_to_be_refined_type(field, todo_map);
                     }
                 }
@@ -332,7 +325,7 @@ impl TypeContext {
         let mut typ = typ;
         loop {
             match self.types.get(typ).unwrap() {
-                Type::Opaque { alias } => typ = alias.left().unwrap(),
+                Type::Opaque { alias } => typ = *alias.as_ref().left().unwrap(),
                 _ => return typ,
             }
         }
@@ -340,7 +333,7 @@ impl TypeContext {
 
     pub fn get_reference_base_type(&self, typ: TypeRef) -> Option<TypeRef> {
         match self.types.get(typ).unwrap() {
-            Type::Reference { refer } => Some(refer.left().unwrap()),
+            Type::Reference { refer } => Some(*refer.as_ref().left().unwrap()),
             _ => None,
         }
     }
@@ -351,11 +344,11 @@ impl TypeContext {
     }
 
     pub fn is_enum_type(&self, t: TypeRef) -> bool {
-        matches!(self.get_type_by_idx(t), Type::Enum { ctors: _, name: _ })
+        matches!(self.get_type_by_ref(t), Type::Enum { ctors: _, name: _ })
     }
 
     pub fn is_tuple_type(&self, t: TypeRef) -> bool {
-        matches!(self.get_type_by_idx(t), Type::Tuple { fields: _ })
+        matches!(self.get_type_by_ref(t), Type::Tuple { fields: _ })
     }
 
     // if true, both types have the same type id
@@ -384,11 +377,16 @@ impl TypeContext {
             || self.is_type_reference_eq(t1, t2)
     }
 
+    pub fn is_arithmetic_compatible(&self, t1: TypeRef, t2: TypeRef) -> bool {
+        self.is_arithmetic_type(t1) && self.is_arithmetic_type(t2)
+    }
+
     // if true, both types are compatible when doing assignment
     pub fn is_compatible(&self, t1: TypeRef, t2: TypeRef) -> bool {
         self.is_type_eq(t1, t2) // the same nominal type
-            || self.is_type_eq(t1, self.singleton_type_ref(Primitive::Object)) // unsafe cast due to polymorphism
-            || self.is_type_eq(t2, self.singleton_type_ref(Primitive::Object)) // unsafe cast due to polymorphism
+            || self.is_arithmetic_compatible(t1, t2) // can be cast 
+            || self.is_type_eq(t1, self.singleton_type(Primitive::Object)) // unsafe cast due to polymorphism
+            || self.is_type_eq(t2, self.singleton_type(Primitive::Object)) // unsafe cast due to polymorphism
             || self.is_t1_reference_of_t2(t1, t2) // one is reference and the other is the referred type
             || self.is_t1_reference_of_t2(t2, t1)
     }
@@ -409,40 +407,39 @@ impl TypeContext {
     }
 
     pub fn is_index_type(&self, t: TypeRef) -> bool {
-        self.is_type_eq(t, self.singleton_type_ref(Primitive::Int32))
+        self.is_type_eq(t, self.singleton_type(Primitive::Int32))
     }
 
     pub fn is_arithmetic_type(&self, t: TypeRef) -> bool {
-        self.is_type_eq(t, self.singleton_type_ref(Primitive::Int32))
-            || self.is_type_eq(t, self.singleton_type_ref(Primitive::Float64))
+        self.is_type_eq(t, self.singleton_type(Primitive::Int32))
+            || self.is_type_eq(t, self.singleton_type(Primitive::Float64))
     }
 
     pub fn is_boolean_testable_type(&self, t: TypeRef) -> bool {
-        self.is_type_eq(t, self.singleton_type_ref(Primitive::Bool))
+        self.is_type_eq(t, self.singleton_type(Primitive::Bool))
     }
 
     pub fn is_partially_ordered_type(&self, t: TypeRef) -> bool {
         self.is_totally_ordered_type(t)
-            || self.is_type_eq(t, self.singleton_type_ref(Primitive::Float64))
+            || self.is_type_eq(t, self.singleton_type(Primitive::Float64))
     }
 
     pub fn is_partially_equal_type(&self, t: TypeRef) -> bool {
-        self.is_totally_equal_type(t)
-            || self.is_type_eq(t, self.singleton_type_ref(Primitive::Float64))
+        self.is_totally_equal_type(t) || self.is_type_eq(t, self.singleton_type(Primitive::Float64))
     }
 
     pub fn is_totally_ordered_type(&self, t: TypeRef) -> bool {
-        self.is_type_eq(t, self.singleton_type_ref(Primitive::Int32))
+        self.is_type_eq(t, self.singleton_type(Primitive::Int32))
     }
 
     pub fn is_totally_equal_type(&self, t: TypeRef) -> bool {
-        self.is_type_eq(t, self.singleton_type_ref(Primitive::Int32))
-            || self.is_type_eq(t, self.singleton_type_ref(Primitive::Bool))
-            || self.is_type_eq(t, self.singleton_type_ref(Primitive::Str))
+        self.is_type_eq(t, self.singleton_type(Primitive::Int32))
+            || self.is_type_eq(t, self.singleton_type(Primitive::Bool))
+            || self.is_type_eq(t, self.singleton_type(Primitive::Str))
     }
 
     pub fn mark_to_be_recovered_type(
-        &mut self,
+        &self,
         t: TypeRef,
         display_name: &HashMap<TypeRef, String>,
         todo_map: &mut HashMap<TypeRef, String>,
@@ -456,7 +453,7 @@ impl TypeContext {
             }
             Type::Enum { ctors, name: _ } => {
                 for ctor in ctors {
-                    for field in ctor.1 {
+                    for &field in ctor.1.iter() {
                         self.mark_to_be_recovered_type(field, display_name, todo_map);
                     }
                 }
@@ -467,13 +464,13 @@ impl TypeContext {
             Type::Primitive(_) => {}
             Type::Opaque { alias } => {
                 if let Left(t) = alias {
-                    let name = display_name.get(&t).unwrap();
+                    let name = display_name.get(t).unwrap();
                     todo_map.insert(*t, name.clone());
                 }
             }
             Type::Reference { refer } => {
                 if let Left(t) = refer {
-                    let name = display_name.get(&t).unwrap();
+                    let name = display_name.get(t).unwrap();
                     todo_map.insert(*t, name.clone());
                 }
             }
@@ -531,21 +528,18 @@ impl TypeContext {
             }
             Type::Enum { ctors, name: _ } => {
                 write!(f, "{{")?;
-                let write_item = |item: &(String, Vec<TypeRef>)| {
-                    write!(f, "<{} ", item.0)?;
-                    self.display_type(
-                        &Type::Tuple {
-                            fields: item.1.clone(),
-                        },
-                        f,
-                    )?;
-                    write!(f, ">")
-                };
-                for (idx, field) in ctors.iter().enumerate() {
+                for (idx, ctor) in ctors.iter().enumerate() {
                     if idx != 0 {
                         write!(f, " | ")?;
                     }
-                    write_item(field)?;
+                    write!(f, "<{} ", ctor.0)?;
+                    self.display_type(
+                        &Type::Tuple {
+                            fields: ctor.1.clone(),
+                        },
+                        f,
+                    )?;
+                    write!(f, ">")?;
                 }
                 write!(f, "}}")
             }
@@ -599,7 +593,6 @@ impl Display for Primitive {
     }
 }
 
-
 impl Display for TypeContext {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let (context, map) = self.get_display_name_map();
@@ -607,7 +600,7 @@ impl Display for TypeContext {
         writeln!(f, "TypeContext {{")?;
         for (key, typ) in context.types.iter() {
             write!(f, "    {}: ", map.get(&key).unwrap())?;
-            self.display_type_ref(typ, f)?;
+            self.display_type(typ, f)?;
             writeln!(f)?;
         }
         write!(f, "}}")

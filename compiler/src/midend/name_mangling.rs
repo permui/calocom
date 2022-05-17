@@ -35,28 +35,28 @@ specialized-function-name ::= '_CALOCOM_F'  context name generic-function-signat
 
 use crate::common::{
     ref_path::ReferencePath,
-    type_context::{Type, TypeContext, Primitive},
+    type_context::{Primitive, Type, TypeContext, TypeRef},
 };
 
 pub trait Mangling {
-    fn get_mangled_specialization(&self, list: &[Type]) -> String;
-    fn get_mangled_function_signature(&self, ret_type: &Type, params: &[Type]) -> String;
+    fn get_mangled_specialization(&self, list: &[TypeRef]) -> String;
+    fn get_mangled_function_signature(&self, ret_type: TypeRef, params: &[TypeRef]) -> String;
     fn get_mangled_generic_function_signature(
         &self,
-        ret_type: &Type,
-        params: &[Type],
+        ret_type: TypeRef,
+        params: &[TypeRef],
         generic_params: usize,
     ) -> String;
     fn get_mangled_identifier<T: AsRef<str>>(ident: T) -> String {
         format!("{}{}", ident.as_ref().len(), ident.as_ref())
     }
-    fn get_mangled_type_list(&self, list: &[Type]) -> String;
-    fn get_mangled_type_name(&self, typ: &Type) -> String;
+    fn get_mangled_type_list(&self, list: &[TypeRef]) -> String;
+    fn get_mangled_type_name(&self, typ: TypeRef) -> String;
     fn get_mangled_context_name<T: AsRef<str>>(path: Option<&dyn ReferencePath<T>>) -> String;
 }
 
 impl Mangling for TypeContext {
-    fn get_mangled_function_signature(&self, ret_type: &Type, params: &[Type]) -> String {
+    fn get_mangled_function_signature(&self, ret_type: TypeRef, params: &[TypeRef]) -> String {
         format!(
             "f{}{}",
             self.get_mangled_type_name(ret_type),
@@ -66,8 +66,8 @@ impl Mangling for TypeContext {
 
     fn get_mangled_generic_function_signature(
         &self,
-        ret_type: &Type,
-        params: &[Type],
+        ret_type: TypeRef,
+        params: &[TypeRef],
         generic_params: usize,
     ) -> String {
         format!(
@@ -81,13 +81,14 @@ impl Mangling for TypeContext {
         format!("{}{}", ident.as_ref().len(), ident.as_ref())
     }
 
-    fn get_mangled_type_list(&self, list: &[Type]) -> String {
+    fn get_mangled_type_list(&self, list: &[TypeRef]) -> String {
         list.iter()
-            .map(|field| self.get_mangled_type_name(field))
+            .map(|field| self.get_mangled_type_name(*field))
             .fold(String::new(), |a, b| a + b.as_str())
     }
 
-    fn get_mangled_type_name(&self, typ: &Type) -> String {
+    fn get_mangled_type_name(&self, typ: TypeRef) -> String {
+        let typ = self.types().get(typ).unwrap();
         match typ {
             Type::Tuple { fields } => {
                 format!("Ctl_{}_l", self.get_mangled_type_list(fields))
@@ -109,23 +110,21 @@ impl Mangling for TypeContext {
                 Primitive::CInt32 => "Cci4",
             }
             .to_string(),
-            Type::Opaque { alias } => self.get_mangled_type_name(
-                &self.get_type_by_idx(*alias.as_ref().left().expect("expect type index here")),
-            ),
+            Type::Opaque { alias } => {
+                self.get_mangled_type_name(*alias.as_ref().left().expect("expect type index here"))
+            }
             Type::Reference { refer } => format!(
                 "Cr{}",
-                self.get_mangled_type_name(
-                    &self.get_type_by_idx(*refer.as_ref().left().expect("expect type index here")),
-                )
+                self.get_mangled_type_name(*refer.as_ref().left().expect("expect type index here"))
             ),
-            Type::Array(elem) => format!("Ca{}", self.get_mangled_type_name(elem)),
+            Type::Array(elem) => format!("Ca{}", self.get_mangled_type_name(*elem)),
             Type::Callable {
                 ret_type,
                 parameters,
                 kind: _,
             } => format!(
                 "Cl{}",
-                self.get_mangled_function_signature(ret_type, parameters)
+                self.get_mangled_function_signature(*ret_type, parameters)
             ),
         }
     }
@@ -142,7 +141,7 @@ impl Mangling for TypeContext {
         }
     }
 
-    fn get_mangled_specialization(&self, list: &[Type]) -> String {
+    fn get_mangled_specialization(&self, list: &[TypeRef]) -> String {
         format!("s{}", self.get_mangled_type_list(list))
     }
 }

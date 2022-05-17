@@ -1,15 +1,13 @@
 use std::cell::RefCell;
 use std::fmt::Display;
 use std::rc::Rc;
-use std::{collections::HashMap, panic, vec};
+use std::{panic, vec};
 
-use crate::sym::SymbolTable;
-
-use super::type_context::*;
 use super::typed_ast::*;
-use super::unique_name::*;
+use crate::common::name_context::NameContext;
+use crate::common::type_context::*;
+use crate::common::unique_name::*;
 
-type SymTable<T> = Vec<HashMap<String, T>>;
 type RefPath = TypedASTRefPath;
 
 #[derive(Debug, Default, Clone)]
@@ -91,25 +89,24 @@ pub type Literal = TypedASTLiteral;
 struct FunctionBuilder<'a> {
     pub position: Option<Rc<RefCell<Block>>>,
     pub namer: UniqueName,
-    pub table: SymTable<Rc<VarDef>>,
+    pub var_ctx: NameContext<Rc<VarDef>>,
     pub func: &'a mut FuncDef,
     pub panic_block: Rc<RefCell<Block>>,
 }
 
 #[derive(Debug, Default, Clone)]
 pub struct MiddleIR {
+    pub name_ctx: NameContext<usize>,
     pub ty_ctx: TypeContext,
     pub module: Vec<FuncDef>,
 }
 
 impl MiddleIR {
     fn convert_asgn(&mut self, name: &str, expr: &TypedExpr, builder: &mut FunctionBuilder) {
-        let var = Rc::clone(
-            builder
-                .table
-                .find_symbol(name)
-                .unwrap_or_else(|| panic!("variable {} not defined", name)),
-        );
+        let var = builder
+            .var_ctx
+            .find_symbol(&[name.to_string()])
+            .unwrap_or_else(|| panic!("variable {} not defined", name));
         self.convert_expr(expr, builder, Some(var), false);
     }
 
@@ -141,7 +138,9 @@ impl MiddleIR {
 
                     self.convert_expr(
                         &TypedExpr {
-                            expr: Box::new(ExprEnum::Path(name.clone())),
+                            expr: Box::new(ExprEnum::Path {
+                                path: [name.clone()].to_vec(),
+                            }),
                             typ: *typ,
                         },
                         builder,
@@ -158,27 +157,41 @@ impl MiddleIR {
         v
     }
 
-    fn convert_ctor_expr(
-        &mut self,
-        builder: &mut FunctionBuilder,
-        x: &TypedCtorExpr,
-    ) -> TypedValue {
-        let TypedCtorExpr { typ, name, args } = x;
-        let (ctor_idx, params_typ) = self
-            .ty_ctx
-            .get_ctor_index_and_field_type_by_name(*typ, name);
-        let mut args_value = self.convert_args(
-            builder,
-            args,
-            &params_typ.iter().map(|(ty, _)| *ty).collect::<Vec<usize>>(),
-        );
-        let mut v = vec![TypedValue {
-            typ: SingletonType::I32,
-            val: Value::Imm(Literal::Int(ctor_idx as i32)),
-        }];
-        v.append(&mut args_value);
-        let val = Value::Intrinsic("calocom.construct", v);
-        TypedValue { typ: *typ, val }
+    fn convert_ctor_expr(&mut self, builder: &mut FunctionBuilder, x: &TypedExpr) -> TypedValue {
+        let typ = x.typ;
+        let ret_type = match self.ty_ctx.get_type_by_ref(typ) {
+            Type::Callable {
+                kind: CallKind::Constructor,
+                ret_type: x,
+                parameters: _,
+            } => x,
+            _ => panic!("wrong type of constructor"),
+        };
+        let ret_type = self.ty_ctx.get_ref_by_type(&ret_type);
+        match &*x.expr {
+            ExprEnum::Ctor { name, args } => {
+                let (ctor_idx, params_typ) = self
+                    .ty_ctx
+                    .get_ctor_index_and_field_type_by_name(ret_type, name);
+
+                let mut args_value = self.convert_args(
+                    builder,
+                    args,
+                    &params_typ.iter().map(|(ty, _)| *ty).collect::<Vec<usize>>(),
+                );
+
+                let mut v = vec![TypedValue {
+                    typ: Primitive::Int32.into(),
+                    val: Value::Imm(Literal::Int(ctor_idx as i32)),
+                }];
+
+                v.append(&mut args_value);
+
+                let val = Value::Intrinsic("calocom.construct", v);
+                TypedValue { typ: ret_type, val }
+            }
+            _ => unreachable!(),
+        }
     }
 
     fn convert_trivial_match_expr(
@@ -188,77 +201,80 @@ impl MiddleIR {
         arms: &[(TypedASTComplexPattern, TypedExpr)],
         output: Rc<VarDef>,
     ) {
-        let current_bb = Rc::clone(builder.position.as_ref().unwrap());
-        let current_terminator = &current_bb.as_ref().borrow().terminator;
-        let next_bb = match current_terminator {
-            Terminator::Jump(x) => x,
-            _ => panic!("internal error: expect jump terminator now"),
-        };
+        todo!()
+        /*
+            let current_bb = Rc::clone(builder.position.as_ref().unwrap());
+            let current_terminator = &current_bb.as_ref().borrow().terminator;
+            let next_bb = match current_terminator {
+                Terminator::Jump(x) => x,
+                _ => panic!("internal error: expect jump terminator now"),
+            };
 
-        let match_var = Rc::clone(&expr);
-        let mut v = vec![];
-        for arm in arms {
-            match &arm.0 {
-                TypedASTComplexPattern::Lit(lit) => {
-                    let arm_block = Rc::new(RefCell::new(Block::new(
-                        &mut builder.namer,
-                        vec![],
-                        Terminator::Jump(Rc::clone(next_bb)),
-                    )));
+            let match_var = Rc::clone(&expr);
+            let mut v = vec![];
+            for arm in arms {
+                match &arm.0 {
+                    TypedASTComplexPattern::Lit(lit) => {
+                        let arm_block = Rc::new(RefCell::new(Block::new(
+                            &mut builder.namer,
+                            vec![],
+                            Terminator::Jump(Rc::clone(next_bb)),
+                        )));
 
-                    let choice = (Box::new(lit.clone()), Rc::clone(&arm_block));
+                        let choice = (Box::new(lit.clone()), Rc::clone(&arm_block));
 
-                    v.push(choice);
+                        v.push(choice);
 
-                    let arm_position = Some(Rc::clone(&arm_block));
-                    builder.position = arm_position;
+                        let arm_position = Some(Rc::clone(&arm_block));
+                        builder.position = arm_position;
 
-                    builder.table.entry();
-                    self.convert_expr(&arm.1, builder, Some(Rc::clone(&output)), false);
-                    builder.table.exit();
+                        builder.table.entry();
+                        self.convert_expr(&arm.1, builder, Some(Rc::clone(&output)), false);
+                        builder.table.exit();
 
-                    builder.func.blocks.push(arm_block);
+                        builder.func.blocks.push(arm_block);
+                    }
+                    TypedASTComplexPattern::Ctor(_) => panic!("can't use a non-literal match arm"),
                 }
-                TypedASTComplexPattern::Ctor(_) => panic!("can't use a non-literal match arm"),
             }
+
+            let select = Terminator::Select(match_var, v, Rc::clone(&builder.panic_block));
+            current_bb.borrow_mut().terminator = select;
+            let next_position = Some(Rc::clone(next_bb));
+            builder.position = next_position;
         }
 
-        let select = Terminator::Select(match_var, v, Rc::clone(&builder.panic_block));
-        current_bb.borrow_mut().terminator = select;
-        let next_position = Some(Rc::clone(next_bb));
-        builder.position = next_position;
-    }
+        fn extract_enum_tag(&mut self, builder: &mut FunctionBuilder, expr: Rc<VarDef>) -> Value {
+            let name = builder.namer.next_name("tmp.enum.tag");
+            let tag_var = self.create_variable_definition(name.as_str(), SingletonType::C_I32);
+            builder.func.unwrapped_def.push(Rc::clone(&tag_var));
 
-    fn extract_enum_tag(&mut self, builder: &mut FunctionBuilder, expr: Rc<VarDef>) -> Value {
-        let name = builder.namer.next_name("tmp.enum.tag");
-        let tag_var = self.create_variable_definition(name.as_str(), SingletonType::C_I32);
-        builder.func.unwrapped_def.push(Rc::clone(&tag_var));
-
-        let lhs = Some(Rc::clone(&tag_var));
-        let rhs = Some(TypedValue {
-            typ: tag_var.typ,
-            val: Value::Intrinsic(
-                "calocom.extract_tag",
-                vec![TypedValue {
-                    typ: expr.typ,
-                    val: Value::VarRef(expr),
-                }],
-            ),
-        });
-
-        builder
-            .position
-            .as_ref()
-            .unwrap()
-            .borrow_mut()
-            .stmts
-            .push(Stmt {
-                left: lhs,
-                right: rhs,
-                note: "extract tag of enum".to_string(),
+            let lhs = Some(Rc::clone(&tag_var));
+            let rhs = Some(TypedValue {
+                typ: tag_var.typ,
+                val: Value::Intrinsic(
+                    "calocom.extract_tag",
+                    vec![TypedValue {
+                        typ: expr.typ,
+                        val: Value::VarRef(expr),
+                    }],
+                ),
             });
 
-        Value::VarRef(tag_var)
+            builder
+                .position
+                .as_ref()
+                .unwrap()
+                .borrow_mut()
+                .stmts
+                .push(Stmt {
+                    left: lhs,
+                    right: rhs,
+                    note: "extract tag of enum".to_string(),
+                });
+
+            Value::VarRef(tag_var)
+            */
     }
 
     fn convert_complex_match_expr(
@@ -268,6 +284,7 @@ impl MiddleIR {
         arms: &[(TypedASTComplexPattern, TypedExpr)],
         output: Rc<VarDef>,
     ) {
+        /*
         let current_bb = Rc::clone(builder.position.as_ref().unwrap());
         let next_bb = {
             let current_terminator = &current_bb.as_ref().borrow().terminator;
@@ -362,13 +379,12 @@ impl MiddleIR {
         current_bb.borrow_mut().terminator = select;
         let next_position = Some(Rc::clone(&next_bb));
         builder.position = next_position;
+        */
     }
 
-    fn convert_match_expr(
-        &mut self,
-        builder: &mut FunctionBuilder,
-        x: &TypedMatchExpr,
-    ) -> TypedValue {
+    fn convert_match_expr(&mut self, builder: &mut FunctionBuilder, x: &TypedExpr) -> TypedValue {
+        todo!()
+        /*
         let TypedMatchExpr { e, arms, typ } = x;
 
         let mut expr_typ = e.typ;
@@ -424,14 +440,13 @@ impl MiddleIR {
         }
         let val = Value::VarRef(match_output_var);
         TypedValue { typ: *typ, val }
+        */
     }
 
-    fn convert_call_expr(
-        &mut self,
-        builder: &mut FunctionBuilder,
-        x: &TypedCallExpr,
-    ) -> TypedValue {
-        let TypedCallExpr { path, gen: _, args } = x;
+    fn convert_call_expr(&mut self, builder: &mut FunctionBuilder, x: &TypedExpr) -> TypedValue {
+        let ExprEnum::Call { path, gen: _, args } = &*x.expr else {
+            unreachable!()
+        };
         let fn_type = self
             .ty_ctx
             .find_function_type(&path.items[0])
@@ -584,7 +599,7 @@ impl MiddleIR {
         typ: usize,
     ) -> Rc<VarDef> {
         let name = namer.next_name(name);
-        let base_type: Reference = self.ty_ctx.get_type_by_idx(typ).into();
+        let base_type: Reference = self.ty_ctx.get_type_by_ref(typ).into();
         let dereferenced =
             self.create_variable_definition(name.as_str(), base_type.refer.left().unwrap());
         func.mem_ref.push(Rc::clone(&dereferenced));
@@ -648,7 +663,8 @@ impl MiddleIR {
                 });
 
                 stmt.note = "assign".to_string();
-            } else if self.ty_ctx.is_type_purely_eq(t1, t2) || self.ty_ctx.is_type_opaque_eq(t1, t2) {
+            } else if self.ty_ctx.is_type_purely_eq(t1, t2) || self.ty_ctx.is_type_opaque_eq(t1, t2)
+            {
                 stmt.left = Some(Rc::clone(&lhs));
                 stmt.right = Some(val);
                 stmt.note = "assign".to_string();
@@ -733,7 +749,6 @@ impl MiddleIR {
         let name = builder.namer.next_name(var_name);
         let new_var = self.create_variable_definition(name.as_str(), *var_typ);
 
-        
         self.convert_expr(expr, builder, Some(Rc::clone(&new_var)), false);
 
         builder

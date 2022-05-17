@@ -1,6 +1,7 @@
 use super::ref_path::ReferencePath;
 use super::sym::SymbolTable;
-use std::{borrow::Borrow, cell::RefCell, collections::HashMap, rc::Rc};
+use std::fmt::Debug;
+use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
 type SymTable<K, T> = Vec<HashMap<K, T>>;
 
@@ -15,11 +16,11 @@ pub struct NameContext<T> {
 
 impl<T> NameContext<T>
 where
-    T: Clone,
+    T: Clone + Debug,
 {
     pub fn find_ctor(&self, key: &str) -> Option<T> {
         let rc = self.ctor_env.as_ref().unwrap();
-        rc.take().borrow().get(key).cloned()
+        rc.as_ref().borrow().get(key).cloned()
     }
 
     pub fn find_symbol(&self, key: &[String]) -> Option<T> {
@@ -33,12 +34,12 @@ where
         // 4. external name
         if key.len() == 1 {
             return if let Some(ty) = self.env.find_symbol(key[0].as_str()) {
-                Some(*ty)
+                Some(ty.clone())
             } else {
                 self.ctor_env
                     .as_ref()
                     .unwrap()
-                    .take()
+                    .as_ref()
                     .borrow()
                     .get(key[0].as_str())
                     .cloned()
@@ -46,11 +47,11 @@ where
         } else if let Some(path) = self.import_env.get(key.root()) {
             let fully_qualified_name = key.suffix().unwrap().with_prefix(path);
             if let Some(ty) = self.fully_qualified_name_env.get(&fully_qualified_name) {
-                return Some(*ty);
+                return Some(ty.clone());
             }
         }
         if let Some(ty) = self.fully_qualified_name_env.get(key) {
-            return Some(*ty);
+            return Some(ty.clone());
         }
         None
     }
