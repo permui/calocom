@@ -39,9 +39,9 @@ enum VariableKind {
     Parameter,
     LocalVariable,
     TemporaryVariable,
+    RawVariable,
+    ReturnVariable,
     ObjectReference,
-    UnwrappedValue,
-    ReturnValue,
 }
 
 #[derive(Debug, Hash, PartialEq, Eq, Clone)]
@@ -108,8 +108,8 @@ pub enum OperandEnum {
 
 #[derive(Debug, Clone)]
 pub enum ValueEnum {
-    Call(RefPath, Vec<Operand>),
-    ExtCall(RefPath, Vec<Operand>),
+    Call(Vec<String>, Vec<Operand>),
+    ExtCall(Vec<String>, Vec<Operand>),
     BinaryOp(BinOp, Operand, Operand),
     UnaryOp(UnaryOp, Operand),
     MakeTuple(Vec<Operand>),
@@ -147,7 +147,7 @@ impl FuncDef {
     ) -> VarDefRef {
         let name = name.to_string();
         let var_ref = self.variables.insert(VarDef { name, typ });
-        if let VariableKind::ReturnValue = kind {
+        if let VariableKind::ReturnVariable = kind {
             self.return_value
                 .and_then(|_| -> Option<()> { panic!("a return value has been inserted") });
             self.return_value = Some(var_ref);
@@ -157,7 +157,7 @@ impl FuncDef {
                 VariableKind::LocalVariable => &mut self.locals,
                 VariableKind::TemporaryVariable => &mut self.temporaries,
                 VariableKind::ObjectReference => &mut self.obj_reference,
-                VariableKind::UnwrappedValue => &mut self.unwrapped,
+                VariableKind::RawVariable => &mut self.unwrapped,
                 _ => unreachable!(),
             }
             .push(var_ref);
@@ -241,7 +241,7 @@ impl<'a> FunctionBuilder<'a> {
                 self.change_terminator_at_position(Terminator::Jump(*closest));
                 let next_block = self.create_block(None, None);
                 self.position = Some(next_block);
-            },
+            }
             _ => unreachable!(),
         }
     }
@@ -475,7 +475,77 @@ impl<'a> FunctionBuilder<'a> {
     }
 
     fn build_call_expr(&mut self, expr: &TypedExpr) -> Operand {
-        todo!()
+        let TypedExpr { expr, typ } = expr;
+        let ExprEnum::Call { path, gen, args  } = expr.as_ref() else { unreachable!() };
+
+        let fn_type = self
+            .name_ctx
+            .find_symbol(path)
+            .unwrap_or_else(|| panic!("can't found function {}", path.join(".")));
+
+        let Type::Callable { kind , ret_type, parameters } = self.ty_ctx.get_type_by_ref(fn_type) else {
+            unreachable!();
+        };
+
+        let args_operands = self.build_arguments(args, &parameters);
+
+        let name = self.namer.next_name("call.result");
+        let call_result = self.func.create_variable_definition(
+            name.as_str(),
+            ret_type,
+            VariableKind::TemporaryVariable,
+        );
+
+        self.insert_stmt_at_position(Stmt {
+            left: Some(call_result),
+            right: Some(Value {
+                typ: ret_type,
+                val: ValueEnum::Call(path.to_vec(), args_operands),
+            }),
+            note: "make a call here",
+        });
+
+        self.build_operand_from_var_def(call_result)
+    }
+
+    fn build_arguments(&mut self, args: &[TypedArgument], types: &[TypeRef]) -> Vec<Operand> {
+        let mut vec = vec![];
+        for (arg, &type_ref) in args.iter().zip(types.iter()) {
+            match arg {
+                TypedArgument::Expr(expr) => {
+                    let name = self.namer.next_name("arg");
+                    let arg_var = self.func.create_variable_definition(
+                        name.as_str(),
+                        type_ref,
+                        VariableKind::TemporaryVariable,
+                    );
+
+                    self.build_expr_and_assign_to(expr, Some(arg_var));
+                    vec.push(self.build_operand_from_var_def(arg_var));
+                }
+                TypedArgument::AtVar(name, typ) => {
+                    let name = self.namer.next_name("at_arg");
+                    let arg_var = self.func.create_variable_definition(
+                        name.as_str(),
+                        type_ref,
+                        VariableKind::TemporaryVariable,
+                    );
+
+                    self.build_expr_and_assign_to(
+                        &TypedExpr {
+                            expr: Box::new(ExprEnum::Path {
+                                path: [name.clone()].to_vec(),
+                                is_free_variable: false,
+                            }),
+                            typ: *typ,
+                        },
+                        Some(arg_var),
+                    );
+                    vec.push(self.build_operand_from_var_def(arg_var));
+                }
+            }
+        }
+        vec
     }
 
     fn build_tuple_expr(&mut self, expr: &TypedExpr) -> Operand {
@@ -647,7 +717,7 @@ impl MiddleIR {
 
         // create the return value variable
         let ret_var =
-            def.create_variable_definition("#ret.var", func.ret_type, VariableKind::ReturnValue);
+            def.create_variable_definition("#ret.var", func.ret_type, VariableKind::ReturnVariable);
 
         // insert the return value variable
         var_ctx.entry_scope();
