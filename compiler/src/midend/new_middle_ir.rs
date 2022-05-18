@@ -223,7 +223,28 @@ impl<'a> FunctionBuilder<'a> {
         }
     }
 
-    fn build_return_break_continue(&mut self, stmt: &TypedASTStmt) {}
+    fn build_return_break_continue(&mut self, stmt: &TypedASTStmt) {
+        match stmt {
+            TypedASTStmt::Return => {
+                self.change_terminator_at_position(Terminator::Jump(self.func.return_block));
+                let next_block = self.create_block(None, None);
+                self.position = Some(next_block);
+            }
+            TypedASTStmt::Break => {
+                let Some(closest) = self.break_blocks.last() else {panic!("break outside loop statement")};
+                self.change_terminator_at_position(Terminator::Jump(*closest));
+                let next_block = self.create_block(None, None);
+                self.position = Some(next_block);
+            }
+            TypedASTStmt::Continue => {
+                let Some(closest) = self.continue_blocks.last() else {panic!("continue outside loop statement")};
+                self.change_terminator_at_position(Terminator::Jump(*closest));
+                let next_block = self.create_block(None, None);
+                self.position = Some(next_block);
+            },
+            _ => unreachable!(),
+        }
+    }
 
     fn build_let(&mut self, stmt: &TypedLetStmt) {
         let TypedLetStmt {
@@ -275,7 +296,7 @@ impl<'a> FunctionBuilder<'a> {
         //                 |   |
         // body block   <--|   |
         // ...             |   |
-        // body end block =|===+ 
+        // body end block =|===+
         //                 |
         // end block    <--|   <-- position
 
@@ -312,6 +333,9 @@ impl<'a> FunctionBuilder<'a> {
         // change its terminator to the old terminator of last block
         self.position = Some(end_block);
         self.change_terminator_at_position(old_terminator_of_last_block);
+
+        self.continue_blocks.pop();
+        self.break_blocks.pop();
     }
 
     fn build_for(&mut self, stmt: &TypedForStmt) {
@@ -563,7 +587,7 @@ impl<'a> FunctionBuilder<'a> {
     fn change_terminator_at_position(&mut self, term: Terminator) -> Terminator {
         let block_ref = self.position.expect("expect a insert position");
         let block = self.func.blocks.get_mut(block_ref).unwrap();
-        let old = block.terminator;
+        let old = block.terminator.clone();
         block.terminator = term;
         old
     }
