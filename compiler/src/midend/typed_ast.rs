@@ -30,7 +30,7 @@ pub struct TypedBracketBody {
 #[derive(Debug)]
 pub struct TypedLetStmt {
     pub var_name: String,
-    pub var_typ: TypeRef,
+    pub var_type: TypeRef,
     pub expr: TypedExpr,
 }
 
@@ -328,7 +328,7 @@ impl TypedAST {
 
         TypedLetStmt {
             var_name: var_name.to_string(),
-            var_typ: type_ref,
+            var_type: type_ref,
             expr: typed_expr,
         }
     }
@@ -1136,10 +1136,8 @@ impl TypedAST {
         typed_ast.resolve_all_type(module);
 
         // resolve type, second pass, replace previously opaque
-        // named type [Right(name)] with type index [Left(idx)].
+        // named type [Right(name)] with type index [Left(type_ref)].
         typed_ast.ty_ctx.refine_all_type();
-
-        // All opaque types cleared. No more opaque types allowed.
 
         typed_ast.check_type(module);
         typed_ast.exit_scope();
