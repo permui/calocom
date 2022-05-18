@@ -119,6 +119,7 @@ pub enum ExprEnum {
     },
     Lit(TypedASTLiteral),
     Path {
+        is_free_variable: bool,
         path: Vec<String>,
     },
     Bracket {
@@ -162,6 +163,7 @@ pub struct TypedASTConstructorVar {
 pub struct TypedAST {
     pub name_ctx: NameContext<TypeRef>,
     pub ty_ctx: TypeContext,
+    pub delimiter: Vec<isize>, // the start symbol depth stack of a lambda expression
     pub module: Vec<TypedFuncDef>,
 }
 
@@ -181,7 +183,7 @@ macro_rules! declare_library_function {
                 $ty_ctx.callable_type(CallKind::Function, $ret_type, [$($param_type),*].to_vec()),
             )
             .and_then(|_| -> Option<()> { unreachable!() });
-    };    
+    };
 }
 
 impl From<&crate::ast::ComplexPattern> for TypedASTComplexPattern {
@@ -390,7 +392,10 @@ impl TypedAST {
                 }
 
                 let path = match &*expr {
-                    ExprEnum::Path { path } => path,
+                    ExprEnum::Path {
+                        path,
+                        is_free_variable: _,
+                    } => path,
                     _ => panic!("not a path in a constructor expression"),
                 };
 
@@ -430,7 +435,10 @@ impl TypedAST {
                     }
                 } else {
                     let path = match &*expr {
-                        ExprEnum::Path { path } => path,
+                        ExprEnum::Path {
+                            path,
+                            is_free_variable: _,
+                        } => path,
                         _ => panic!("not a path in a function call expression"),
                     };
 
@@ -710,7 +718,8 @@ impl TypedAST {
             .ty_ctx
             .callable_type(CallKind::Function, ret_type, params_type.clone());
 
-        self.name_ctx.entry_scope();
+        let inner_level = self.name_ctx.entry_scope();
+        self.delimiter.push(inner_level);
         for (tp, var_name) in params_type.iter().zip(param_list.iter().map(
             |crate::ast::NameTypeBind {
                  with_at: _,
@@ -729,6 +738,7 @@ impl TypedAST {
         }
 
         self.name_ctx.exit_scope();
+        self.delimiter.pop();
 
         TypedExpr {
             expr: Box::new(ExprEnum::Closure {
@@ -806,12 +816,10 @@ impl TypedAST {
 
     fn check_type_of_path(&mut self, expr: &crate::ast::RefPath) -> TypedExpr {
         let crate::ast::RefPath { items } = expr;
-        let typ = self
-            .name_ctx
-            .find_symbol(items)
-            .unwrap_or_else(|| panic!("unable to find symbol {}", items.join(".")));
+        let (level, typ) = self.name_ctx.find_symbol_and_level(items);
+        let typ = typ.unwrap_or_else(|| panic!("unable to find symbol {}", items.join(".")));
 
-        // force non-parameter ctor from callable into its return type
+        // force parameterless ctor from callable into its return type
 
         if let Type::Callable {
             kind: CallKind::Constructor,
@@ -823,15 +831,18 @@ impl TypedAST {
                 return TypedExpr {
                     expr: Box::new(ExprEnum::Path {
                         path: items.clone(),
+                        is_free_variable: false,
                     }),
                     typ: ret_type,
                 };
             }
         }
 
+        let is_free_variable = level < *self.delimiter.last().unwrap();
         TypedExpr {
             expr: Box::new(ExprEnum::Path {
                 path: items.clone(),
+                is_free_variable,
             }),
             typ,
         }
@@ -1111,6 +1122,7 @@ impl TypedAST {
         let mut typed_ast = TypedAST::default();
 
         typed_ast.name_ctx.ctor_env = Some(typed_ast.ty_ctx.get_ctor_map());
+        typed_ast.delimiter.push(-1); // closest delimiter is at -1, which means a global level
 
         typed_ast.entry_scope();
         typed_ast.create_library_function_signature();
