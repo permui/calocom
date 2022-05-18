@@ -101,7 +101,7 @@ main: () -> () {
 
         if line == "" { break; };
 
-        let a : [str] = string.split(line, '|');
+        let a : [str] = string.split(line, "|");
         let name : str = a[0];
         let credit : f64 = to_credit(a[1]);
         let req : OrRequire = to_require(a[2]);

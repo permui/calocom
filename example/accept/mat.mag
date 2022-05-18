@@ -28,7 +28,7 @@ main: () -> () {
     for i in 0 .. cn {
         for j in 0 .. cm {
             // io.printf<T>(t, padding_len, padding_char)
-            io.printf<i32>(c[i][j], 10, ' ');
+            io.printf<i32>(c[i][j], 10, " ");
         };
         io.print_newline();
     };

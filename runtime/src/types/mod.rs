@@ -3,23 +3,24 @@ use libc::c_void;
 use libc::uintptr_t;
 
 mod enumeration;
-mod tuple;
 mod int;
+mod tuple;
 
 pub use enumeration::*;
-pub use tuple::*;
 pub use int::*;
+pub use tuple::*;
 
 #[repr(u8)]
 pub enum _ObjectType {
     Reserved = 0,
     Unit = 1,
     Str = 2,
-    I32 = 3,
-    Bool = 4,
-    Tuple = 5,
-    Enum = 6,
-    Other = 7,
+    Bool = 3,
+    Int32 = 4,
+    Float64 = 5,
+    Tuple = 6,
+    Enum = 7,
+    Other = 8,
 }
 
 #[repr(C, packed(4))]

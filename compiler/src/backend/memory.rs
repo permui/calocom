@@ -82,26 +82,26 @@ impl<'ctx> MemoryLayoutContext<'ctx> {
                             .set_body(&[object_t, i8_p_t.into()], true);
                     }
                     Type::Primitive(x) => match x.typ {
-                        type_context::PrimitiveType::Object => {
+                        type_context::Primitive::Object => {
                             llvm_ty.into_struct_type().set_body(
                                 &[i64_t.into(), i8_t.into(), i8_t.into(), i16_t.into()],
                                 true,
                             );
                         }
-                        type_context::PrimitiveType::Str => {
+                        type_context::Primitive::Str => {
                             llvm_ty
                                 .into_struct_type()
                                 .set_body(&[object_t, i32_t.into(), i8_0_t.into()], true);
                         }
-                        type_context::PrimitiveType::Bool | type_context::PrimitiveType::Int32 => {
+                        type_context::Primitive::Bool | type_context::Primitive::Int32 => {
                             llvm_ty
                                 .into_struct_type()
                                 .set_body(&[object_t, i32_t.into()], true);
                         }
-                        type_context::PrimitiveType::Unit => {
+                        type_context::Primitive::Unit => {
                             llvm_ty.into_struct_type().set_body(&[object_t], true);
                         }
-                        type_context::PrimitiveType::CInt32 => {
+                        type_context::Primitive::CInt32 => {
                             *llvm_ty = self.llvm_ctx.i32_type().into();
                         }
                     },

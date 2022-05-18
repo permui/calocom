@@ -1,5 +1,9 @@
+#[cfg(feature = "middle-ir")]
 pub mod middle_ir;
-pub mod name_decoration;
-pub mod type_context;
+#[cfg(feature = "typed-ast")]
 pub mod typed_ast;
+pub mod name_mangling;
+pub mod ref_path;
+pub mod name_context;
+pub mod type_context;
 pub mod unique_name;

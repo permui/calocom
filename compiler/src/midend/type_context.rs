@@ -1,72 +1,52 @@
-use std::{collections::HashMap, fmt::Debug, fmt::Display, panic};
+use std::{cell::RefCell, collections::HashMap, fmt::Debug, fmt::Display, panic, rc::Rc};
 
 use super::unique_name::UniqueName;
 use either::Either;
+use num_enum::{IntoPrimitive, TryFromPrimitive};
+use strum::{EnumIter, IntoEnumIterator};
 use Either::{Left, Right};
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct Tuple {
-    pub fields: Vec<Type>,
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, TryFromPrimitive, IntoPrimitive, EnumIter)]
+#[repr(usize)]
+pub enum Primitive {
+    Object = 0,
+    Unit = 1,
+    Str = 2,
+    Bool = 3,
+    Int32 = 4,
+    Float64 = 5,
+    CInt32 = 6,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct Enum {
-    pub constructors: Vec<(String, Vec<Type>)>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub enum PrimitiveType {
-    Object,
-    Str,
-    Bool,
-    Int32,
-    Unit,
-    CInt32,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct Primitive {
-    pub typ: PrimitiveType,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct Opaque {
-    pub alias: Either<usize, String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct Reference {
-    pub refer: Either<usize, String>,
+pub enum CallKind {
+    Function,
+    ClosureValue,
+    Constructor,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Type {
-    Tuple(Box<Tuple>),
-    Enum(Box<Enum>),
+    Tuple {
+        fields: Vec<Type>,
+    },
+    Enum {
+        name: String,
+        ctors: Vec<(String, Vec<Type>)>,
+    },
     Primitive(Primitive),
-    Opaque(Opaque),
-    Reference(Reference),
-}
-
-impl From<Type> for Reference {
-    fn from(x: Type) -> Self {
-        match x {
-            Type::Reference(x) => x,
-            _ => panic!("not an reference type"),
-        }
-    }
-}
-
-impl From<Tuple> for Type {
-    fn from(x: Tuple) -> Self {
-        Type::Tuple(Box::new(x))
-    }
-}
-
-impl From<Enum> for Type {
-    fn from(x: Enum) -> Self {
-        Type::Enum(Box::new(x))
-    }
+    Opaque {
+        alias: Either<usize, String>,
+    },
+    Reference {
+        refer: Either<usize, String>,
+    },
+    Array(Box<Type>),
+    Callable {
+        kind: CallKind,
+        ret_type: Box<Type>,
+        parameters: Vec<Type>,
+    },
 }
 
 impl From<Primitive> for Type {
@@ -75,86 +55,14 @@ impl From<Primitive> for Type {
     }
 }
 
-impl From<Opaque> for Type {
-    fn from(x: Opaque) -> Self {
-        Type::Opaque(x)
-    }
-}
-
-impl From<Reference> for Type {
-    fn from(x: Reference) -> Self {
-        Type::Reference(x)
-    }
-}
-
-impl From<PrimitiveType> for Type {
-    fn from(x: PrimitiveType) -> Self {
-        Primitive { typ: x }.into()
-    }
-}
-
 pub type TypeHandle = (usize, Type);
-
-#[derive(Debug, Default)]
-pub struct SingletonType {}
-
-impl SingletonType {
-    pub const OBJECT: usize = 0;
-    pub const BOOL: usize = 1;
-    pub const I32: usize = 2;
-    pub const STR: usize = 3;
-    pub const UNIT: usize = 4;
-    pub const C_I32: usize = 5;
-    pub fn is_singleton_type(typ: usize) -> bool {
-        matches!(
-            typ,
-            SingletonType::OBJECT
-                | SingletonType::BOOL
-                | SingletonType::I32
-                | SingletonType::UNIT
-                | SingletonType::STR
-                | SingletonType::C_I32
-        )
-    }
-}
-
-impl From<PrimitiveType> for usize {
-    fn from(typ: PrimitiveType) -> Self {
-        match typ {
-            PrimitiveType::Str => SingletonType::STR,
-            PrimitiveType::Bool => SingletonType::BOOL,
-            PrimitiveType::Int32 => SingletonType::I32,
-            PrimitiveType::Unit => SingletonType::UNIT,
-            PrimitiveType::Object => SingletonType::OBJECT,
-            PrimitiveType::CInt32 => SingletonType::C_I32,
-        }
-    }
-}
-
-impl From<usize> for PrimitiveType {
-    fn from(typ: usize) -> Self {
-        match typ {
-            x if x == SingletonType::STR => PrimitiveType::Str,
-            x if x == SingletonType::BOOL => PrimitiveType::Bool,
-            x if x == SingletonType::I32 => PrimitiveType::Int32,
-            x if x == SingletonType::UNIT => PrimitiveType::Unit,
-            x if x == SingletonType::OBJECT => PrimitiveType::Object,
-            x if x == SingletonType::C_I32 => PrimitiveType::CInt32,
-            _ => panic!("not a singleton type index"),
-        }
-    }
-}
-
-pub type SymTable<T> = Vec<HashMap<String, T>>;
 
 #[derive(Debug, Clone)]
 pub struct TypeContext {
     name_typeid_map: HashMap<String, usize>,
     type_typeid_map: HashMap<Type, usize>,
+    ctor_map: Rc<RefCell<HashMap<String, usize>>>,
     pub types: Vec<Type>,
-    ftypes: HashMap<String, (usize, Vec<usize>)>,
-    pub ext_poly_ftypes: HashMap<Vec<String>, (usize, Vec<usize>)>,
-    pub env: SymTable<usize>,
 }
 
 impl Default for TypeContext {
@@ -163,9 +71,7 @@ impl Default for TypeContext {
             name_typeid_map: Default::default(),
             type_typeid_map: Default::default(),
             types: Default::default(),
-            ftypes: Default::default(),
-            ext_poly_ftypes: Default::default(),
-            env: Default::default(),
+            ctor_map: Default::default(),
         };
         tcx.add_primitives();
         tcx
@@ -181,37 +87,8 @@ impl TypeContext {
         self.types[idx].clone()
     }
 
-    pub fn find_external_polymorphic_function_type(
-        &self,
-        path: &[String],
-    ) -> Option<&(usize, Vec<usize>)> {
-        self.ext_poly_ftypes.get(path)
-    }
-
-    pub fn associate_external_polymorphic_function_type(
-        &mut self,
-        path: &[String],
-        typ: (usize, Vec<usize>),
-    ) {
-        if self.ext_poly_ftypes.contains_key(path) {
-            panic!("external polymorphic function redefined");
-        }
-        self.ext_poly_ftypes.insert(path.into(), typ);
-    }
-
-    pub fn find_function_type(&self, name: &str) -> Option<&(usize, Vec<usize>)> {
-        self.ftypes.get(name)
-    }
-
-    pub fn associate_function_type(&mut self, name: &str, typ: (usize, Vec<usize>)) {
-        if self.ftypes.contains_key(name) {
-            panic!("function {} redefined", name);
-        }
-        self.ftypes.insert(name.to_string(), typ);
-    }
-
-    pub fn singleton_type(&self, typ: PrimitiveType) -> TypeHandle {
-        (typ.clone().into(), self.get_type_by_idx(typ.into()))
+    pub fn singleton_type(&self, typ: Primitive) -> TypeHandle {
+        (typ.into(), self.get_type_by_idx(typ.into()))
     }
 
     pub fn associate_name_and_idx(&mut self, name: &str, idx: usize) {
@@ -221,19 +98,26 @@ impl TypeContext {
         self.name_typeid_map.insert(name.to_string(), idx);
     }
 
+    pub fn get_ctor_type(&self, ctor: &str) -> Option<usize> {
+        self.ctor_map.borrow().get(ctor).copied()
+    }
+
+    pub fn get_ctor_map(&self) -> Rc<RefCell<HashMap<String, usize>>> {
+        self.ctor_map.clone()
+    }
+
     pub fn get_ctor_index_and_field_type_by_name(
         &self,
         typ: usize,
         name: &str,
     ) -> (usize, Vec<TypeHandle>) {
         match &self.types[typ] {
-            Type::Enum(e) => {
-                let ctor_idx = e
-                    .constructors
+            Type::Enum { ctors, name: _ } => {
+                let ctor_idx = ctors
                     .iter()
                     .position(|ctor| ctor.0 == name)
                     .unwrap_or_else(|| panic!("{} not found", name));
-                let ctor = &e.constructors[ctor_idx];
+                let ctor = &ctors[ctor_idx];
                 (
                     ctor_idx,
                     ctor.1
@@ -252,39 +136,70 @@ impl TypeContext {
             .map(|x| (*x, self.get_type_by_idx(*x)))
     }
 
-    pub fn tuple_type(&mut self, fields: Vec<Type>) -> TypeHandle {
-        let res = Tuple { fields }.into();
+    pub fn array_type(&mut self, elem: Type) -> TypeHandle {
+        let res = Type::Array(Box::new(elem));
         self.insert_type_or_get(res)
     }
 
-    pub fn enum_type(&mut self, constructors: Vec<(String, Vec<Type>)>) -> TypeHandle {
-        let res = Enum { constructors }.into();
+    pub fn tuple_type(&mut self, fields: Vec<Type>) -> TypeHandle {
+        let res = Type::Tuple { fields };
         self.insert_type_or_get(res)
+    }
+
+    fn ctor_type(&mut self, typ: (Type, Vec<Type>)) -> TypeHandle {
+        self.callable_type(CallKind::Constructor, typ.0, typ.1)
+    }
+
+    pub fn enum_type(&mut self, ctors: Vec<(String, Vec<Type>)>, name: String) -> TypeHandle {
+        let res = Type::Enum {
+            ctors: ctors.clone(),
+            name,
+        };
+        let enum_type = self.insert_type_or_get(res);
+        for ctor in ctors.into_iter() {
+            if self.ctor_map.borrow().contains_key(&ctor.0) {
+                panic!("multiple definitions for constructor name `{}`", ctor.0);
+            }
+            let ctor_type = self.ctor_type((enum_type.1.clone(), ctor.1));
+            self.ctor_map.borrow_mut().insert(ctor.0, ctor_type.0);
+        }
+        enum_type
     }
 
     pub fn opaque_name_type(&mut self, name: &str) -> TypeHandle {
-        let res = Opaque {
+        let res = Type::Opaque {
             alias: Either::Right(name.to_string()),
-        }
-        .into();
+        };
         self.insert_type_or_get(res)
     }
 
     pub fn opaque_type(&mut self, idx: usize) -> TypeHandle {
         assert!(idx < self.types.len());
-        let res = Opaque {
+        let res = Type::Opaque {
             alias: Either::Left(idx),
-        }
-        .into();
+        };
         self.insert_type_or_get(res)
     }
 
     pub fn reference_type(&mut self, idx: usize) -> TypeHandle {
         assert!(idx < self.types.len());
-        let res = Reference {
+        let res = Type::Reference {
             refer: Either::Left(idx),
-        }
-        .into();
+        };
+        self.insert_type_or_get(res)
+    }
+
+    pub fn callable_type(
+        &mut self,
+        kind: CallKind,
+        ret_type: Type,
+        parameters: Vec<Type>,
+    ) -> TypeHandle {
+        let res = Type::Callable {
+            kind,
+            ret_type: Box::new(ret_type),
+            parameters,
+        };
         self.insert_type_or_get(res)
     }
 
@@ -300,10 +215,10 @@ impl TypeContext {
         (self_index, typ)
     }
 
-    fn add_primitive(&mut self, primitive: PrimitiveType, name: Option<&str>) {
-        let idx: usize = primitive.clone().into();
+    fn add_primitive(&mut self, primitive: Primitive, name: Option<&str>) {
+        let idx: usize = primitive.into();
         let typ: Type = primitive.into();
-        self.types.push(typ.clone());
+        self.types[idx] = typ.clone();
         self.type_typeid_map.insert(typ, idx);
         if let Some(name) = name {
             self.name_typeid_map.insert(name.to_string(), idx);
@@ -311,13 +226,21 @@ impl TypeContext {
     }
 
     fn add_primitives(&mut self) {
-        // NOTE: be the same order with constants in SingletonType
-        self.add_primitive(PrimitiveType::Object, Some("__object"));
-        self.add_primitive(PrimitiveType::Bool, Some("bool"));
-        self.add_primitive(PrimitiveType::Int32, Some("i32"));
-        self.add_primitive(PrimitiveType::Str, Some("str"));
-        self.add_primitive(PrimitiveType::Unit, Some("__unit"));
-        self.add_primitive(PrimitiveType::CInt32, Some("__c_i32"));
+        use Primitive::*;
+        let prim = &[
+            (Object, "__object!"),
+            (Bool, "bool"),
+            (Int32, "i32"),
+            (Str, "str"),
+            (Unit, "__unit!"),
+            (CInt32, "__c_i32!"),
+            (Float64, "f64"),
+        ];
+        let max_n: usize = Primitive::iter().map(|x| x.into()).max().unwrap();
+        let max_n = max_n + 1;
+        self.types.resize(max_n, Type::Opaque { alias: Left(0) });
+        prim.iter()
+            .for_each(|(ty, name)| self.add_primitive(*ty, Some(name)));
     }
 
     pub fn refine_all_type(&mut self) {
@@ -333,23 +256,23 @@ impl TypeContext {
 
     fn refine_type(name_map: &HashMap<String, usize>, t: &mut Type) {
         match t {
-            Type::Tuple(tuple) => {
-                let Tuple { fields } = tuple.as_mut();
+            Type::Tuple { fields } => {
                 for field in fields {
                     TypeContext::refine_type(name_map, field);
                 }
             }
-            Type::Enum(enu) => {
-                let Enum { constructors } = enu.as_mut();
-                for ctor in constructors {
+            Type::Enum { ctors, name: _ } => {
+                for ctor in ctors {
                     for field in &mut ctor.1 {
                         TypeContext::refine_type(name_map, field);
                     }
                 }
             }
+            Type::Array(elem) => {
+                TypeContext::refine_type(name_map, elem);
+            }
             Type::Primitive(_) => {}
-            Type::Opaque(opaque) => {
-                let Opaque { alias } = opaque;
+            Type::Opaque { alias } => {
                 if let Right(name) = alias {
                     if !name_map.contains_key(name) {
                         panic!("unresolved type {}", name);
@@ -358,8 +281,7 @@ impl TypeContext {
                     *alias = Left(idx);
                 }
             }
-            Type::Reference(reference) => {
-                let Reference { refer } = reference;
+            Type::Reference { refer } => {
                 if let Right(name) = refer {
                     if !name_map.contains_key(name) {
                         panic!("unresolved type {}", name);
@@ -368,27 +290,16 @@ impl TypeContext {
                     *refer = Left(idx);
                 }
             }
-        }
-    }
-
-    fn collect_constructor(record: &mut HashMap<String, usize>, idx: usize, ty: &Type) {
-        if let Type::Enum(enu) = ty {
-            let Enum { constructors } = enu.as_ref();
-            for ctor in constructors {
-                if record.contains_key(&ctor.0) {
-                    panic!(
-                        "multiple definitions for constructor name `{}`",
-                        ctor.0
-                    );
+            Type::Callable {
+                ret_type,
+                parameters,
+                kind: _,
+            } => {
+                TypeContext::refine_type(name_map, ret_type);
+                for param in parameters {
+                    TypeContext::refine_type(name_map, param);
                 }
-                record.insert(ctor.0.clone(), idx);
             }
-        }
-    }
-
-    pub fn collect_all_constructor(&self, constructors: &mut HashMap<String, usize>) {
-        for (idx, ty) in self.types.iter().enumerate() {
-            TypeContext::collect_constructor(constructors, idx, ty);
         }
     }
 
@@ -396,7 +307,7 @@ impl TypeContext {
         let mut typ = typ;
         loop {
             match self.get_type_by_idx(typ) {
-                Type::Opaque(opaque) => typ = opaque.alias.left().unwrap(),
+                Type::Opaque { alias } => typ = alias.left().unwrap(),
                 _ => return typ,
             }
         }
@@ -404,16 +315,14 @@ impl TypeContext {
 
     pub fn get_reference_base_type(&self, typ: usize) -> Option<usize> {
         match self.get_type_by_idx(typ) {
-            Type::Reference(refer) => Some(refer.refer.left().unwrap()),
+            Type::Reference { refer } => Some(refer.left().unwrap()),
             _ => None,
         }
     }
 
     pub fn is_t1_reference_of_t2(&self, t1: usize, t2: usize) -> bool {
         match self.get_type_by_idx(t1) {
-            Type::Reference(refer)
-                if self.is_type_eq(*refer.refer.as_ref().left().unwrap(), t2) =>
-            {
+            Type::Reference { refer } if self.is_type_eq(*refer.as_ref().left().unwrap(), t2) => {
                 true
             }
             _ => false,
@@ -421,11 +330,15 @@ impl TypeContext {
     }
 
     pub fn is_enum_type(&self, t: usize) -> bool {
-        matches!(self.get_type_by_idx(t), Type::Enum(_))
+        matches!(self.get_type_by_idx(t), Type::Enum { ctors: _, name: _ })
+    }
+
+    pub fn is_tuple_type(&self, t: usize) -> bool {
+        matches!(self.get_type_by_idx(t), Type::Tuple { fields: _ })
     }
 
     // if true, both types have the same type id
-    pub fn is_type_pure_eq(&self, t1: usize, t2: usize) -> bool {
+    pub fn is_type_purely_eq(&self, t1: usize, t2: usize) -> bool {
         t1 == t2
     }
 
@@ -445,7 +358,7 @@ impl TypeContext {
 
     // if true, both types represent the same nominal type
     pub fn is_type_eq(&self, t1: usize, t2: usize) -> bool {
-        self.is_type_pure_eq(t1, t2)
+        self.is_type_purely_eq(t1, t2)
             || self.is_type_opaque_eq(t1, t2)
             || self.is_type_reference_eq(t1, t2)
     }
@@ -453,10 +366,55 @@ impl TypeContext {
     // if true, both types are compatible when doing assignment
     pub fn is_compatible(&self, t1: usize, t2: usize) -> bool {
         self.is_type_eq(t1, t2) // the same nominal type
-            || t1 == SingletonType::OBJECT // unsafe cast due to polymorphism
-            || t2 == SingletonType::OBJECT // unsafe cast due to polymorphism
+            || t1 == Primitive::Object.into() // unsafe cast due to polymorphism
+            || t2 == Primitive::Object.into() // unsafe cast due to polymorphism
             || self.is_t1_reference_of_t2(t1, t2) // one is reference and the other is the referred type
             || self.is_t1_reference_of_t2(t2, t1)
+    }
+
+    pub fn is_callable_type(&self, t: usize) -> bool {
+        matches!(
+            self.get_type_by_idx(t),
+            Type::Callable {
+                ret_type: _,
+                parameters: _,
+                kind: _
+            }
+        )
+    }
+
+    pub fn is_array_type(&self, t: usize) -> bool {
+        matches!(self.get_type_by_idx(t), Type::Array(_))
+    }
+
+    pub fn is_index_type(&self, t: usize) -> bool {
+        self.is_type_eq(t, Primitive::Int32.into())
+    }
+
+    pub fn is_arithmetic_type(&self, t: usize) -> bool {
+        self.is_type_eq(t, Primitive::Float64.into()) || self.is_type_eq(t, Primitive::Int32.into())
+    }
+
+    pub fn is_boolean_testable_type(&self, t: usize) -> bool {
+        self.is_type_eq(t, Primitive::Bool.into())
+    }
+
+    pub fn is_partially_ordered_type(&self, t: usize) -> bool {
+        self.is_totally_ordered_type(t) || self.is_type_eq(t, Primitive::Float64.into())
+    }
+
+    pub fn is_partially_equal_type(&self, t: usize) -> bool {
+        self.is_totally_equal_type(t) || self.is_type_eq(t, Primitive::Float64.into())
+    }
+
+    pub fn is_totally_ordered_type(&self, t: usize) -> bool {
+        self.is_type_eq(t, Primitive::Int32.into())
+    }
+
+    pub fn is_totally_equal_type(&self, t: usize) -> bool {
+        self.is_type_eq(t, Primitive::Int32.into())
+            || self.is_type_eq(t, Primitive::Str.into())
+            || self.is_type_eq(t, Primitive::Bool.into())
     }
 
     pub fn substitute_all_opaque_references(&mut self, type_map: &HashMap<usize, String>) {
@@ -467,23 +425,20 @@ impl TypeContext {
 
     pub fn substitute_opaque_reference(type_map: &HashMap<usize, String>, t: &mut Type) {
         match t {
-            Type::Tuple(tuple) => {
-                let Tuple { fields } = tuple.as_mut();
+            Type::Tuple { fields } => {
                 for field in fields {
                     TypeContext::substitute_opaque_reference(type_map, field);
                 }
             }
-            Type::Enum(enu) => {
-                let Enum { constructors } = enu.as_mut();
-                for ctor in constructors {
+            Type::Enum { ctors, name: _ } => {
+                for ctor in ctors {
                     for field in &mut ctor.1 {
                         TypeContext::substitute_opaque_reference(type_map, field);
                     }
                 }
             }
             Type::Primitive(_) => {}
-            Type::Opaque(opaque) => {
-                let Opaque { alias } = opaque;
+            Type::Opaque { alias } => {
                 if let Left(typ) = alias {
                     if !type_map.contains_key(typ) {
                         panic!("can't found type {}", typ);
@@ -492,14 +447,24 @@ impl TypeContext {
                     *alias = Right(name);
                 }
             }
-            Type::Reference(refer) => {
-                let Reference { refer } = refer;
+            Type::Reference { refer } => {
                 if let Left(typ) = refer {
                     if !type_map.contains_key(typ) {
                         panic!("can't found type {}", typ);
                     }
                     let name = type_map.get(typ).unwrap().clone();
                     *refer = Right(name);
+                }
+            }
+            Type::Array(elem) => TypeContext::substitute_opaque_reference(type_map, elem),
+            Type::Callable {
+                ret_type,
+                parameters,
+                kind: _,
+            } => {
+                TypeContext::substitute_opaque_reference(type_map, ret_type);
+                for param in parameters.iter_mut() {
+                    TypeContext::substitute_opaque_reference(type_map, param);
                 }
             }
         }
@@ -523,78 +488,79 @@ impl TypeContext {
         (context, display_name_map)
     }
 }
-impl Display for Tuple {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "(")?;
-        let field_str = self.fields.iter().fold(String::new(), |acc, item| {
-            if acc.is_empty() {
-                format!("{}", item)
-            } else {
-                format!("{}, {}", acc, item)
-            }
-        });
-        write!(f, "{}", field_str)?;
-        write!(f, ")")
-    }
-}
 
 impl Display for Primitive {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self.typ {
-            PrimitiveType::Object => write!(f, "__object"),
-            PrimitiveType::Str => write!(f, "str"),
-            PrimitiveType::Bool => write!(f, "bool"),
-            PrimitiveType::Int32 => write!(f, "i32"),
-            PrimitiveType::Unit => write!(f, "__unit"),
-            PrimitiveType::CInt32 => write!(f, "__c_i32"),
+        match self {
+            Primitive::Object => write!(f, "__object"),
+            Primitive::Str => write!(f, "str"),
+            Primitive::Bool => write!(f, "bool"),
+            Primitive::Int32 => write!(f, "i32"),
+            Primitive::Unit => write!(f, "__unit"),
+            Primitive::CInt32 => write!(f, "__c_i32"),
+            Primitive::Float64 => write!(f, "f64"),
         }
-    }
-}
-
-impl Display for Enum {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "[")?;
-        let item2str = |item: &(String, Vec<Type>)| {
-            format!(
-                "<{} {}>",
-                item.0,
-                Tuple {
-                    fields: item.1.clone()
-                }
-            )
-        };
-        let field_str = self.constructors.iter().fold(String::new(), |acc, item| {
-            if acc.is_empty() {
-                item2str(item)
-            } else {
-                format!("{} | {}", acc, item2str(item))
-            }
-        });
-        write!(f, "{}", field_str)?;
-        write!(f, "]")
-    }
-}
-
-impl Display for Opaque {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.alias.as_ref().right().unwrap())
-    }
-}
-
-impl Display for Reference {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "ref {}", self.refer.as_ref().right().unwrap())
     }
 }
 
 impl Display for Type {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Type::Tuple(t) => write!(f, "{}", t),
-            Type::Enum(e) => write!(f, "{}", e),
+            Type::Tuple { fields } => {
+                write!(f, "(")?;
+                let field_str = fields.iter().fold(String::new(), |acc, item| {
+                    if acc.is_empty() {
+                        format!("{}", item)
+                    } else {
+                        format!("{}, {}", acc, item)
+                    }
+                });
+                write!(f, "{}", field_str)?;
+                write!(f, ")")
+            }
+            Type::Enum { ctors, name: _ } => {
+                write!(f, "{{")?;
+                let item2str = |item: &(String, Vec<Type>)| {
+                    format!(
+                        "<{} {}>",
+                        item.0,
+                        Type::Tuple {
+                            fields: item.1.clone()
+                        }
+                    )
+                };
+                let field_str = ctors.iter().fold(String::new(), |acc, item| {
+                    if acc.is_empty() {
+                        item2str(item)
+                    } else {
+                        format!("{} | {}", acc, item2str(item))
+                    }
+                });
+                write!(f, "{}", field_str)?;
+                write!(f, "}}")
+            }
             Type::Primitive(p) => write!(f, "{}", p),
-            Type::Opaque(o) => write!(f, "{}", o),
-            Type::Reference(r) => write!(f, "{}", r),
+            Type::Opaque { alias } => {
+                write!(f, "{}", alias.as_ref().right().unwrap())
+            }
+            Type::Reference { refer } => {
+                write!(f, "ref {}", refer.as_ref().right().unwrap())
+            }
+            Type::Array(arr) => write!(f, "[{}]", arr),
+            Type::Callable {
+                ret_type,
+                parameters,
+                kind: _,
+            } => {
+                write!(
+                    f,
+                    "{} -> {}",
+                    Type::Tuple {
+                        fields: parameters.clone()
+                    },
+                    ret_type
+                )
+            }
         }
     }
 }

@@ -8,7 +8,7 @@ use inkwell::types::StructType;
 use inkwell::values::FunctionValue;
 use paste::paste;
 
-use crate::midend::type_context::PrimitiveType;
+use crate::midend::type_context::Primitive;
 
 macro_rules! runtime_function {
     ($fn_name:ident, $lf: lifetime) => {
@@ -93,7 +93,7 @@ pub trait CoreLibrary<'ctx> {
     runtime_type!(_String, 'ctx);
     runtime_type!(_Enum, 'ctx);
 
-    fn get_calocom_type(&self, ty: PrimitiveType) -> BasicTypeEnum<'ctx>;
+    fn get_calocom_type(&self, ty: Primitive) -> BasicTypeEnum<'ctx>;
     fn link_calocom_runtime_module(&mut self, path: &Path);
 }
 
@@ -128,15 +128,15 @@ impl<'ctx> CoreLibrary<'ctx> for Module<'ctx> {
     runtime_type_getter!(_String, 'ctx);
     runtime_type_getter!(_Enum, 'ctx);
 
-    fn get_calocom_type(&self, ty: PrimitiveType) -> BasicTypeEnum<'ctx> {
+    fn get_calocom_type(&self, ty: Primitive) -> BasicTypeEnum<'ctx> {
         let context = unsafe { &*(&*self.get_context() as *const Context) };
         match ty {
-            PrimitiveType::Object => self.get_runtime_type__Object().into(),
-            PrimitiveType::Str => self.get_runtime_type__String().into(),
-            PrimitiveType::Bool => self.get_runtime_type__Int32().into(),
-            PrimitiveType::Int32 => self.get_runtime_type__Int32().into(),
-            PrimitiveType::Unit => self.get_runtime_type__Unit().into(),
-            PrimitiveType::CInt32 => context.i32_type().into(),
+            Primitive::Object => self.get_runtime_type__Object().into(),
+            Primitive::Str => self.get_runtime_type__String().into(),
+            Primitive::Bool => self.get_runtime_type__Int32().into(),
+            Primitive::Int32 => self.get_runtime_type__Int32().into(),
+            Primitive::Unit => self.get_runtime_type__Unit().into(),
+            Primitive::CInt32 => context.i32_type().into(),
         }
     }
 

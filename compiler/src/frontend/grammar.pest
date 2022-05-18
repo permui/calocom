@@ -25,10 +25,7 @@ string_lit_inner = @{ ("\\\\" | "\\\"" | (!"\"" ~ ANY))* }
 
 bool_lit = @{ "true" | "false" }
 
-char_lit = ${ "'" ~ char_lit_inner ~ "'" }
-char_lit_inner = @{ !"'" ~ ANY }
-
-Literal = { float_lit | integer_lit | string_lit | bool_lit | char_lit }
+Literal = { float_lit | integer_lit | string_lit | bool_lit }
 
 // path
 

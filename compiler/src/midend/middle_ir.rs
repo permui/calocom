@@ -141,7 +141,7 @@ impl MiddleIR {
 
                     self.convert_expr(
                         &TypedExpr {
-                            expr: Box::new(ExprEnum::Var(name.clone())),
+                            expr: Box::new(ExprEnum::Path(name.clone())),
                             typ: *typ,
                         },
                         builder,
@@ -185,7 +185,7 @@ impl MiddleIR {
         &mut self,
         builder: &mut FunctionBuilder,
         expr: Rc<VarDef>,
-        arms: &[(Pattern, TypedExpr)],
+        arms: &[(TypedASTComplexPattern, TypedExpr)],
         output: Rc<VarDef>,
     ) {
         let current_bb = Rc::clone(builder.position.as_ref().unwrap());
@@ -199,7 +199,7 @@ impl MiddleIR {
         let mut v = vec![];
         for arm in arms {
             match &arm.0 {
-                Pattern::Lit(lit) => {
+                TypedASTComplexPattern::Lit(lit) => {
                     let arm_block = Rc::new(RefCell::new(Block::new(
                         &mut builder.namer,
                         vec![],
@@ -219,7 +219,7 @@ impl MiddleIR {
 
                     builder.func.blocks.push(arm_block);
                 }
-                Pattern::Con(_) => panic!("can't use a non-literal match arm"),
+                TypedASTComplexPattern::Ctor(_) => panic!("can't use a non-literal match arm"),
             }
         }
 
@@ -265,7 +265,7 @@ impl MiddleIR {
         &mut self,
         builder: &mut FunctionBuilder,
         expr: Rc<VarDef>,
-        arms: &[(Pattern, TypedExpr)],
+        arms: &[(TypedASTComplexPattern, TypedExpr)],
         output: Rc<VarDef>,
     ) {
         let current_bb = Rc::clone(builder.position.as_ref().unwrap());
@@ -285,8 +285,8 @@ impl MiddleIR {
         let mut v = vec![];
         for arm in arms.iter().enumerate() {
             match &arm.1 .0 {
-                Pattern::Lit(_) => panic!("can't use a literal match arm"),
-                Pattern::Con(con) => {
+                TypedASTComplexPattern::Lit(_) => panic!("can't use a literal match arm"),
+                TypedASTComplexPattern::Ctor(con) => {
                     let TypedASTConstructorVar { name, inner } = con;
                     let arm_block = Rc::new(RefCell::new(Block::new(
                         &mut builder.namer,
@@ -510,9 +510,9 @@ impl MiddleIR {
     fn convert_arith_expr(
         &mut self,
         builder: &mut FunctionBuilder,
-        x: &TypedArithExpr,
+        x: &TypedBinOpExpr,
     ) -> TypedValue {
-        let TypedArithExpr { lhs, rhs, op, typ } = x;
+        let TypedBinOpExpr { lhs, rhs, op, typ } = x;
 
         let lhs_out = self
             .create_variable_definition(builder.namer.next_name("tmp.arith.lhs").as_str(), lhs.typ);
@@ -565,13 +565,13 @@ impl MiddleIR {
         expr: &ExprEnum,
     ) -> TypedValue {
         match expr {
-            ExprEnum::MatchExpr(x) => self.convert_match_expr(builder, x),
-            ExprEnum::BraExpr(x) => self.convert_bracket_expr(builder, x),
-            ExprEnum::CallExpr(x) => self.convert_call_expr(builder, x),
-            ExprEnum::ExtCallExpr(x) => self.convert_ext_call_expr(builder, x),
-            ExprEnum::ArithExpr(x) => self.convert_arith_expr(builder, x),
-            ExprEnum::CtorExpr(x) => self.convert_ctor_expr(builder, x),
-            ExprEnum::Var(x) => self.convert_variable_expr(builder, x.as_str()),
+            ExprEnum::Match(x) => self.convert_match_expr(builder, x),
+            ExprEnum::Bracket(x) => self.convert_bracket_expr(builder, x),
+            ExprEnum::Call(x) => self.convert_call_expr(builder, x),
+            ExprEnum::ExtCall(x) => self.convert_ext_call_expr(builder, x),
+            ExprEnum::BinOp(x) => self.convert_arith_expr(builder, x),
+            ExprEnum::Ctor(x) => self.convert_ctor_expr(builder, x),
+            ExprEnum::Path(x) => self.convert_variable_expr(builder, x.as_str()),
             ExprEnum::Lit(x) => self.convert_literal_expr(x),
         }
     }
@@ -648,7 +648,7 @@ impl MiddleIR {
                 });
 
                 stmt.note = "assign".to_string();
-            } else if self.ty_ctx.is_type_pure_eq(t1, t2) || self.ty_ctx.is_type_opaque_eq(t1, t2) {
+            } else if self.ty_ctx.is_type_purely_eq(t1, t2) || self.ty_ctx.is_type_opaque_eq(t1, t2) {
                 stmt.left = Some(Rc::clone(&lhs));
                 stmt.right = Some(val);
                 stmt.note = "assign".to_string();
@@ -931,7 +931,7 @@ impl Display for BinOp {
         match self {
             TypedASTBinOp::Plus => write!(f, "add"),
             TypedASTBinOp::Sub => write!(f, "sub"),
-            TypedASTBinOp::Mult => write!(f, "mul"),
+            TypedASTBinOp::Mul => write!(f, "mul"),
             TypedASTBinOp::Div => write!(f, "div"),
             TypedASTBinOp::Mod => write!(f, "mod"),
         }
