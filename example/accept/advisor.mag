@@ -1,146 +1,23 @@
-import std.io
-import std.string
 
-data StrList = StrNil | StrCon(str, StrList) ;
+main: () -> () {
+    while true {
+        let line : str = io.readline(); 
 
-data OrRequire = OrNil | OrCon(StrList, OrRequire);
+        if line == "" { break; };
 
-data ReqList = ReqNil | ReqCon((str, OrRequire), ReqList) ;
+        let a : [str] = string.split(line, "|");
+        let name : str = a[0];
+        // let credit : f64 = to_credit(a[1]);
+        // let req : OrRequire = to_require(a[2]);
+        // let score : f64 = to_score(a[3]);
 
-rev_reqlist_: (l: ReqList, o: ReqList) -> ReqList {
-    match l {
-        ReqNil => o,
-        ReqCon(h, t) => rev_reqlist_(t, ReqCon(h, o))
-    }
+        // if score >= 0 { gpa = gpa + score * credit; };
+        // if score >= 0 { att_sum = att_sum + credit; };
+        // if score >  0 { acq_sum = acq_sum + credit; };
+        // if score <= 0 { rem_sum = rem_sum + credit; };
+
+        // if score >  0 { alr = StrCon(name, alr); };
+        // if score <= 0 { c = ReqCon((name, req), c); };
+    };
+
 }
-
-rev_reqlist: (l: ReqList) -> ReqList {
-    rev_reqlist_(l, ReqNil)
-}
-
-to_credit: (s: str) -> f64 {
-    match s {
-        "1" => 1,
-        "2" => 2,
-        "3" => 3,
-        "4" => 4,
-        _ => 0
-    }
-}
-
-to_score: (s: str) -> f64 {
-    match s {
-        "A" => 4,
-        "B" => 3,
-        "C" => 2,
-        "D" => 1,
-        "F" => 0,
-        "" => -1,
-        _ => -2
-    }
-}
-
-// element: (s: str, alr: StrList) -> bool {
-//     match alr {
-//         StrNil => false,
-//         StrCon(h, tail) => {
-//             if s == h { true } else { element(s, tail) }
-//         }
-//     }
-// }
-
-// satisfy_and: (l: StrList, alr: StrList) -> bool {
-//     match l {
-//         StrNil => true,
-//         StrCon(s, tail) => {
-//             if element(s, alr) { satisfy_and(tail, alr) } else { false }
-//         }
-//     }
-// }
-
-// satisfy_or: (r: OrRequire, alr: StrList) -> bool {
-//     match r {
-//         OrNil => false,
-//         OrCon(al, tail) => {
-//             if satisfy_and(l, alr) { true } else { satisfy_or(tail, alr) }
-//         }
-//     }
-// }
-
-// satisfy: (r: OrRequire, alr: StrList) -> bool {
-//     match r {
-//         OrNil => true,
-//         _ => satisfy_or(r, alr)
-//     }
-// }
-
-// recommend: (l: ReqList, alr: StrList) -> () {
-//     match l {
-//         ReqNil => (),
-//         ReqCon((name, req), tail) => {
-//             if satisfy(req, alr) {
-//                 io.print<str>("  ");
-//                 io.println<str>(name);
-//             };
-//             recommend(tail, alr);
-//         }
-//     }
-// }
-
-// main: () -> () {
-//     let gpa : f64 = 0;
-//     let att_sum : f64 = 0;
-//     let acq_sum : f64 = 0;
-//     let rem_sum : f64 = 0;
-//     let alr : StrList = StrNil;
-//     let c : ReqList = ReqNil;
-
-//     while true {
-//         // readline returns an `str`
-//         let line : str = io.readline(); 
-
-//         if line == "" { break; };
-
-//         let a : [str] = string.split(line, "|");
-//         let name : str = a[0];
-//         let credit : f64 = to_credit(a[1]);
-//         let req : OrRequire = to_require(a[2]);
-//         let score : f64 = to_score(a[3]);
-
-//         if score >= 0 { gpa = gpa + score * credit; };
-//         if score >= 0 { att_sum = att_sum + credit; };
-//         if score >  0 { acq_sum = acq_sum + credit; };
-//         if score <= 0 { rem_sum = rem_sum + credit; };
-
-//         if score >  0 { alr = StrCon(name, alr); };
-//         if score <= 0 { c = ReqCon((name, req), c); };
-//     };
-
-//     if att_sum > 0 { gpa = gpa / att_sum; } else { gpa = 0; };
-
-//     io.print<str>("GPA: ");
-//     io.print_float(gpa, 1);
-//     io.print_newline();
-    
-//     io.print<str>("Hours Attempted: ");
-//     io.print_float(att_sum, 0);
-//     io.print_newline();
-
-//     io.print<str>("Hours Completed: ");
-//     io.print_float(acq_sum, 0);
-//     io.print_newline();
-
-//     io.print<str>("Credits Remaining: ");
-//     io.print_float(rem_sum, 0);
-//     io.print_newline();
-
-//     io.print_newline();
-//     io.println("Possible Courses to Take Next");
-//     if rem_sum == 0 {
-//         io.println("  None - Congratulations!");
-//         return;
-//     };
-    
-//     c = rev_reqlist(c);
-//     recommend(c, alr);
-// }

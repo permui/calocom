@@ -1,12 +1,12 @@
 use super::ast::*;
 use super::frontend::parse;
-use std::path::PathBuf;
+use std::{path::PathBuf};
 #[allow(unused)]
 use std::{fs, fmt::DebugTuple};
 
 const HTML_PROVISION: &str = "<script src=\"https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js\"></script>
 <script>
-mermaid.initialize({startOnLoad:true});
+mermaid.initialize({startOnLoad:true, maxTextSize: 500000});
 </script>
 <style>
     .mermaid {}
@@ -196,8 +196,227 @@ fn generate_bracket_body(bracket_body: &BracketBody, prefix: String) -> String {
     ret
 }
 
-fn generate_expr(_expr: &Expr, prefix: String) -> String {
-    let ret = format!("expr__{}_((Expr))\n", prefix);
+fn generate_closure_expr(closure_expr: &ClosureExpr, prefix: String) -> String {
+    let mut ret = format!("closure_expr__{}_((Closure))\n", prefix);
+    ret.push_str(&generate_vec_name_type_bind(&closure_expr.param_list, prefix.clone() + "_in_vec_type_named_from_closure_"));
+    ret.push_str(format!("closure_expr__{}_-->vec_name_type_bind__{}_\n", prefix, prefix.clone() + "_in_vec_type_named_from_closure_").as_str());
+    ret.push_str(&generate_type(&closure_expr.ret_type, prefix.clone() + "_ret_type_of_closure_"));
+    ret.push_str(format!("closure_expr__{}_-->type__{}_\n", prefix, prefix.clone() + "_ret_type_of_closure_").as_str());
+    ret.push_str(&generate_expr(&closure_expr.body, prefix.clone() + "_body_of_closure_"));
+    ret.push_str(format!("closure_expr__{}_-->expr__{}_\n", prefix, prefix.clone() + "_body_of_closure_").as_str());
+    ret
+}
+
+fn generate_match_expr(match_expr: &MatchExpr, prefix: String) -> String {
+    let mut ret = format!("match_expr__{}_((MatchExpr))\n", prefix);
+    ret.push_str(&generate_expr(&match_expr.e, prefix.clone() + "_expr_from_match_condition_"));
+    ret.push_str(format!("match_expr__{}_-->expr__{}_\n", prefix, prefix.clone() + "_expr_from_match_condition_").as_str());
+    let mut cnt = 0;
+    for i in  &match_expr.arms {
+        ret.push_str(&generate_complex_pattern(&i.0, prefix.clone() + "_in_complex_from_match_" + cnt.to_string().as_str() + "_"));
+        ret.push_str(format!("match_expr__{}_-->complex_pattern__{}_\n", prefix,  prefix.clone() + "_in_complex_from_match_" + cnt.to_string().as_str() + "_").as_str());
+        cnt += 1;
+    }
+    ret
+}
+
+fn generate_complex_pattern(complex_pattern: &ComplexPattern, prefix: String) -> String {
+    let mut ret = format!("complex_pattern__{}_((ComplexPatter))\n", prefix);
+    match complex_pattern {
+        ComplexPattern::Ctor(ctor_pattern) => {
+            ret.push_str(&generate_ctor_pattern(ctor_pattern, prefix.clone() + "_ctor_from_complex_"));
+            ret.push_str(format!("complex_pattern__{}_-->ctor_pattern__{}_\n", prefix, prefix.clone() + "_ctor_from_complex_").as_str());
+        },
+        ComplexPattern::Tuple(_) => todo!(),
+        ComplexPattern::Wildcard => todo!(),
+        ComplexPattern::Literal(_) => todo!(),
+    }
+    ret
+}
+
+fn generate_ctor_pattern(ctor_pattern: &CtorPattern, prefix: String) -> String {
+    let mut ret = format!("ctor_pattern__{}_((Ctor))", prefix);
+    ret.push_str(format!("ctor_pattern_name__{}_(({}))\nctor_pattern__{}_-->ctor_pattern_name__{}_\n", prefix, ctor_pattern.name, prefix, prefix).as_str());
+    let mut cnt = 0;
+    for i in &ctor_pattern.inner {
+        ret.push_str(&generate_complex_pattern(i, prefix.clone() + "_" + cnt.to_string().as_str() + "_item_in_inner_"));
+        ret.push_str(format!("ctor_pattern__{}_-->complex_pattern__{}_\n", prefix, prefix.clone() + "_" + cnt.to_string().as_str() + "_item_in_inner_").as_str());
+        cnt += 1;
+    }
+    ret
+}
+
+fn generate_if_expr(if_expr: &IfExpr, prefix: String) -> String {
+    let mut ret = format!("if_expr__{}_((IfExpr))\n", prefix);
+    ret.push_str(&generate_expr(&if_expr.condition, prefix.clone() + "_in_condition_from_if_"));
+    ret.push_str(format!("if_expr__{}_-->expr__{}_\n", prefix, prefix.clone() + "_in_condition_from_if_").as_str());
+    ret.push_str(&generate_expr(&if_expr.t_branch, prefix.clone() + "_in_t_branch_"));
+    ret.push_str(format!("if_expr__{}_-->expr__{}_\n", prefix, prefix.clone() + "_in_t_branch_").as_str());
+    if let Some(ref f_branch) = if_expr.f_branch {
+        ret.push_str(&generate_expr(&f_branch, prefix.clone() + "_in_f_branch_"));
+        ret.push_str(format!("if_expr__{}_-->expr__{}_\n", prefix, prefix.clone() + "_in_f_branch_").as_str());
+    };
+    ret
+}
+
+fn generate_bin_op_expr(bin_op_expr: &BinOpExpr, prefix: String) -> String {
+    let mut ret = format!("bin_op_expr__{}_((BinOpExpr))\n", prefix);
+    ret.push_str(&generate_expr(&bin_op_expr.lhs, prefix.clone() + "_bin_op_lhs_"));
+    ret.push_str(format!("bin_op_expr__{}_-->expr__{}_\n", prefix, prefix.clone() + "_bin_op_lhs_").as_str());
+    ret.push_str(format!("bin_op_operator__{}_(({}))\nbin_op_expr__{}_-->bin_op_operator__{}_\n", 
+                                prefix, 
+                                match bin_op_expr.op {
+                                    BinOp::Or => "Or",
+                                    BinOp::And => "And",
+                                    BinOp::Le => "LessOrEqual",
+                                    BinOp::Ge => "GreaterOrEqual",
+                                    BinOp::Eq => "Equal",
+                                    BinOp::Ne => "NotEqual",
+                                    BinOp::Lt => "LessThan",
+                                    BinOp::Gt => "CreaterThan",
+                                    BinOp::Plus => "Plus",
+                                    BinOp::Sub => "Sub",
+                                    BinOp::Mul => "Mul",
+                                    BinOp::Div => "Div",
+                                    BinOp::Mod => "Mod",
+                                },
+                                prefix, 
+                                prefix).as_str());
+    ret.push_str(&generate_expr(&bin_op_expr.rhs, prefix.clone() + "_bin_op_rhs_"));
+    ret.push_str(format!("bin_op_expr__{}_-->expr__{}_\n", prefix, prefix.clone() + "_bin_op_rhs_").as_str());
+    ret
+}
+
+fn generate_unary_op_expr(unary_op_expr: &UnaryOpExpr, prefix: String) -> String {
+    let mut ret = format!("unary_op_expr__{}_((UnaryOpExpr))\n", prefix);
+    ret.push_str(&generate_expr(&unary_op_expr.expr, prefix.clone() + "_expr_from_unary_"));
+    ret.push_str(format!("unary_op_expr__{}_-->expr__{}_\n", prefix, prefix.clone() + "_expr_from_unary_").as_str());
+    ret.push_str(format!("unary_op_expr_op__{}_(({}))\nunary_op_expr__{}_-->unary_op_expr_op__{}_\n",
+                                prefix,
+                                match unary_op_expr.op {
+                                    UnaryOp::Not => "Not",
+                                    UnaryOp::Positive => "Positive",
+                                    UnaryOp::Negative => "Negative",
+                                },
+                                prefix,
+                                prefix
+    )                       .as_str());
+    ret
+}
+
+fn generate_subscript_expr(subscript_expr: &SubscriptExpr, prefix: String) -> String {
+    let mut ret = format!("subscript_expr__{}_((Subscript))\n", prefix);
+    ret.push_str(&generate_expr(&subscript_expr.arr, prefix.clone() + "_arr_from_subscript_"));
+    ret.push_str(format!("subscript_expr__{}_-->expr__{}_\n", prefix, prefix.clone() + "_arr_from_subscript_").as_str());
+    ret.push_str(&generate_expr(&subscript_expr.index, prefix.clone() + "_index_from_subscript_"));
+    ret.push_str(format!("subscript_expr__{}_-->expr__{}_\n", prefix, prefix.clone() + "_index_from_subscript_").as_str());
+    ret
+}
+
+fn generate_call_expr(call_expr: &CallExpr, prefix: String) -> String {
+    let mut ret = format!("call_expr__{}_((Call))\n", prefix);
+    ret.push_str(&generate_expr(&call_expr.func, prefix.clone() + "_func_"));
+    ret.push_str(format!("call_expr__{}_-->expr__{}_\n", prefix, prefix.clone() + "_func_").as_str());
+    if let Some(gen_type) = &call_expr.gen {
+        ret.push_str(&generate_type(&gen_type, prefix.clone() + "_gen_"));
+        ret.push_str(format!("call_expr__{}_-->type__{}_\n", prefix, prefix.clone() + "_gen_").as_str());
+
+    }
+    let mut cnt = 0;
+    for i in &call_expr.args {
+        ret.push_str(&generate_argument(i, prefix.clone() + "_arg_" + cnt.to_string().as_str() + "_"));
+        ret.push_str(format!("call_expr__{}_-->argument__{}_\n", prefix, prefix.clone() + "_arg_" + cnt.to_string().as_str() + "_").as_str());
+        cnt += 1;
+    }
+    ret
+}
+
+fn generate_argument(argument: &Argument, prefix: String) -> String {
+    let mut ret = format!("argument__{}_((Argument))\n", prefix);
+    match argument {
+        Argument::Expr(expr) => {
+            ret.push_str(&generate_expr(expr, prefix.clone() + "_expr_from_argument_"));
+            ret.push_str(format!("argument__{}_-->expr__{}_\n", prefix, prefix.clone() + "_expr_from_argument_").as_str());
+        },
+        Argument::AtVar(the_string) => {
+            ret.push_str(format!("argument_at_var__{}_(({}))\nargument__{}_-->argument_at_var__{}_\n", prefix, the_string, prefix, prefix).as_str());
+        },
+    }
+    ret
+}
+
+fn generate_tuple_expr(tuple_expr: &Vec<Expr>, prefix: String) -> String {
+    let mut ret = format!("tuple__{}_((Tuple))\n", prefix);
+    let mut cnt = 0;
+    for i in tuple_expr {
+        ret.push_str(&generate_expr(i, prefix.clone() + "_tuple_" + cnt.to_string().as_str() + "_"));
+        ret.push_str(format!("tuple__{}_-->expr__{}_\n", prefix, prefix.clone() + "_tuple_" + cnt.to_string().as_str() + "_").as_str());
+        cnt += 1;
+    }
+    ret
+}
+
+fn generate_literal(lit_expr: &Literal, prefix: String) -> String {
+    let mut ret = format!("literal__{}_((Literal))\n", prefix);
+    ret.push_str(
+        match lit_expr {
+            Literal::Float(fp) => format!("literal_float__{}_(({}))\nliteral__{}_-->literal_float__{}_\n", prefix, fp, prefix, prefix),
+            Literal::Int(int) => format!("literal_int__{}_(({}))\nliteral__{}_-->literal_int__{}_\n", prefix, int, prefix, prefix),
+            Literal::Str(_the_string) => format!("literal_str_{}_(({}))\nliteral__{}_-->literal_str_{}_\n", prefix, "literal String", prefix, prefix),
+            Literal::Bool(the_bool) => format!("literal_bool_{}_(({}))\nliteral__{}_-->literal_bool_{}_\n", prefix, the_bool, prefix, prefix),
+            Literal::Unit => format!("literal_unit__{}_((Unit))\nliteral__{}_-->literal_unit__{}_", prefix, prefix, prefix),
+        }.as_str()
+    );
+    ret
+}
+
+fn generate_expr(expr: &Expr, prefix: String) -> String {
+    let mut ret = format!("expr__{}_((Expr))\n", prefix);
+    match expr {
+        Expr::Closure(closure_expr) => {
+            ret.push_str(&generate_closure_expr(closure_expr, prefix.clone() + "_in_closure_from_expr_"));
+            ret.push_str(format!("expr__{}_-->closure_expr__{}_\n", prefix, prefix.clone() + "_in_closure_from_expr_").as_str());
+        },
+        Expr::Match(match_expr) => {
+            ret.push_str(&generate_match_expr(match_expr, prefix.clone() + "_in_match_from_expr_"));
+            ret.push_str(format!("expr__{}_-->match_expr__{}_\n", prefix, prefix.clone() + "_in_match_from_expr_").as_str());
+        },
+        Expr::If(if_expr) => {
+            ret.push_str(&generate_if_expr(if_expr, prefix.clone() + "_in_if_from_expr_"));
+            ret.push_str(format!("expr__{}_-->if_expr__{}_\n", prefix, prefix.clone() + "_in_if_from_expr_").as_str());
+        },
+        Expr::BinOp(bin_op_expr) => {
+            ret.push_str(&generate_bin_op_expr(bin_op_expr, prefix.clone() + "_in_bin_op_from_expr_"));
+            ret.push_str(format!("expr__{}_-->bin_op_expr__{}_\n", prefix, prefix.clone() + "_in_bin_op_from_expr_").as_str());
+        },
+        Expr::UnaryOp(unary_op_expr) => {
+            ret.push_str(&generate_unary_op_expr(unary_op_expr, prefix.clone() + "_in_unary_op_from_expr_"));
+            ret.push_str(format!("expr__{}_-->unary_op_expr__{}_\n", prefix, prefix.clone() + "_in_unary_op_from_expr_").as_str());
+        },
+        Expr::Subscript(subscript_expr) => {
+            ret.push_str(&generate_subscript_expr(subscript_expr, prefix.clone() + "_in_subscript_from_expr_"));
+            ret.push_str(format!("expr__{}_-->subscript_expr__{}_\n", prefix, prefix.clone() + "_in_subscript_from_expr_").as_str());
+        },
+        Expr::Call(call_expr) => {
+            ret.push_str(&generate_call_expr(call_expr, prefix.clone() + "_in_call_from_expr_"));
+            ret.push_str(format!("expr__{}_-->call_expr__{}_\n", prefix, prefix.clone() + "_in_call_from_expr_").as_str());
+        },
+        Expr::Tuple(tuple) => {
+            ret.push_str(&generate_tuple_expr(tuple, prefix.clone() + "_in_tuple_from_expr_"));
+            ret.push_str(format!("expr__{}_-->tuple__{}_\n", prefix, prefix.clone() + "_in_tuple_from_expr_").as_str());
+        },
+        Expr::Lit(lit_expr) => {
+            ret.push_str(&generate_literal(lit_expr, prefix.clone()));
+            ret.push_str(format!("expr__{}_-->literal__{}_\n", prefix, prefix).as_str());
+        },
+        Expr::Path(path) => {
+            ret.push_str(format!("path_in_expr__{}_(({}))\nexpr__{}_-->path_in_expr__{}_\n", prefix, path.items.join("/"), prefix, prefix).as_str());
+        },
+        Expr::Bracket(bracket_body) => {
+            ret.push_str(&generate_bracket_body(bracket_body, prefix.clone() + "_in_bracket_from_expr_"));
+            ret.push_str(format!("expr__{}_-->bracket_body__{}_\n", prefix, prefix.clone() + "_in_bracket_from_expr_").as_str());
+        },
+    }
     ret
 }
 
