@@ -652,6 +652,8 @@ impl TypedAST {
             if !self.ty_ctx.is_type_eq(or_expr.typ, then_expr.typ) {
                 panic!("if expression has inconsistent type of true and false branches");
             }
+        } else if !self.ty_ctx.is_type_eq(self.ty_ctx.singleton_type(Primitive::Unit), then_expr.typ) {
+            panic!("if expression without false branch must be unit type");
         }
 
         let typ = then_expr.typ;

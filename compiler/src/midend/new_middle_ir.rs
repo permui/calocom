@@ -543,6 +543,8 @@ impl<'a> FunctionBuilder<'a> {
         let TypedExpr { expr, typ } = expr;
         let ExprEnum::If { condition, then, or } = expr.as_ref() else { unreachable!() };
         let typ = *typ;
+        let has_else = or.is_some();
+
         // last block          <-- position (before build if)
         //
         // cond block ----------+
@@ -558,9 +560,13 @@ impl<'a> FunctionBuilder<'a> {
         // end block    <==+   <-- position
 
         let cond_block = self.create_block(Some("if.cond"), None);
-        let then_block = self.create_block(Some("if.then"), None);
-        let else_block = self.create_block(Some("if.else"), None);
         let end_block = self.create_block(Some("if.end"), None);
+        let then_block = self.create_block(Some("if.then"), None);
+        let else_block = if has_else {
+            Some(self.create_block(Some("if.else"), None))
+        } else {
+            None
+        };
 
         let if_out_name = self.namer.next_name("if.result");
         let if_out = self.func.create_variable_definition(
@@ -585,17 +591,20 @@ impl<'a> FunctionBuilder<'a> {
         self.change_terminator_at_position(Terminator::Branch(
             self.build_operand_from_var_def(cond_check_var),
             then_block,
-            else_block,
+            else_block.unwrap_or(end_block),
         ));
 
         self.position = Some(then_block);
         self.build_expr_and_assign_to(then, Some(if_out));
         self.change_terminator_at_position(Terminator::Jump(end_block));
 
-        // TODO
-        self.position = Some(else_block);
-        self.build_expr_and_assign_to(or.as_ref().unwrap(), Some(if_out));
-        self.change_terminator_at_position(Terminator::Jump(end_block));
+        if let Some(else_block) = else_block {
+            self.position = Some(else_block);
+            self.build_expr_and_assign_to(or.as_ref().unwrap(), Some(if_out));
+            self.change_terminator_at_position(Terminator::Jump(end_block));
+        } else {
+            self.build_unit_and_assign_to(if_out);
+        }
 
         self.position = Some(end_block);
         self.change_terminator_at_position(old_terminator_of_last_block);
@@ -849,13 +858,7 @@ impl<'a> FunctionBuilder<'a> {
         if let Some(ret_expr) = ret_expr {
             self.build_expr_and_assign_to(ret_expr, Some(output_var));
         } else {
-            self.build_expr_and_assign_to(
-                &TypedExpr {
-                    expr: Box::new(ExprEnum::Lit(Literal::Unit)),
-                    typ: self.ty_ctx.singleton_type(Primitive::Unit),
-                },
-                Some(output_var),
-            );
+            self.build_unit_and_assign_to(output_var);
         }
         self.var_ctx.exit_scope();
         self.build_operand_from_var_def(output_var)
@@ -900,6 +903,16 @@ impl<'a> FunctionBuilder<'a> {
     fn build_value_from_var_def(&self, var_def: VarDefRef) -> Value {
         let operand = self.build_operand_from_var_def(var_def);
         self.build_value_from_operand(operand)
+    }
+
+    fn build_unit_and_assign_to(&mut self, output_var: VarDefRef) {
+        self.build_expr_and_assign_to(
+            &TypedExpr {
+                expr: Box::new(ExprEnum::Lit(Literal::Unit)),
+                typ: self.ty_ctx.singleton_type(Primitive::Unit),
+            },
+            Some(output_var),
+        );
     }
 
     fn insert_stmt_at_position(&mut self, stmt: Stmt) {
