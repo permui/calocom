@@ -7,7 +7,6 @@ use crate::common::name_context::NameContext;
 use crate::common::type_context::*;
 use crate::common::unique_name::*;
 
-type RefPath = TypedASTRefPath;
 type Literal = TypedASTLiteral;
 type BinOp = TypedASTBinOp;
 type UnaryOp = TypedASTUnaryOp;
@@ -113,6 +112,7 @@ pub enum ValueEnum {
     BinaryOp(BinOp, Operand, Operand),
     UnaryOp(UnaryOp, Operand),
     MakeTuple(Vec<Operand>),
+    Construct(usize, Vec<Operand>),
     Intrinsic(&'static str, Vec<Operand>),
     Index(Operand),
     Operand(Operand),
@@ -126,7 +126,6 @@ struct FunctionBuilder<'a> {
     pub name_ctx: &'a NameContext<TypeRef>,
     pub ty_ctx: &'a TypeContext,
     pub func: &'a mut FuncDef,
-    pub collected_closure: Vec<&'a TypedExpr>,
     pub continue_blocks: Vec<BlockRef>,
     pub break_blocks: Vec<BlockRef>,
 }
@@ -201,7 +200,6 @@ impl<'a> FunctionBuilder<'a> {
             var_ctx,
             name_ctx,
             ty_ctx,
-            collected_closure: vec![],
             continue_blocks: vec![],
             break_blocks: vec![],
         }
@@ -290,15 +288,15 @@ impl<'a> FunctionBuilder<'a> {
         let TypedWhileStmt { condition, body } = stmt;
         // last block          <-- position (before build while)
         //
-        // cond block   <======|
+        // cond block   <======+
         // ...                 |
         // cond end block -+   |
         //                 |   |
-        // body block   <--|   |
+        // body block   <--+   |
         // ...             |   |
-        // body end block =|===+
+        // body end block =+===+
         //                 |
-        // end block    <--|   <-- position
+        // end block    <--+   <-- position
 
         let cond_block = self.create_block(Some("while.cond.start"), None);
         let end_block = self.create_block(Some("while.end"), None);
@@ -307,9 +305,9 @@ impl<'a> FunctionBuilder<'a> {
         self.continue_blocks.push(cond_block);
         self.break_blocks.push(end_block);
 
-        // record current block and its terminator
+        // record the terminator
         // update its terminator to jump to the condition block
-        let last_block = self.position.unwrap();
+        self.position.unwrap();
         let old_terminator_of_last_block =
             self.change_terminator_at_position(Terminator::Jump(cond_block));
 
@@ -318,16 +316,18 @@ impl<'a> FunctionBuilder<'a> {
         let cond_operand = self.build_expr_as_operand(condition);
         assert!(self.ty_ctx.is_boolean_testable_type(cond_operand.typ));
 
-        // record the end block of the condition part
-        // update its terminator to branch to body block or end block
-        let cond_end_block = self.position.unwrap();
+        // update the terminator of cond end block
+        // to branch to body block or end block
+        self.position.unwrap();
         self.change_terminator_at_position(Terminator::Branch(cond_operand, body_block, end_block));
 
         // start codegen of body part
         // change its terminator to loop back to the cond block
+        self.var_ctx.entry_scope();
         self.position = Some(body_block);
         self.build_bracket(body, None);
         self.change_terminator_at_position(Terminator::Jump(cond_block));
+        self.var_ctx.exit_scope();
 
         // move to end block
         // change its terminator to the old terminator of last block
@@ -339,7 +339,116 @@ impl<'a> FunctionBuilder<'a> {
     }
 
     fn build_for(&mut self, stmt: &TypedForStmt) {
-        todo!()
+        let TypedForStmt {
+            var_name,
+            range_l,
+            range_r,
+            body,
+        } = stmt;
+
+        // last block          <-- position (before build for)
+        //
+        // check block  <======+
+        //                 |   |
+        //                 |   |
+        // body block   <--+   |
+        // ...             |   |
+        // body end block =|===+
+        //                 |
+        // end block    <--+   <-- position
+
+        let check_block = self.create_block(Some("for.check.start"), None);
+        let end_block = self.create_block(Some("for.end"), None);
+        let body_block = self.create_block(Some("for.body.start"), None);
+
+        self.position.unwrap();
+        let old_terminator_of_last_block =
+            self.change_terminator_at_position(Terminator::Jump(check_block));
+
+        self.continue_blocks.push(check_block);
+        self.break_blocks.push(end_block);
+
+        self.var_ctx.entry_scope();
+
+        // this is the induction variable
+        let name = self.namer.next_name(var_name);
+        let ind_var = self.func.create_variable_definition(
+            name.as_str(),
+            range_l.typ,
+            VariableKind::LocalVariable,
+        );
+
+        // we assign the initial value to the induction variable
+        self.build_expr_and_assign_to(range_l, Some(ind_var));
+
+        // we calculate the termination value of the for range
+        let term_value_name = self.namer.next_name("for.range.terminate");
+        let term_value = self.func.create_variable_definition(
+            term_value_name.as_str(),
+            range_r.typ,
+            VariableKind::TemporaryVariable,
+        );
+
+        // allow to find the reference to induction variable
+        let _: Option<()> = self
+            .var_ctx
+            .insert_symbol(var_name.clone(), ind_var)
+            .and(None);
+
+        // move to check block;
+        self.position = Some(check_block);
+
+        // this is the test result of equality of induction variable and termination value
+        let cond_check_name = self.namer.next_name("for.cond.check");
+        let cond_check_var = self.func.create_variable_definition(
+            cond_check_name.as_str(),
+            self.ty_ctx.singleton_type(Primitive::Bool),
+            VariableKind::TemporaryVariable,
+        );
+
+        self.insert_stmt_at_position(Stmt {
+            left: Some(cond_check_var),
+            right: Some(Value {
+                typ: self.ty_ctx.singleton_type(Primitive::Bool),
+                val: ValueEnum::BinaryOp(
+                    BinOp::Eq,
+                    self.build_operand_from_var_def(ind_var),
+                    self.build_operand_from_var_def(term_value),
+                ),
+            }),
+            note: "for termination check",
+        });
+
+        self.change_terminator_at_position(Terminator::Branch(
+            self.build_operand_from_var_def(cond_check_var),
+            body_block,
+            end_block,
+        ));
+
+        self.position = Some(body_block);
+        self.build_bracket(body, None);
+        self.change_terminator_at_position(Terminator::Jump(check_block));
+
+        self.insert_stmt_at_position(Stmt {
+            left: Some(ind_var),
+            right: Some(Value {
+                typ: self.ty_ctx.singleton_type(Primitive::Bool),
+                val: ValueEnum::BinaryOp(
+                    BinOp::Plus,
+                    self.build_operand_from_literal(Literal::Int(1)),
+                    self.build_operand_from_var_def(term_value),
+                ),
+            }),
+            note: "for induction variable increment",
+        });
+
+        self.var_ctx.exit_scope();
+
+        self.position = Some(end_block);
+        self.change_terminator_at_position(old_terminator_of_last_block);
+
+        self.continue_blocks.pop();
+        self.break_blocks.pop();
     }
 
     fn build_asgn(&mut self, stmt: &TypedAsgnStmt) {
@@ -350,38 +459,26 @@ impl<'a> FunctionBuilder<'a> {
 
     fn build_expr_as_operand(&mut self, expr: &TypedExpr) -> Operand {
         let TypedExpr {
-            expr: expr_enum,
-            typ,
+            expr: expr_enum, ..
         } = expr;
-        let expr_enum = expr_enum.as_ref();
-        let operand = match expr_enum {
-            ExprEnum::Closure {
-                param_list,
-                ret_type,
-                body,
-            } => self.build_closure_expr(expr),
-            ExprEnum::Match { expr, arms } => self.build_match_expr(expr),
-            ExprEnum::If {
-                condition,
-                then,
-                or,
-            } => self.build_if_expr(expr),
-            ExprEnum::BinOp { lhs, rhs, op } => self.build_binary_operation_expr(expr),
-            ExprEnum::UnaryOp { expr, op } => self.build_unary_operation_expr(expr),
-            ExprEnum::Subscript { arr, index } => self.build_subscript_expr(expr),
-            ExprEnum::ClosureCall { expr, args } => self.build_closure_call_expr(expr),
-            ExprEnum::Ctor { name, args } => self.build_constructor_expr(expr),
-            ExprEnum::Call { path, gen, args } => self.build_call_expr(expr),
-            ExprEnum::Tuple { elements } => self.build_tuple_expr(expr),
-            ExprEnum::Lit(_) => self.build_literal_expr(expr),
-            ExprEnum::Path {
-                is_free_variable,
-                path,
-            } => self.build_path_expr(expr),
-            ExprEnum::Bracket { stmts, ret_expr } => self.build_bracket_expr(expr),
-        };
 
-        operand
+        let expr_enum = expr_enum.as_ref();
+
+        match expr_enum {
+            ExprEnum::Closure { .. } => self.build_closure_expr(expr),
+            ExprEnum::Match { .. } => self.build_match_expr(expr),
+            ExprEnum::If { .. } => self.build_if_expr(expr),
+            ExprEnum::BinOp { .. } => self.build_binary_operation_expr(expr),
+            ExprEnum::UnaryOp { .. } => self.build_unary_operation_expr(expr),
+            ExprEnum::Subscript { .. } => self.build_subscript_expr(expr),
+            ExprEnum::ClosureCall { .. } => self.build_closure_call_expr(expr),
+            ExprEnum::CtorCall { .. } => self.build_constructor_expr(expr),
+            ExprEnum::Call { .. } => self.build_call_expr(expr),
+            ExprEnum::Tuple { .. } => self.build_tuple_expr(expr),
+            ExprEnum::Lit(..) => self.build_literal_expr(expr),
+            ExprEnum::Path { .. } => self.build_path_expr(expr),
+            ExprEnum::Bracket { .. } => self.build_bracket_expr(expr),
+        }
     }
 
     fn build_expr_and_assign_to(&mut self, expr: &TypedExpr, out: Option<VarDefRef>) {
@@ -408,7 +505,7 @@ impl<'a> FunctionBuilder<'a> {
         match expr.expr.as_ref() {
             ExprEnum::Subscript { arr, index } => todo!(),
             ExprEnum::ClosureCall { expr, args } => todo!(),
-            ExprEnum::Call { path, gen, args } => todo!(),
+            ExprEnum::Call { path, args } => todo!(),
             ExprEnum::Path {
                 is_free_variable,
                 path,
@@ -419,25 +516,17 @@ impl<'a> FunctionBuilder<'a> {
 
     fn check_assignee(&mut self, expr: &TypedExpr) {
         match expr.expr.as_ref() {
-            ExprEnum::Closure {
-                param_list,
-                ret_type,
-                body,
-            } => panic!("closure isn't assignable"),
-            ExprEnum::Match { expr, arms } => panic!("match expression isn't assignable"),
-            ExprEnum::If {
-                condition,
-                then,
-                or,
-            } => panic!("if expression isn't assignable"),
-            ExprEnum::BinOp { lhs, rhs, op } => {
+            ExprEnum::Closure { .. } => panic!("closure isn't assignable"),
+            ExprEnum::Match { .. } => panic!("match expression isn't assignable"),
+            ExprEnum::If { .. } => panic!("if expression isn't assignable"),
+            ExprEnum::BinOp { .. } => {
                 panic!("binary operation expression isn't assignable")
             }
-            ExprEnum::UnaryOp { expr, op } => panic!("unary operation expression isn't assignable"),
-            ExprEnum::Ctor { name, args } => panic!("constructor expression isn't assignable"),
-            ExprEnum::Tuple { elements } => panic!("tuple expression isn't assignable"),
+            ExprEnum::UnaryOp { .. } => panic!("unary operation expression isn't assignable"),
+            ExprEnum::CtorCall { .. } => panic!("constructor expression isn't assignable"),
+            ExprEnum::Tuple { .. } => panic!("tuple expression isn't assignable"),
             ExprEnum::Lit(_) => panic!("literal isn't assignable"),
-            ExprEnum::Bracket { stmts, ret_expr } => panic!("block expression isn't assignable"),
+            ExprEnum::Bracket { .. } => panic!("block expression isn't assignable"),
             _ => (),
         }
     }
@@ -451,15 +540,120 @@ impl<'a> FunctionBuilder<'a> {
     }
 
     fn build_if_expr(&mut self, expr: &TypedExpr) -> Operand {
-        todo!()
+        let TypedExpr { expr, typ } = expr;
+        let ExprEnum::If { condition, then, or } = expr.as_ref() else { unreachable!() };
+        let typ = *typ;
+        // last block          <-- position (before build if)
+        //
+        // cond block ----------+
+        //                      |
+        // then block   <-------+
+        // ...                  |
+        // then end block =+    |
+        //                 |    |
+        // else block   <--+----+
+        // ...             |
+        // else end block  |
+        //                 |
+        // end block    <==+   <-- position
+
+        let cond_block = self.create_block(Some("if.cond"), None);
+        let then_block = self.create_block(Some("if.then"), None);
+        let else_block = self.create_block(Some("if.else"), None);
+        let end_block = self.create_block(Some("if.end"), None);
+
+        let if_out_name = self.namer.next_name("if.result");
+        let if_out = self.func.create_variable_definition(
+            if_out_name.as_str(),
+            typ,
+            VariableKind::TemporaryVariable,
+        );
+
+        self.position.unwrap();
+        let old_terminator_of_last_block =
+            self.change_terminator_at_position(Terminator::Jump(cond_block));
+
+        self.position = Some(cond_block);
+        let cond_check_name = self.namer.next_name("if.cond.check");
+        let cond_check_var = self.func.create_variable_definition(
+            cond_check_name.as_str(),
+            self.ty_ctx.singleton_type(Primitive::Bool),
+            VariableKind::TemporaryVariable,
+        );
+
+        self.build_expr_and_assign_to(condition, Some(cond_check_var));
+        self.change_terminator_at_position(Terminator::Branch(
+            self.build_operand_from_var_def(cond_check_var),
+            then_block,
+            else_block,
+        ));
+
+        self.position = Some(then_block);
+        self.build_expr_and_assign_to(then, Some(if_out));
+        self.change_terminator_at_position(Terminator::Jump(end_block));
+
+        // TODO
+        self.position = Some(else_block);
+        self.build_expr_and_assign_to(or.as_ref().unwrap(), Some(if_out));
+        self.change_terminator_at_position(Terminator::Jump(end_block));
+
+        self.position = Some(end_block);
+        self.change_terminator_at_position(old_terminator_of_last_block);
+
+        self.build_operand_from_var_def(if_out)
     }
 
     fn build_binary_operation_expr(&mut self, expr: &TypedExpr) -> Operand {
-        todo!()
+        let TypedExpr { expr, typ } = expr;
+        let ExprEnum::BinOp { lhs, rhs, op } = expr.as_ref() else { unreachable!() };
+        let typ = *typ;
+
+        let left_operand = self.build_expr_as_operand(lhs);
+        let right_operand = self.build_expr_as_operand(rhs);
+
+        let name = self.namer.next_name("binary.op.result");
+        let result = self.func.create_variable_definition(
+            name.as_str(),
+            typ,
+            VariableKind::TemporaryVariable,
+        );
+
+        self.insert_stmt_at_position(Stmt {
+            left: Some(result),
+            right: Some(Value {
+                typ,
+                val: ValueEnum::BinaryOp(*op, left_operand, right_operand),
+            }),
+            note: "binary operation",
+        });
+
+        self.build_operand_from_var_def(result)
     }
 
     fn build_unary_operation_expr(&mut self, expr: &TypedExpr) -> Operand {
-        todo!()
+        let TypedExpr { expr, typ } = expr;
+        let ExprEnum::UnaryOp { expr, op } = expr.as_ref() else { unreachable!() };
+        let typ = *typ;
+
+        let operand = self.build_expr_as_operand(expr);
+
+        let name = self.namer.next_name("unary.op.result");
+        let result = self.func.create_variable_definition(
+            name.as_str(),
+            typ,
+            VariableKind::TemporaryVariable,
+        );
+
+        self.insert_stmt_at_position(Stmt {
+            left: Some(result),
+            right: Some(Value {
+                typ,
+                val: ValueEnum::UnaryOp(*op, operand),
+            }),
+            note: "binary operation",
+        });
+
+        self.build_operand_from_var_def(result)
     }
 
     fn build_subscript_expr(&mut self, expr: &TypedExpr) -> Operand {
@@ -471,12 +665,37 @@ impl<'a> FunctionBuilder<'a> {
     }
 
     fn build_constructor_expr(&mut self, expr: &TypedExpr) -> Operand {
-        todo!()
+        let TypedExpr { expr, typ } = expr;
+        let ExprEnum::CtorCall { name, args  } = expr.as_ref() else { unreachable!() };
+        let typ = *typ;
+
+        let (ctor_index, params_type) = self
+            .ty_ctx
+            .get_ctor_index_and_field_type_ref_by_name(typ, name);
+        let args_value = self.build_arguments(args, &params_type);
+
+        let constructed_name = self.namer.next_name("enum.constructed");
+        let construction_result = self.func.create_variable_definition(
+            constructed_name.as_str(),
+            typ,
+            VariableKind::TemporaryVariable,
+        );
+
+        self.insert_stmt_at_position(Stmt {
+            left: Some(construction_result),
+            right: Some(Value {
+                typ,
+                val: ValueEnum::Construct(ctor_index, args_value),
+            }),
+            note: "construct an enum here",
+        });
+
+        self.build_operand_from_var_def(construction_result)
     }
 
     fn build_call_expr(&mut self, expr: &TypedExpr) -> Operand {
-        let TypedExpr { expr, typ } = expr;
-        let ExprEnum::Call { path, gen, args  } = expr.as_ref() else { unreachable!() };
+        let TypedExpr { expr, .. } = expr;
+        let ExprEnum::Call { path, args, ..  } = expr.as_ref() else { unreachable!() };
 
         let fn_type = self
             .name_ctx
@@ -486,6 +705,10 @@ impl<'a> FunctionBuilder<'a> {
         let Type::Callable { kind , ret_type, parameters } = self.ty_ctx.get_type_by_ref(fn_type) else {
             unreachable!();
         };
+
+        if kind != CallKind::Function {
+            panic!("internal error");
+        }
 
         let args_operands = self.build_arguments(args, &parameters);
 
@@ -524,9 +747,9 @@ impl<'a> FunctionBuilder<'a> {
                     vec.push(self.build_operand_from_var_def(arg_var));
                 }
                 TypedArgument::AtVar(name, typ) => {
-                    let name = self.namer.next_name("at_arg");
+                    let arg_name = self.namer.next_name("at_arg");
                     let arg_var = self.func.create_variable_definition(
-                        name.as_str(),
+                        arg_name.as_str(),
                         type_ref,
                         VariableKind::TemporaryVariable,
                     );
@@ -596,7 +819,15 @@ impl<'a> FunctionBuilder<'a> {
     }
 
     fn build_path_expr(&mut self, expr: &TypedExpr) -> Operand {
-        todo!()
+        // assure here is only variable path, not function path or ctor path
+        let TypedExpr { expr, .. } = expr;
+        let ExprEnum::Path { path, .. } = expr.as_ref() else { unreachable!() };
+        let var = self
+            .var_ctx
+            .find_symbol(path)
+            .unwrap_or_else(|| panic!("variable {} not defined", path.join(".")));
+
+        self.build_operand_from_var_def(var)
     }
 
     fn build_bracket_expr(&mut self, expr: &TypedExpr) -> Operand {
@@ -604,8 +835,9 @@ impl<'a> FunctionBuilder<'a> {
         let ExprEnum::Bracket { stmts, ret_expr } = expr.as_ref() else { unreachable!() };
         let typ = *typ;
 
+        let name = self.namer.next_name("bracket.out");
         let output_var = self.func.create_variable_definition(
-            "bracket.out",
+            name.as_str(),
             typ,
             VariableKind::TemporaryVariable,
         );
@@ -640,6 +872,28 @@ impl<'a> FunctionBuilder<'a> {
         Operand {
             typ: self.get_var_type(var_def),
             val: Box::new(OperandEnum::Var(var_def)),
+        }
+    }
+
+    fn build_operand_from_var_def_with_type(
+        &mut self,
+        typ: TypeRef,
+        var_def: VarDefRef,
+    ) -> Operand {
+        self.build_type_conversion_if_need(self.build_operand_from_var_def(var_def), typ)
+    }
+
+    fn build_operand_from_literal(&self, literal: Literal) -> Operand {
+        let typ = match literal {
+            Literal::Float(_) => self.ty_ctx.singleton_type(Primitive::Float64),
+            Literal::Int(_) => self.ty_ctx.singleton_type(Primitive::Int32),
+            Literal::Str(_) => self.ty_ctx.singleton_type(Primitive::Str),
+            Literal::Bool(_) => self.ty_ctx.singleton_type(Primitive::Bool),
+            Literal::Unit => self.ty_ctx.singleton_type(Primitive::Unit),
+        };
+        Operand {
+            typ,
+            val: Box::new(OperandEnum::Imm(literal)),
         }
     }
 
@@ -696,6 +950,8 @@ impl MiddleIR {
             ..Default::default()
         };
 
+        mir.convert_ast(&module);
+
         mir
     }
 
@@ -721,7 +977,9 @@ impl MiddleIR {
 
         // insert the return value variable
         var_ctx.entry_scope();
-        var_ctx.insert_symbol("ret.var".to_string(), ret_var);
+        var_ctx
+            .insert_symbol("ret.var".to_string(), ret_var)
+            .unwrap_or_default();
 
         for TypedBind {
             with_at: _,
@@ -733,7 +991,9 @@ impl MiddleIR {
             let param =
                 def.create_variable_definition(name.as_str(), *typ, VariableKind::Parameter);
 
-            var_ctx.insert_symbol(var_name.to_string(), param);
+            var_ctx
+                .insert_symbol(var_name.to_string(), param)
+                .unwrap_or_default();
         }
 
         def.initialize_blocks();

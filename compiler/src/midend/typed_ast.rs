@@ -105,13 +105,12 @@ pub enum ExprEnum {
         expr: TypedExpr,
         args: Vec<TypedArgument>,
     },
-    Ctor {
+    CtorCall {
         name: String,
         args: Vec<TypedArgument>,
     },
     Call {
         path: Vec<String>,
-        gen: Option<Type>, // generic notation
         args: Vec<TypedArgument>,
     },
     Tuple {
@@ -351,16 +350,13 @@ impl TypedAST {
         let crate::ast::CallExpr { gen: _, args, func } = call;
 
         let TypedExpr { typ, expr } = self.check_type_of_expr(func);
-        if !self.ty_ctx.is_callable_type(typ) {
-            panic!("try to call a non-callable entity");
-        }
 
         let Type::Callable {
             ret_type,
             parameters,
             kind,
         } = self.ty_ctx.get_type_by_ref(typ) else {
-            unreachable!()
+            panic!("try to call a non-callable entity");
         };
 
         let args: Vec<_> = args
@@ -391,7 +387,7 @@ impl TypedAST {
                     }
                 }
 
-                let path = match &*expr {
+                let path = match expr.as_ref() {
                     ExprEnum::Path {
                         path,
                         is_free_variable: _,
@@ -402,7 +398,7 @@ impl TypedAST {
                 assert!(path.len() == 1);
 
                 TypedExpr {
-                    expr: Box::new(ExprEnum::Ctor {
+                    expr: Box::new(ExprEnum::CtorCall {
                         args,
                         name: path[0].clone(),
                     }),
@@ -434,7 +430,7 @@ impl TypedAST {
                         typ: ret_type,
                     }
                 } else {
-                    let path = match &*expr {
+                    let path = match expr.as_ref() {
                         ExprEnum::Path {
                             path,
                             is_free_variable: _,
@@ -445,7 +441,6 @@ impl TypedAST {
                     TypedExpr {
                         expr: Box::new(ExprEnum::Call {
                             path: path.clone(),
-                            gen: None,
                             args,
                         }),
                         typ: ret_type,
@@ -819,7 +814,7 @@ impl TypedAST {
         let (level, typ) = self.name_ctx.find_symbol_and_level(items);
         let typ = typ.unwrap_or_else(|| panic!("unable to find symbol {}", items.join(".")));
 
-        // force parameterless ctor from callable into its return type
+        // convert ctor with 0 parameters from path expr to ctor expr
 
         if let Type::Callable {
             kind: CallKind::Constructor,
@@ -829,9 +824,9 @@ impl TypedAST {
         {
             if parameters.is_empty() {
                 return TypedExpr {
-                    expr: Box::new(ExprEnum::Path {
-                        path: items.clone(),
-                        is_free_variable: false,
+                    expr: Box::new(ExprEnum::CtorCall {
+                        name: items[0].clone(),
+                        args: vec![],
                     }),
                     typ: ret_type,
                 };
@@ -940,7 +935,10 @@ impl TypedAST {
         let range_l = self.check_type_of_expr(range_l);
         let range_r = self.check_type_of_expr(range_r);
 
-        if !self.ty_ctx.is_index_type(range_l.typ) || !self.ty_ctx.is_index_type(range_r.typ) {
+        if !self.ty_ctx.is_index_type(range_l.typ)
+            || !self.ty_ctx.is_index_type(range_r.typ)
+            || !self.ty_ctx.is_type_eq(range_l.typ, range_r.typ)
+        {
             panic!("range is not index type")
         }
 
