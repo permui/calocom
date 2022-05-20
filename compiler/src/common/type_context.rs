@@ -85,6 +85,16 @@ impl Default for TypeContext {
 }
 
 impl TypeContext {
+    pub const PRIMITIVE_TYPE_NAME: [&'static str; 7] = [
+        "__object!",
+        "__unit!",
+        "str",
+        "bool",
+        "i32",
+        "f64",
+        "__c_i32!",
+    ];
+
     pub fn types(&self) -> &SlotMap<TypeRef, Type> {
         &self.types
     }
@@ -228,18 +238,12 @@ impl TypeContext {
     }
 
     fn add_primitives(&mut self) {
-        use Primitive::*;
-        let prim = &[
-            (Object, "__object!"),
-            (Bool, "bool"),
-            (Int32, "i32"),
-            (Str, "str"),
-            (Unit, "__unit!"),
-            (CInt32, "__c_i32!"),
-            (Float64, "f64"),
-        ];
-        prim.iter()
-            .for_each(|(ty, name)| self.add_primitive(*ty, Some(name)));
+        TypeContext::PRIMITIVE_TYPE_NAME
+            .iter()
+            .enumerate()
+            .for_each(|(idx, name)| {
+                self.add_primitive(Primitive::try_from(idx).unwrap(), Some(name))
+            });
     }
 
     pub fn refine_all_type(&mut self) {
@@ -247,8 +251,8 @@ impl TypeContext {
         for t in self.types.iter() {
             self.mark_to_be_refined_type(t.0, &mut refine_map);
         }
-        // refine all types
 
+        // refine all types
         for (origin_type, target_type) in refine_map {
             self.refine_type(origin_type, Left(target_type));
         }
@@ -464,15 +468,15 @@ impl TypeContext {
             }
             Type::Primitive(_) => {}
             Type::Opaque { alias } => {
-                if let Left(t) = alias {
-                    let name = display_name.get(t).unwrap();
-                    todo_map.insert(*t, name.clone());
+                if let Left(typ) = alias {
+                    let name = display_name.get(typ).unwrap();
+                    todo_map.insert(t, name.clone());
                 }
             }
             Type::Reference { refer } => {
-                if let Left(t) = refer {
-                    let name = display_name.get(t).unwrap();
-                    todo_map.insert(*t, name.clone());
+                if let Left(typ) = refer {
+                    let name = display_name.get(typ).unwrap();
+                    todo_map.insert(t, name.clone());
                 }
             }
             Type::Callable {
@@ -492,7 +496,7 @@ impl TypeContext {
         let mut context = self.clone();
         let mut display_name_map = HashMap::new();
         let mut namer = UniqueName::new();
-        let mut todo_set: HashMap<_, _> = Default::default();
+        let mut todo_map: HashMap<_, _> = Default::default();
 
         for (k, v) in context.name_ref_map.iter() {
             display_name_map.insert(*v, k.clone());
@@ -505,12 +509,18 @@ impl TypeContext {
         }
 
         for (type_ref, _) in context.types.iter() {
-            context.mark_to_be_recovered_type(type_ref, &display_name_map, &mut todo_set);
+            context.mark_to_be_recovered_type(type_ref, &display_name_map, &mut todo_map);
         }
 
-        for (type_ref, name) in todo_set {
+        for (type_ref, name) in todo_map {
             context.refine_type(type_ref, Right(name))
         }
+
+        let mut new_node_map = HashMap::new();
+        for &idx in context.type_ref_map.values() {
+            new_node_map.insert(context.types[idx].clone(), idx);
+        }
+        context.type_ref_map = new_node_map;
 
         (context, display_name_map)
     }
@@ -581,29 +591,22 @@ impl TypeContext {
 
     pub fn get_type_ref_string(&self, t: TypeRef) -> String {
         let mut s = "".to_string();
-        self.display_type_ref(t, &mut s);
+        self.display_type_ref(t, &mut s).unwrap();
         s
     }
 }
 
 impl Display for Primitive {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Primitive::Object => write!(f, "__object"),
-            Primitive::Str => write!(f, "str"),
-            Primitive::Bool => write!(f, "bool"),
-            Primitive::Int32 => write!(f, "i32"),
-            Primitive::Unit => write!(f, "__unit"),
-            Primitive::CInt32 => write!(f, "__c_i32"),
-            Primitive::Float64 => write!(f, "f64"),
-        }
+        let idx: usize = (*self).into();
+        write!(f, "{}", TypeContext::PRIMITIVE_TYPE_NAME[idx])
     }
 }
 
 impl Display for TypeContext {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let (context, map) = self.get_display_name_map();
-
+        dbg!(&context);
         writeln!(f, "TypeContext {{")?;
         for (key, typ) in context.types.iter() {
             let mut s = "".to_string();
