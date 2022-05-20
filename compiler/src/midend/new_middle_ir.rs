@@ -1,8 +1,10 @@
 use slotmap::{new_key_type, SlotMap};
 use std::fmt::Display;
+use std::fmt::Write;
 use std::{panic, vec};
 
 use super::typed_ast::*;
+use crate::common::dump::*;
 use crate::common::name_context::NameContext;
 use crate::common::type_context::*;
 use crate::common::unique_name::*;
@@ -114,7 +116,7 @@ pub enum ValueEnum {
     MakeTuple(Vec<Operand>),
     Construct(usize, Vec<Operand>),
     Intrinsic(&'static str, Vec<Operand>),
-    Index(Operand),
+    Index(Operand, Operand),
     Operand(Operand),
 }
 
@@ -182,6 +184,32 @@ impl FuncDef {
             terminator: Terminator::Panic,
             stmts: vec![],
         });
+    }
+
+    fn get_var_type(&self, var_def: VarDefRef) -> TypeRef {
+        self.variables.get(var_def).unwrap().typ
+    }
+
+    fn get_var_def(&self, var_def: VarDefRef) -> &VarDef {
+        self.variables.get(var_def).unwrap()
+    }
+
+    fn get_block(&self, block_ref: BlockRef) -> &Block {
+        self.blocks.get(block_ref).unwrap()
+    }
+
+    fn create_block(
+        &mut self,
+        namer: &mut UniqueName,
+        name: Option<&str>,
+        term: Option<Terminator>,
+    ) -> BlockRef {
+        self.blocks.insert(Block::new(
+            namer,
+            name,
+            vec![],
+            term.unwrap_or(Terminator::Panic),
+        ))
     }
 }
 
@@ -453,7 +481,7 @@ impl<'a> FunctionBuilder<'a> {
 
     fn build_asgn(&mut self, stmt: &TypedAsgnStmt) {
         let TypedAsgnStmt { lhs, rhs } = stmt;
-        let place = self.build_assignee_expr_as_var_def_ref(lhs);
+        let place = self.build_assignee_expr_as_var_def(lhs);
         self.build_expr_and_assign_to(rhs, Some(place));
     }
 
@@ -497,19 +525,38 @@ impl<'a> FunctionBuilder<'a> {
     }
 
     fn build_type_conversion_if_need(&mut self, source: Operand, target_type: TypeRef) -> Operand {
-        todo!()
+        let source_type = source.typ;
+
+        if source_type == target_type {
+            return source;
+        }
+        assert!(self.ty_ctx.is_compatible(source_type, target_type));
+
+        let name = self.namer.next_name("conversion");
+        let result = self.func.create_variable_definition(
+            name.as_str(),
+            target_type,
+            VariableKind::TemporaryVariable,
+        );
+        self.insert_stmt_at_position(Stmt {
+            left: Some(result),
+            right: Some(Value {
+                typ: source_type,
+                val: ValueEnum::Intrinsic("convert", vec![source]),
+            }),
+            note: "convert",
+        });
+
+        self.build_operand_from_var_def(result)
     }
 
-    fn build_assignee_expr_as_var_def_ref(&mut self, expr: &TypedExpr) -> VarDefRef {
+    fn build_assignee_expr_as_var_def(&mut self, expr: &TypedExpr) -> VarDefRef {
         self.check_assignee(expr);
         match expr.expr.as_ref() {
-            ExprEnum::Subscript { arr, index } => todo!(),
-            ExprEnum::ClosureCall { expr, args } => todo!(),
-            ExprEnum::Call { path, args } => todo!(),
-            ExprEnum::Path {
-                is_free_variable,
-                path,
-            } => todo!(),
+            ExprEnum::Subscript { .. } => self.build_subscript_expr_as_var_def(expr),
+            ExprEnum::ClosureCall { .. } => todo!(),
+            ExprEnum::Call { .. } => self.build_call_expr_as_var_def(expr),
+            ExprEnum::Path { .. } => self.build_path_expr_as_var_def(expr),
             _ => unreachable!("check assignee missed"),
         }
     }
@@ -665,8 +712,33 @@ impl<'a> FunctionBuilder<'a> {
         self.build_operand_from_var_def(result)
     }
 
+    fn build_subscript_expr_as_var_def(&mut self, expr: &TypedExpr) -> VarDefRef {
+        let TypedExpr { expr, typ } = expr;
+        let ExprEnum::Subscript { arr, index } = expr.as_ref() else { unreachable!() };
+        let typ = *typ;
+
+        let arr = self.build_expr_as_operand(arr);
+        let index = self.build_expr_as_operand(index);
+        let name = self.namer.next_name("elem");
+        let result =
+            self.func
+                .create_variable_definition(name.as_str(), typ, VariableKind::ObjectReference);
+
+        self.insert_stmt_at_position(Stmt {
+            left: Some(result),
+            right: Some(Value {
+                typ,
+                val: ValueEnum::Index(arr, index),
+            }),
+            note: "array subscription",
+        });
+
+        result
+    }
+
     fn build_subscript_expr(&mut self, expr: &TypedExpr) -> Operand {
-        todo!()
+        let result = self.build_subscript_expr_as_var_def(expr);
+        self.build_operand_from_var_def(result)
     }
 
     fn build_closure_call_expr(&mut self, expr: &TypedExpr) -> Operand {
@@ -703,6 +775,11 @@ impl<'a> FunctionBuilder<'a> {
     }
 
     fn build_call_expr(&mut self, expr: &TypedExpr) -> Operand {
+        let result = self.build_call_expr_as_var_def(expr);
+        self.build_operand_from_var_def(result)
+    }
+
+    fn build_call_expr_as_var_def(&mut self, expr: &TypedExpr) -> VarDefRef {
         let TypedExpr { expr, .. } = expr;
         let ExprEnum::Call { path, args, ..  } = expr.as_ref() else { unreachable!() };
 
@@ -737,7 +814,7 @@ impl<'a> FunctionBuilder<'a> {
             note: "make a call here",
         });
 
-        self.build_operand_from_var_def(call_result)
+        call_result
     }
 
     fn build_arguments(&mut self, args: &[TypedArgument], types: &[TypeRef]) -> Vec<Operand> {
@@ -828,6 +905,11 @@ impl<'a> FunctionBuilder<'a> {
     }
 
     fn build_path_expr(&mut self, expr: &TypedExpr) -> Operand {
+        let result = self.build_path_expr_as_var_def(expr);
+        self.build_operand_from_var_def(result)
+    }
+
+    fn build_path_expr_as_var_def(&mut self, expr: &TypedExpr) -> VarDefRef {
         // assure here is only variable path, not function path or ctor path
         let TypedExpr { expr, .. } = expr;
         let ExprEnum::Path { path, .. } = expr.as_ref() else { unreachable!() };
@@ -836,7 +918,7 @@ impl<'a> FunctionBuilder<'a> {
             .find_symbol(path)
             .unwrap_or_else(|| panic!("variable {} not defined", path.join(".")));
 
-        self.build_operand_from_var_def(var)
+        var
     }
 
     fn build_bracket_expr(&mut self, expr: &TypedExpr) -> Operand {
@@ -915,6 +997,22 @@ impl<'a> FunctionBuilder<'a> {
         );
     }
 
+    fn get_var_def(&self, var_def: VarDefRef) -> &VarDef {
+        self.func.get_var_def(var_def)
+    }
+
+    fn get_var_type(&self, var_def: VarDefRef) -> TypeRef {
+        self.func.get_var_type(var_def)
+    }
+
+    fn get_block(&self, block_ref: BlockRef) -> &Block {
+        self.func.get_block(block_ref)
+    }
+
+    fn create_block(&mut self, name: Option<&str>, term: Option<Terminator>) -> BlockRef {
+        self.func.create_block(&mut self.namer, name, term)
+    }
+
     fn insert_stmt_at_position(&mut self, stmt: Stmt) {
         let block_ref = self.position.expect("expect a insert position");
         let block = self.func.blocks.get_mut(block_ref).unwrap();
@@ -928,22 +1026,11 @@ impl<'a> FunctionBuilder<'a> {
         block.terminator = term;
         old
     }
+}
 
-    fn get_var_type(&self, var_def: VarDefRef) -> TypeRef {
-        self.func.variables.get(var_def).unwrap().typ
-    }
-
-    fn get_block(&self, block_ref: BlockRef) -> &Block {
-        self.func.blocks.get(block_ref).unwrap()
-    }
-
-    fn create_block(&mut self, name: Option<&str>, term: Option<Terminator>) -> BlockRef {
-        self.func.blocks.insert(Block::new(
-            &mut self.namer,
-            name,
-            vec![],
-            term.unwrap_or(Terminator::Panic),
-        ))
+impl From<TypedAST> for MiddleIR {
+    fn from(tast: TypedAST) -> Self {
+        MiddleIR::create_from_ast(tast)
     }
 }
 
@@ -1000,7 +1087,7 @@ impl MiddleIR {
             typ,
         } in &func.params
         {
-            let name = format!("#{}", var_name);
+            let name = format!("#{var_name}");
             let param =
                 def.create_variable_definition(name.as_str(), *typ, VariableKind::Parameter);
 
@@ -1020,5 +1107,294 @@ impl MiddleIR {
         // exit the symbol table scope (1: bracket scope, 2: parameter scope)
         fn_builder.var_ctx.exit_scope();
         def
+    }
+
+    fn get_type(&self, typ: TypeRef) -> Type {
+        self.ty_ctx.get_type_by_ref(typ)
+    }
+}
+
+impl Display for MiddleIR {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.dump_string())
+    }
+}
+
+impl Dump for Literal {
+    fn dump_string(&self) -> String {
+        match self {
+            Literal::Int(i) => format!("{i}"),
+            Literal::Str(s) => format!("{s:?}"),
+            Literal::Bool(b) => format!("{b}"),
+            Literal::Float(d) => format!("{d}"),
+            Literal::Unit => "()".to_string(),
+        }
+    }
+}
+
+impl Dump for (&MiddleIR, TypeRef) {
+    fn dump_string(&self) -> String {
+        let (mir, typ) = self;
+        mir.ty_ctx.get_type_ref_string(*typ)
+    }
+}
+
+impl Dump for (&FuncDef, BlockRef) {
+    fn dump_string(&self) -> String {
+        let (func, block) = self;
+        let block = func.get_block(*block);
+        format!("{}:", block.name)
+    }
+}
+
+impl Dump for (&FuncDef, VarDefRef) {
+    fn dump_string(&self) -> String {
+        let (func, var) = self;
+        func.get_var_def(*var).dump_string()
+    }
+}
+
+impl Dump for VarDef {
+    fn dump_string(&self) -> String {
+        let VarDef { name, typ } = self;
+        name.to_string()
+    }
+}
+
+impl Dump for (&MiddleIR, &FuncDef, &Operand) {
+    fn dump_string(&self) -> String {
+        let (mir, func, operand) = self;
+        let Operand { typ, val } = operand;
+        format!(
+            "({} : type[{}])",
+            match val.as_ref() {
+                OperandEnum::Imm(lit) => lit.dump_string(),
+                OperandEnum::Var(var) => (*func, *var).dump_string(),
+            },
+            (*mir, *typ).dump_string()
+        )
+    }
+}
+
+impl Dump for (&MiddleIR, &FuncDef, &Block) {
+    fn dump_string(&self) -> String {
+        let (mir, func, block) = self;
+        let mut s = "".to_string();
+        writeln!(s, "{}:", block.name).unwrap();
+        for stmt in &block.stmts {
+            writeln!(s, "    {}", (*mir, *func, stmt).dump_string()).unwrap();
+        }
+        write!(s, "    {}", (*mir, *func, &block.terminator).dump_string()).unwrap();
+        s
+    }
+}
+
+impl Dump for (&MiddleIR, &FuncDef, &Terminator) {
+    fn dump_string(&self) -> String {
+        let (mir, func, term) = self;
+        let mut s = "".to_string();
+        match term {
+            Terminator::Select(val, targets, other) => {
+                write!(s, "select {} [", (*mir, *func, val).dump_string()).unwrap();
+                for (idx, target) in targets.iter().enumerate() {
+                    if idx != 0 {
+                        write!(s, ", ").unwrap();
+                    }
+                    write!(
+                        s,
+                        "{} => {}",
+                        target.0.dump_string(),
+                        (*func, *other).dump_string(),
+                    )
+                    .unwrap();
+                }
+                write!(s, ", _ => {}]", (*func, *other).dump_string()).unwrap();
+            }
+            Terminator::Jump(target) => {
+                write!(s, "jump {}", (*func, *target).dump_string()).unwrap();
+            }
+            Terminator::Return => {
+                write!(s, "ret").unwrap();
+            }
+            Terminator::Panic => {
+                write!(s, "panic").unwrap();
+            }
+            Terminator::Branch(val, t, f) => {
+                write!(
+                    s,
+                    "br {} [{}, {}]",
+                    (*mir, *func, val).dump_string(),
+                    (*func, *t).dump_string(),
+                    (*func, *f).dump_string()
+                )
+                .unwrap();
+            }
+        }
+        s
+    }
+}
+
+impl Dump for (&MiddleIR, &FuncDef, &Stmt) {
+    fn dump_string(&self) -> String {
+        let (mir, func, stmt) = self;
+        if let Some(left) = stmt.left {
+            format!(
+                "{: <24} = {};",
+                (*func, left).dump_string(),
+                (*mir, *func, stmt.right.as_ref().unwrap()).dump_string()
+            )
+        } else {
+            format!(
+                "{: <24} = {};",
+                "_",
+                (*mir, *func, stmt.right.as_ref().unwrap()).dump_string()
+            )
+        }
+    }
+}
+
+impl Dump for (&MiddleIR, &FuncDef, &Value) {
+    fn dump_string(&self) -> String {
+        let (mir, func, val) = self;
+        let Value { typ, val } = val;
+
+        format!(
+            "({} : type[{}])",
+            (*mir, *func, val).dump_string(),
+            (*mir, *typ).dump_string()
+        )
+    }
+}
+
+impl Dump for (&MiddleIR, &FuncDef, &Vec<Operand>) {
+    fn dump_string(&self) -> String {
+        let (mir, func, vec) = self;
+        let mut s = "".to_string();
+        for (idx, val) in vec.iter().enumerate() {
+            if idx != 0 {
+                write!(s, " ").unwrap();
+            }
+            write!(s, "{}", (*mir, *func, val).dump_string()).unwrap();
+        }
+        s
+    }
+}
+
+impl Dump for Vec<String> {
+    fn dump_string(&self) -> String {
+        self.join(".")
+    }
+}
+
+impl Dump for (&MiddleIR, &FuncDef, &ValueEnum) {
+    fn dump_string(&self) -> String {
+        let (mir, func, val) = self;
+        let mut s = "".to_string();
+        match val {
+            ValueEnum::Call(path, args) => {
+                write!(
+                    s,
+                    "call {} ({})",
+                    path.dump_string(),
+                    (*mir, *func, args).dump_string()
+                )
+                .unwrap();
+            }
+            ValueEnum::ExtCall(path, args) => {
+                write!(
+                    s,
+                    "extern-call {} ({})",
+                    path.dump_string(),
+                    (*mir, *func, args).dump_string()
+                )
+                .unwrap();
+            }
+            ValueEnum::BinaryOp(op, left, right) => {
+                write!(
+                    s,
+                    "{} {} {}",
+                    op.dump_string(),
+                    (*mir, *func, left).dump_string(),
+                    (*mir, *func, right).dump_string()
+                )
+                .unwrap();
+            }
+            ValueEnum::UnaryOp(op, expr) => {
+                write!(
+                    s,
+                    "{} {}",
+                    op.dump_string(),
+                    (*mir, *func, expr).dump_string()
+                )
+                .unwrap();
+            }
+            ValueEnum::MakeTuple(args) => {
+                write!(s, "gather ({})", (*mir, *func, args).dump_string()).unwrap();
+            }
+            ValueEnum::Construct(idx, args) => {
+                write!(
+                    s,
+                    "construct {} ({})",
+                    idx,
+                    (*mir, *func, args).dump_string()
+                )
+                .unwrap();
+            }
+            ValueEnum::Intrinsic(intrinsic, args) => {
+                write!(s, "@{intrinsic} ({})", (*mir, *func, args).dump_string()).unwrap();
+            }
+            ValueEnum::Index(arr, idx) => {
+                write!(
+                    s,
+                    "index {} {}",
+                    (*mir, *func, arr).dump_string(),
+                    (*mir, *func, idx).dump_string(),
+                )
+                .unwrap();
+            }
+
+            ValueEnum::Operand(operand) => {
+                write!(s, "{}", (*mir, *func, operand).dump_string()).unwrap();
+            }
+        }
+        s
+    }
+}
+
+impl Dump for BinOp {
+    fn dump_string(&self) -> String {
+        (match self {
+            BinOp::Plus => "add",
+            BinOp::Sub => "sub",
+            BinOp::Mul => "mul",
+            BinOp::Div => "div",
+            BinOp::Mod => "mod",
+            BinOp::Or => "logical-or",
+            BinOp::And => "logical-and",
+            BinOp::Le => "cmp-le",
+            BinOp::Ge => "cmp-ge",
+            BinOp::Eq => "cmp-eq",
+            BinOp::Ne => "cmp-ne",
+            BinOp::Lt => "cmp-lt",
+            BinOp::Gt => "cmp-gt",
+        })
+        .to_string()
+    }
+}
+
+impl Dump for UnaryOp {
+    fn dump_string(&self) -> String {
+        (match self {
+            UnaryOp::Not => "not",
+            UnaryOp::Positive => "pos",
+            UnaryOp::Negative => "neg",
+        })
+        .to_string()
+    }
+}
+
+impl Dump for MiddleIR {
+    fn dump_string(&self) -> String {
+        todo!()
     }
 }

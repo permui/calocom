@@ -18,7 +18,9 @@ type ::= 'Ce' context name                  // Enum
 type ::= 'Ct' type-list                     // Tuple
 type ::= 'Cr' type                          // Reference
 type ::= 'Ca' type                          // Array
-type ::= 'Cl' function-signature            // Callable
+type ::= 'Clf' function-signature           // Callable (Function)
+type ::= 'Clc' function-signature           // Callable (Closure)
+type ::= 'Clt' function-signature           // Callable (Ctor)
 
 function-signature ::= 'f' type type-list
 generic-signature  ::= 'g' number-of-generic-params
@@ -35,7 +37,7 @@ specialized-function-name ::= '_CALOCOM_F'  context name generic-function-signat
 
 use crate::common::{
     ref_path::ReferencePath,
-    type_context::{Primitive, Type, TypeContext, TypeRef},
+    type_context::{CallKind, Primitive, Type, TypeContext, TypeRef},
 };
 
 pub trait Mangling {
@@ -121,9 +123,14 @@ impl Mangling for TypeContext {
             Type::Callable {
                 ret_type,
                 parameters,
-                kind: _,
+                kind,
             } => format!(
-                "Cl{}",
+                "{}{}",
+                match kind {
+                    CallKind::Function => "Clf",
+                    CallKind::ClosureValue => "Clc",
+                    CallKind::Constructor => "Clt",
+                },
                 self.get_mangled_function_signature(*ret_type, parameters)
             ),
         }

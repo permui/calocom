@@ -4,6 +4,7 @@ use super::unique_name::UniqueName;
 use either::Either;
 use num_enum::{IntoPrimitive, TryFromPrimitive};
 use slotmap::{new_key_type, SlotMap};
+use std::fmt::Write;
 use strum::EnumIter;
 use Either::{Left, Right};
 
@@ -103,7 +104,7 @@ impl TypeContext {
 
     pub fn associate_name_and_ref(&mut self, name: &str, idx: TypeRef) {
         if self.name_ref_map.contains_key(name) {
-            panic!("data type redefinition: {}", name);
+            panic!("data type redefinition: {name}");
         }
         self.name_ref_map.insert(name.to_string(), idx);
     }
@@ -126,7 +127,7 @@ impl TypeContext {
                 let ctor_idx = ctors
                     .iter()
                     .position(|ctor| ctor.0 == name)
-                    .unwrap_or_else(|| panic!("{} not found", name));
+                    .unwrap_or_else(|| panic!("{name} not found"));
                 let ctor = &ctors[ctor_idx];
                 (ctor_idx, ctor.1.to_vec())
             }
@@ -295,7 +296,7 @@ impl TypeContext {
             Type::Opaque { alias } => {
                 if let Right(name) = alias {
                     let Some(&type_ref) = self.name_ref_map.get(name.as_str()) else {
-                        panic!("unresolved type {}", name);
+                        panic!("unresolved type {name}");
                     };
                     todo_map.insert(t, type_ref);
                 }
@@ -303,7 +304,7 @@ impl TypeContext {
             Type::Reference { refer } => {
                 if let Right(name) = refer {
                     let Some(&type_ref) = self.name_ref_map.get(name.as_str()) else {
-                        panic!("unresolved type {}", name);
+                        panic!("unresolved type {name}");
                     };
                     todo_map.insert(t, type_ref);
                 }
@@ -514,7 +515,7 @@ impl TypeContext {
         (context, display_name_map)
     }
 
-    fn display_type(&self, t: &Type, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn display_type(&self, t: &Type, f: &mut String) -> std::fmt::Result {
         match t {
             Type::Tuple { fields } => {
                 write!(f, "(")?;
@@ -543,7 +544,7 @@ impl TypeContext {
                 }
                 write!(f, "}}")
             }
-            Type::Primitive(p) => write!(f, "{}", p),
+            Type::Primitive(p) => write!(f, "{p}"),
             Type::Opaque { alias } => {
                 write!(f, "{}", alias.as_ref().right().unwrap())
             }
@@ -573,9 +574,15 @@ impl TypeContext {
         }
     }
 
-    fn display_type_ref(&self, t: TypeRef, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn display_type_ref(&self, t: TypeRef, f: &mut String) -> std::fmt::Result {
         let t = self.types.get(t).unwrap();
         self.display_type(t, f)
+    }
+
+    pub fn get_type_ref_string(&self, t: TypeRef) -> String {
+        let mut s = "".to_string();
+        self.display_type_ref(t, &mut s);
+        s
     }
 }
 
@@ -599,10 +606,10 @@ impl Display for TypeContext {
 
         writeln!(f, "TypeContext {{")?;
         for (key, typ) in context.types.iter() {
-            write!(f, "    {}: ", map.get(&key).unwrap())?;
-            self.display_type(typ, f)?;
-            writeln!(f)?;
+            let mut s = "".to_string();
+            self.display_type(typ, &mut s)?;
+            writeln!(f, "    {}: {s}", map.get(&key).unwrap())?;
         }
-        write!(f, "}}")
+        writeln!(f, "}}")
     }
 }
