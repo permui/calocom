@@ -533,7 +533,7 @@ impl<'a> FunctionBuilder<'a> {
         if self.ty_ctx.is_type_eq(source_type, target_type) {
             return source;
         }
-        assert!(self.ty_ctx.is_compatible(source_type, target_type));
+        assert!(self.ty_ctx.is_type_compatible(source_type, target_type));
 
         let name = self.namer.next_name("conversion");
         let result = self.func.create_variable_definition(

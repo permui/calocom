@@ -236,14 +236,7 @@ impl TypedAST {
                 for crate::ast::ConstructorType { name, inner } in e {
                     let tys = inner
                         .iter()
-                        .map(|ty| {
-                            let ty = self.resolve_type(None, ty, allow_opaque);
-                            if self.ty_ctx.is_enum_type(ty) {
-                                self.ty_ctx.opaque_type(ty)
-                            } else {
-                                ty
-                            }
-                        })
+                        .map(|ty| self.resolve_type(None, ty, allow_opaque))
                         .collect();
                     ctors.push((name.clone(), tys));
                 }
@@ -296,7 +289,7 @@ impl TypedAST {
         let typed_lhs = self.check_type_of_expr(&stmt.lhs);
         let typed_rhs = self.check_type_of_expr(&stmt.rhs);
 
-        if !self.ty_ctx.is_compatible(typed_rhs.typ, typed_rhs.typ) {
+        if !self.ty_ctx.is_type_compatible(typed_rhs.typ, typed_rhs.typ) {
             panic!("inconsistent type when assigning");
         }
 
@@ -315,7 +308,7 @@ impl TypedAST {
 
         let type_ref = self.resolve_type(None, typ, false);
         let typed_expr = self.check_type_of_expr(expr);
-        if !self.ty_ctx.is_compatible(type_ref, typed_expr.typ) {
+        if !self.ty_ctx.is_type_compatible(type_ref, typed_expr.typ) {
             panic!("initializer of variable {} has incorrect type", var_name);
         }
 
@@ -335,13 +328,16 @@ impl TypedAST {
     fn check_type_of_argument(&mut self, arg: &crate::ast::Argument) -> TypedArgument {
         match arg {
             crate::ast::Argument::Expr(e) => TypedArgument::Expr(self.check_type_of_expr(e)),
-            crate::ast::Argument::AtVar(name) => {
+            crate::ast::Argument::AtVar(_) => {
+                unimplemented!("not available")
+                /*
                 let typ = self
                     .name_ctx
                     .find_symbol(&[name.clone()])
                     .unwrap_or_else(|| panic!("variable undefined: {}", name));
 
                 TypedArgument::AtVar(name.to_string(), typ)
+                */
             }
         }
     }
@@ -377,7 +373,7 @@ impl TypedAST {
                 for (idx, (&typ, typed_arg)) in parameters.iter().zip(args.iter()).enumerate() {
                     match typed_arg {
                         TypedArgument::Expr(e) => {
-                            if !self.ty_ctx.is_compatible(typ, e.typ) {
+                            if !self.ty_ctx.is_type_compatible(typ, e.typ) {
                                 panic!("argument {} type incorrect", idx);
                             }
                         }
@@ -409,14 +405,17 @@ impl TypedAST {
                 for (idx, (&typ, typed_arg)) in parameters.iter().zip(args.iter()).enumerate() {
                     match typed_arg {
                         TypedArgument::Expr(e) => {
-                            if !self.ty_ctx.is_compatible(typ, e.typ) {
+                            if !self.ty_ctx.is_type_compatible(typ, e.typ) {
                                 panic!("argument {} type incorrect", idx);
                             }
                         }
-                        TypedArgument::AtVar(_, atvar_typ) => {
-                            if !self.ty_ctx.is_compatible(typ, *atvar_typ) {
+                        TypedArgument::AtVar(_, _) => {
+                            unimplemented!("not available");
+                            /*
+                            if !self.ty_ctx.is_type_compatible(typ, *atvar_typ) {
                                 panic!("argument {} type incorrect", idx);
                             }
+                            */
                         }
                     }
                 }
@@ -496,7 +495,7 @@ impl TypedAST {
                 } = ctor_type else {
                     panic!("constructor type is not callable")
                 };
-                if !self.ty_ctx.is_compatible(ret_type, matched_type) {
+                if !self.ty_ctx.is_type_compatible(ret_type, matched_type) {
                     panic!("invalid constructor for match arm: constructor belongs to another type")
                 }
                 assert_eq!(kind, CallKind::Constructor);
@@ -527,7 +526,7 @@ impl TypedAST {
             Wildcard => {}
             Literal(lit) => {
                 let typ = self.check_type_of_literal(lit).typ;
-                if !self.ty_ctx.is_compatible(typ, matched_type) {
+                if !self.ty_ctx.is_type_compatible(typ, matched_type) {
                     panic!("invalid literal for match arm: type is not compatible")
                 }
             }
@@ -652,7 +651,10 @@ impl TypedAST {
             if !self.ty_ctx.is_type_eq(or_expr.typ, then_expr.typ) {
                 panic!("if expression has inconsistent type of true and false branches");
             }
-        } else if !self.ty_ctx.is_type_eq(self.ty_ctx.singleton_type(Primitive::Unit), then_expr.typ) {
+        } else if !self
+            .ty_ctx
+            .is_type_eq(self.ty_ctx.singleton_type(Primitive::Unit), then_expr.typ)
+        {
             panic!("if expression without false branch must be unit type");
         }
 
@@ -730,7 +732,7 @@ impl TypedAST {
         }
 
         let body = self.check_type_of_expr(body);
-        if !self.ty_ctx.is_compatible(body.typ, ret_type) {
+        if !self.ty_ctx.is_type_compatible(body.typ, ret_type) {
             panic!("return type inconsistent of lambda expression");
         }
 
@@ -872,22 +874,22 @@ impl TypedAST {
             Or | And => {
                 self.ty_ctx.is_boolean_testable_type(left.typ)
                     && self.ty_ctx.is_boolean_testable_type(right.typ)
-                    && self.ty_ctx.is_compatible(left.typ, right.typ)
+                    && self.ty_ctx.is_type_compatible(left.typ, right.typ)
             }
             Eq | Ne => {
                 self.ty_ctx.is_partially_equal_type(left.typ)
                     && self.ty_ctx.is_partially_equal_type(right.typ)
-                    && self.ty_ctx.is_compatible(left.typ, right.typ)
+                    && self.ty_ctx.is_type_compatible(left.typ, right.typ)
             }
             Le | Ge | Lt | Gt => {
                 self.ty_ctx.is_partially_ordered_type(left.typ)
                     && self.ty_ctx.is_partially_ordered_type(right.typ)
-                    && self.ty_ctx.is_compatible(left.typ, right.typ)
+                    && self.ty_ctx.is_type_compatible(left.typ, right.typ)
             }
             Plus | Sub | Mul | Div | Mod => {
                 self.ty_ctx.is_arithmetic_type(left.typ)
                     && self.ty_ctx.is_arithmetic_type(right.typ)
-                    && self.ty_ctx.is_compatible(left.typ, right.typ)
+                    && self.ty_ctx.is_type_compatible(left.typ, right.typ)
             }
         } {
             panic!("not compatible types for binary operator {:?}", op)
@@ -1084,7 +1086,7 @@ impl TypedAST {
         }
 
         let body = self.check_type_of_bracket_body(&func.body);
-        if !self.ty_ctx.is_compatible(body.typ, *ret_type) {
+        if !self.ty_ctx.is_type_compatible(body.typ, *ret_type) {
             panic!("return type inconsistent: {}", func.name);
         }
 

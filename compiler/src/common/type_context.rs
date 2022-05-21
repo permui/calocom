@@ -1,4 +1,12 @@
-use std::{cell::RefCell, collections::HashMap, fmt::Debug, fmt::Display, panic, rc::Rc};
+use std::{
+    cell::RefCell,
+    collections::{HashMap, HashSet},
+    fmt::Debug,
+    fmt::Display,
+    hash::Hash,
+    panic,
+    rc::Rc,
+};
 
 use super::unique_name::UniqueName;
 use either::Either;
@@ -42,7 +50,7 @@ pub enum Type {
     },
     Primitive(Primitive),
     Opaque {
-        alias: Either<TypeRef, String>,
+        alias: String,
     },
     Reference {
         refer: Either<TypeRef, String>,
@@ -86,13 +94,13 @@ impl Default for TypeContext {
 
 impl TypeContext {
     pub const PRIMITIVE_TYPE_NAME: [&'static str; 7] = [
-        "__object!",
-        "__unit!",
+        "object!",
+        "unit!",
         "str",
         "bool",
         "i32",
         "f64",
-        "__c_i32!",
+        "c_i32!",
     ];
 
     pub fn types(&self) -> &SlotMap<TypeRef, Type> {
@@ -180,14 +188,7 @@ impl TypeContext {
 
     pub fn opaque_name_type(&mut self, name: &str) -> TypeRef {
         let res = Type::Opaque {
-            alias: Either::Right(name.to_string()),
-        };
-        self.insert_type_or_get(res)
-    }
-
-    pub fn opaque_type(&mut self, type_ref: TypeRef) -> TypeRef {
-        let res = Type::Opaque {
-            alias: Either::Left(type_ref),
+            alias: name.to_string(),
         };
         self.insert_type_or_get(res)
     }
@@ -247,30 +248,40 @@ impl TypeContext {
     }
 
     pub fn refine_all_type(&mut self) {
-        let mut refine_map: HashMap<TypeRef, TypeRef> = Default::default();
+        let mut reference_map = Default::default();
+        let mut opaque_map = Default::default();
+
         for t in self.types.iter() {
-            self.mark_to_be_refined_type(t.0, &mut refine_map);
+            self.mark_to_be_refined_type(t.0, &mut reference_map, &mut opaque_map);
         }
 
-        // refine all types
-        for (origin_type, target_type) in refine_map {
-            self.refine_type(origin_type, Left(target_type));
+        // refine reference types
+        for (origin_type, target_type) in reference_map {
+            self.refine_reference_type(origin_type, Left(target_type));
         }
 
+        // remove opaque types
+        for (origin_type, target_type) in opaque_map {
+            self.remove_opaque_types(origin_type, target_type);
+        }
+
+        self.reset_type_to_type_ref_map();
+    }
+
+    fn reset_type_to_type_ref_map(&mut self) {
         // type has changed, we must update the map of type -> type_ref
         let mut new_node_map = HashMap::new();
-        for &idx in self.type_ref_map.values() {
-            new_node_map.insert(self.types[idx].clone(), idx);
+        for (ty_ref, typ) in self.types.iter() {
+            new_node_map
+                .insert(typ.clone(), ty_ref)
+                .and_then(|_| -> Option<()> { panic!("reconsider here to deduplicate type (when supporting type synonym of tuple)") });
         }
         self.type_ref_map = new_node_map;
     }
 
-    fn refine_type(&mut self, t: TypeRef, target: Either<TypeRef, String>) {
+    fn refine_reference_type(&mut self, t: TypeRef, target: Either<TypeRef, String>) {
         let typ = self.types.get_mut(t).unwrap();
         match typ {
-            Type::Opaque { alias } => {
-                *alias = target;
-            }
             Type::Reference { refer } => {
                 *refer = target;
             }
@@ -278,39 +289,92 @@ impl TypeContext {
         }
     }
 
-    fn mark_to_be_refined_type(&self, t: TypeRef, todo_map: &mut HashMap<TypeRef, TypeRef>) {
+    fn substitute_type_ref(ty_ref: &mut TypeRef, src: TypeRef, target: TypeRef) {
+        if *ty_ref == src {
+            *ty_ref = target;
+        }
+    }
+
+    fn remove_opaque_types(&mut self, src: TypeRef, target: TypeRef) {
+        let mut to_be_removed = vec![];
+        for (ty_ref, typ) in self.types.iter_mut() {
+            match typ {
+                Type::Tuple { fields } => {
+                    for field in fields.iter_mut() {
+                        Self::substitute_type_ref(field, src, target)
+                    }
+                }
+                Type::Enum { ctors, name: _ } => {
+                    for ctor in ctors {
+                        for field in ctor.1.iter_mut() {
+                            Self::substitute_type_ref(field, src, target)
+                        }
+                    }
+                }
+                Type::Array(elem) => Self::substitute_type_ref(elem, src, target),
+                Type::Primitive(_) => {}
+                Type::Opaque { .. } => {
+                    /* opaque will be removed soon */
+                    to_be_removed.push(ty_ref);
+                }
+                Type::Reference { refer } => {
+                    if *refer.as_ref().left().unwrap() == src {
+                        *refer = Left(target);
+                    }
+                }
+                Type::Callable {
+                    ret_type,
+                    parameters,
+                    kind: _,
+                } => {
+                    Self::substitute_type_ref(ret_type, src, target);
+                    for param in parameters.iter_mut() {
+                        Self::substitute_type_ref(param, src, target)
+                    }
+                }
+            }
+        }
+        for opaque in to_be_removed.into_iter() {
+            self.types.remove(opaque);
+        }
+    }
+
+    fn mark_to_be_refined_type(
+        &self,
+        t: TypeRef,
+        reference_map: &mut HashMap<TypeRef, TypeRef>,
+        opaque_map: &mut HashMap<TypeRef, TypeRef>,
+    ) {
         let typ = self.types.get(t).unwrap();
         match typ {
             Type::Tuple { fields } => {
                 for &field in fields {
-                    self.mark_to_be_refined_type(field, todo_map);
+                    self.mark_to_be_refined_type(field, reference_map, opaque_map);
                 }
             }
             Type::Enum { ctors, name: _ } => {
                 for ctor in ctors {
                     for &field in ctor.1.iter() {
-                        self.mark_to_be_refined_type(field, todo_map);
+                        self.mark_to_be_refined_type(field, reference_map, opaque_map);
                     }
                 }
             }
             Type::Array(elem) => {
-                self.mark_to_be_refined_type(*elem, todo_map);
+                self.mark_to_be_refined_type(*elem, reference_map, opaque_map);
             }
             Type::Primitive(_) => {}
             Type::Opaque { alias } => {
-                if let Right(name) = alias {
-                    let Some(&type_ref) = self.name_ref_map.get(name.as_str()) else {
-                        panic!("unresolved type {name}");
+                let Some(&type_ref) = self.name_ref_map.get(alias.as_str()) else {
+                        panic!("unresolved type {alias}");
                     };
-                    todo_map.insert(t, type_ref);
-                }
+                opaque_map.insert(t, type_ref);
             }
             Type::Reference { refer } => {
                 if let Right(name) = refer {
                     let Some(&type_ref) = self.name_ref_map.get(name.as_str()) else {
                         panic!("unresolved type {name}");
                     };
-                    todo_map.insert(t, type_ref);
+                    reference_map.insert(t, type_ref);
                 }
             }
             Type::Callable {
@@ -318,20 +382,10 @@ impl TypeContext {
                 parameters,
                 kind: _,
             } => {
-                self.mark_to_be_refined_type(*ret_type, todo_map);
+                self.mark_to_be_refined_type(*ret_type, reference_map, opaque_map);
                 for &param in parameters {
-                    self.mark_to_be_refined_type(param, todo_map);
+                    self.mark_to_be_refined_type(param, reference_map, opaque_map);
                 }
-            }
-        }
-    }
-
-    pub fn get_opaque_base_type(&self, typ: TypeRef) -> TypeRef {
-        let mut typ = typ;
-        loop {
-            match self.types.get(typ).unwrap() {
-                Type::Opaque { alias } => typ = *alias.as_ref().left().unwrap(),
-                _ => return typ,
             }
         }
     }
@@ -361,25 +415,18 @@ impl TypeContext {
         t1 == t2
     }
 
-    // if true, both types represent the same nominal type
-    pub fn is_type_opaque_eq(&self, t1: TypeRef, t2: TypeRef) -> bool {
-        self.get_opaque_base_type(t1) == self.get_opaque_base_type(t2)
-    }
-
     // if true, both types are reference type
     // and the referred types represent the same nominal type
     pub fn is_type_reference_eq(&self, t1: TypeRef, t2: TypeRef) -> bool {
         matches!((
-            self.get_reference_base_type(self.get_opaque_base_type(t1)),
-            self.get_reference_base_type(self.get_opaque_base_type(t2)),
-        ), (Some(t1), Some(t2)) if self.is_type_opaque_eq(t1, t2))
+            self.get_reference_base_type(t1),
+            self.get_reference_base_type(t2),
+        ), (Some(t1), Some(t2)) if t1 == t2)
     }
 
     // if true, both types represent the same nominal type
     pub fn is_type_eq(&self, t1: TypeRef, t2: TypeRef) -> bool {
-        self.is_type_purely_eq(t1, t2)
-            || self.is_type_opaque_eq(t1, t2)
-            || self.is_type_reference_eq(t1, t2)
+        self.is_type_purely_eq(t1, t2) || self.is_type_reference_eq(t1, t2)
     }
 
     pub fn is_arithmetic_compatible(&self, t1: TypeRef, t2: TypeRef) -> bool {
@@ -387,7 +434,7 @@ impl TypeContext {
     }
 
     // if true, both types are compatible when doing assignment
-    pub fn is_compatible(&self, t1: TypeRef, t2: TypeRef) -> bool {
+    pub fn is_type_compatible(&self, t1: TypeRef, t2: TypeRef) -> bool {
         self.is_type_eq(t1, t2) // the same nominal type
             || self.is_arithmetic_compatible(t1, t2) // can be cast 
             || self.is_type_eq(t1, self.singleton_type(Primitive::Object)) // unsafe cast due to polymorphism
@@ -443,60 +490,10 @@ impl TypeContext {
             || self.is_type_eq(t, self.singleton_type(Primitive::Str))
     }
 
-    pub fn mark_to_be_recovered_type(
-        &self,
-        t: TypeRef,
-        display_name: &HashMap<TypeRef, String>,
-        todo_map: &mut HashMap<TypeRef, String>,
-    ) {
-        let typ = self.types.get(t).unwrap();
-        match typ {
-            Type::Tuple { fields } => {
-                for &field in fields {
-                    self.mark_to_be_recovered_type(field, display_name, todo_map);
-                }
-            }
-            Type::Enum { ctors, name: _ } => {
-                for ctor in ctors {
-                    for &field in ctor.1.iter() {
-                        self.mark_to_be_recovered_type(field, display_name, todo_map);
-                    }
-                }
-            }
-            Type::Array(elem) => {
-                self.mark_to_be_recovered_type(*elem, display_name, todo_map);
-            }
-            Type::Primitive(_) => {}
-            Type::Opaque { alias } => {
-                if let Left(typ) = alias {
-                    let name = display_name.get(typ).unwrap();
-                    todo_map.insert(t, name.clone());
-                }
-            }
-            Type::Reference { refer } => {
-                if let Left(typ) = refer {
-                    let name = display_name.get(typ).unwrap();
-                    todo_map.insert(t, name.clone());
-                }
-            }
-            Type::Callable {
-                ret_type,
-                parameters,
-                kind: _,
-            } => {
-                self.mark_to_be_recovered_type(*ret_type, display_name, todo_map);
-                for &param in parameters {
-                    self.mark_to_be_recovered_type(param, display_name, todo_map);
-                }
-            }
-        }
-    }
-
     pub fn get_display_name_map(&self) -> (Self, HashMap<TypeRef, String>) {
-        let mut context = self.clone();
+        let context = self.clone();
         let mut display_name_map = HashMap::new();
         let mut namer = UniqueName::new();
-        let mut todo_map: HashMap<_, _> = Default::default();
 
         for (k, v) in context.name_ref_map.iter() {
             display_name_map.insert(*v, k.clone());
@@ -508,24 +505,15 @@ impl TypeContext {
                 .or_insert_with(|| namer.next_name("anonymous_type"));
         }
 
-        for (type_ref, _) in context.types.iter() {
-            context.mark_to_be_recovered_type(type_ref, &display_name_map, &mut todo_map);
-        }
-
-        for (type_ref, name) in todo_map {
-            context.refine_type(type_ref, Right(name))
-        }
-
-        let mut new_node_map = HashMap::new();
-        for &idx in context.type_ref_map.values() {
-            new_node_map.insert(context.types[idx].clone(), idx);
-        }
-        context.type_ref_map = new_node_map;
-
         (context, display_name_map)
     }
 
-    fn display_type(&self, t: &Type, f: &mut String) -> std::fmt::Result {
+    fn display_type(
+        &self,
+        t: &Type,
+        f: &mut String,
+        show_enum_structure: bool,
+    ) -> std::fmt::Result {
         match t {
             Type::Tuple { fields } => {
                 write!(f, "(")?;
@@ -537,26 +525,31 @@ impl TypeContext {
                 }
                 write!(f, ")")
             }
-            Type::Enum { ctors, name: _ } => {
-                write!(f, "{{")?;
-                for (idx, ctor) in ctors.iter().enumerate() {
-                    if idx != 0 {
-                        write!(f, " | ")?;
+            Type::Enum { ctors, name } => {
+                if show_enum_structure {
+                    write!(f, "{{")?;
+                    for (idx, ctor) in ctors.iter().enumerate() {
+                        if idx != 0 {
+                            write!(f, " | ")?;
+                        }
+                        write!(f, "<{} ", ctor.0)?;
+                        self.display_type(
+                            &Type::Tuple {
+                                fields: ctor.1.clone(),
+                            },
+                            f,
+                            false,
+                        )?;
+                        write!(f, ">")?;
                     }
-                    write!(f, "<{} ", ctor.0)?;
-                    self.display_type(
-                        &Type::Tuple {
-                            fields: ctor.1.clone(),
-                        },
-                        f,
-                    )?;
-                    write!(f, ">")?;
+                    write!(f, "}}")
+                } else {
+                    write!(f, "{name}")
                 }
-                write!(f, "}}")
             }
             Type::Primitive(p) => write!(f, "{p}"),
-            Type::Opaque { alias } => {
-                write!(f, "{}", alias.as_ref().right().unwrap())
+            Type::Opaque { .. } => {
+                unreachable!()
             }
             Type::Reference { refer } => {
                 write!(f, "ref {}", refer.as_ref().right().unwrap())
@@ -569,13 +562,24 @@ impl TypeContext {
             Type::Callable {
                 ret_type,
                 parameters,
-                kind: _,
+                kind,
             } => {
+                write!(
+                    f,
+                    "{}",
+                    match kind {
+                        CallKind::Function => "",
+                        CallKind::ClosureValue => "Closure :: ",
+                        CallKind::Constructor => "Ctor :: ",
+                    }
+                )?;
+
                 self.display_type(
                     &Type::Tuple {
                         fields: parameters.clone(),
                     },
                     f,
+                    false,
                 )?;
 
                 write!(f, " -> ",)?;
@@ -586,7 +590,7 @@ impl TypeContext {
 
     fn display_type_ref(&self, t: TypeRef, f: &mut String) -> std::fmt::Result {
         let t = self.types.get(t).unwrap();
-        self.display_type(t, f)
+        self.display_type(t, f, false)
     }
 
     pub fn get_type_ref_string(&self, t: TypeRef) -> String {
@@ -606,11 +610,10 @@ impl Display for Primitive {
 impl Display for TypeContext {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let (context, map) = self.get_display_name_map();
-        dbg!(&context);
         writeln!(f, "TypeContext {{")?;
         for (key, typ) in context.types.iter() {
             let mut s = "".to_string();
-            self.display_type(typ, &mut s)?;
+            self.display_type(typ, &mut s, true)?;
             writeln!(f, "    {}: {s}", map.get(&key).unwrap())?;
         }
         writeln!(f, "}}")

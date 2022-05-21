@@ -112,8 +112,8 @@ impl Mangling for TypeContext {
                 Primitive::CInt32 => "Cci4",
             }
             .to_string(),
-            Type::Opaque { alias } => {
-                self.get_mangled_type_name(*alias.as_ref().left().expect("expect type index here"))
+            Type::Opaque { .. } => {
+                unreachable!()
             }
             Type::Reference { refer } => format!(
                 "Cr{}",
