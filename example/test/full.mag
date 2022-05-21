@@ -64,5 +64,25 @@ test_nat_ctor_2: (n: Nat) -> Nat {
     S(n)
 }
 
+test_array: (arr: [[i32]]) -> i32 {
+    arr[0][0] = 1;
+    arr[0][0]
+}
+
+test_ret_array: (arr: [[i32]]) -> [[i32]] {
+    arr
+}
+
+test_ret_assign: (arr: [[[i32]]]) -> i32 {
+    test_ret_array(arr[0])[1][2] = 3;
+    test_ret_array(arr[4])[5][6]
+}
+
+test_wildcard: (_: i32) -> () {
+    let _ : i32 = 0;
+    for _ in 0 .. 1 {
+    };
+}
+
 main: () -> () {
 }

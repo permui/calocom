@@ -44,15 +44,11 @@ where
         if key.len() == 1 {
             return if let Some(ty) = self.env.find_symbol(key[0].as_str()) {
                 Some(ty.clone())
+            } else if let Some(ctor_env) = self.ctor_env.as_ref() {
+                ctor_env.as_ref().borrow().get(key[0].as_str()).cloned()
             } else {
-                self.ctor_env
-                    .as_ref()
-                    .unwrap()
-                    .as_ref()
-                    .borrow()
-                    .get(key[0].as_str())
-                    .cloned()
-            };
+                None
+            }
         } else if let Some(path) = self.import_env.get(key.root()) {
             let fully_qualified_name = key.suffix().unwrap().with_prefix(path);
             if let Some(ty) = self.fully_qualified_name_env.get(&fully_qualified_name) {

@@ -948,9 +948,11 @@ impl TypedAST {
 
         self.name_ctx.entry_scope();
 
-        self.name_ctx
-            .insert_symbol(var_name.clone(), range_l.typ)
-            .and_then(|_| -> Option<()> { panic!("internal error") });
+        if var_name != "_" {
+            self.name_ctx
+                .insert_symbol(var_name.clone(), range_l.typ)
+                .and_then(|_| -> Option<()> { panic!("internal error") });
+        }
 
         let body = self.check_type_of_bracket_body(body);
 
@@ -1080,9 +1082,11 @@ impl TypedAST {
                 typ: tp,
             });
 
-            self.name_ctx
-                .insert_symbol(var_name.to_string(), tp)
-                .and_then(|_| -> Option<()> { panic!("parameter redefined") });
+            if var_name != "_" {
+                self.name_ctx
+                    .insert_symbol(var_name.to_string(), tp)
+                    .and_then(|_| -> Option<()> { panic!("parameter redefined") });
+            }
         }
 
         let body = self.check_type_of_bracket_body(&func.body);

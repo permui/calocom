@@ -1,4 +1,5 @@
 use slotmap::{new_key_type, SlotMap};
+use std::borrow::Borrow;
 use std::fmt::Display;
 use std::fmt::Write;
 use std::{panic, vec};
@@ -282,18 +283,19 @@ impl<'a> FunctionBuilder<'a> {
             expr,
         } = stmt;
 
-        let name = self.namer.next_name(var_name);
-        let new_var = self.func.create_variable_definition(
-            name.as_str(),
-            *var_type,
-            VariableKind::LocalVariable,
-        );
+        let new_var = if var_name != "_" {
+            let name = self.namer.next_name(var_name);
+            Some(self.func.create_variable_definition(
+                name.as_str(),
+                *var_type,
+                VariableKind::LocalVariable,
+            ))
+        } else {
+            None
+        };
 
-        self.build_expr_and_assign_to(expr, Some(new_var));
-        let _: Option<()> = self
-            .var_ctx
-            .insert_symbol(var_name.clone(), new_var)
-            .and(None);
+        self.build_expr_and_assign_to(expr, new_var);
+        new_var.and_then(|new_var| self.var_ctx.insert_symbol(var_name.clone(), new_var));
     }
 
     fn build_bracket(&mut self, body: &TypedBracketBody, out: Option<VarDefRef>) {
@@ -421,10 +423,11 @@ impl<'a> FunctionBuilder<'a> {
         );
 
         // allow to find the reference to induction variable
-        let _: Option<()> = self
-            .var_ctx
-            .insert_symbol(var_name.clone(), ind_var)
-            .and(None);
+        if var_name != "_" {
+            self.var_ctx
+                .insert_symbol(var_name.clone(), ind_var)
+                .and::<()>(None);
+        }
 
         // move to check block;
         self.position = Some(check_block);
@@ -586,6 +589,10 @@ impl<'a> FunctionBuilder<'a> {
     }
 
     fn build_match_expr(&mut self, expr: &TypedExpr) -> Operand {
+        let TypedExpr { expr, typ } = expr;
+        let ExprEnum::Match { expr, arms  } = expr.as_ref() else { unreachable!() };
+        let typ = *typ;
+
         todo!()
     }
 
@@ -670,7 +677,7 @@ impl<'a> FunctionBuilder<'a> {
         let left_operand = self.build_expr_as_operand(lhs);
         let right_operand = self.build_expr_as_operand(rhs);
 
-        let name = self.namer.next_name("binary.op.result");
+        let name = self.namer.next_name("bin.op.res");
         let result = self.func.create_variable_definition(
             name.as_str(),
             typ,
@@ -696,7 +703,7 @@ impl<'a> FunctionBuilder<'a> {
 
         let operand = self.build_expr_as_operand(expr);
 
-        let name = self.namer.next_name("unary.op.result");
+        let name = self.namer.next_name("un.op.res");
         let result = self.func.create_variable_definition(
             name.as_str(),
             typ,
@@ -758,7 +765,7 @@ impl<'a> FunctionBuilder<'a> {
             .get_ctor_index_and_field_type_ref_by_name(typ, name);
         let args_value = self.build_arguments(args, &params_type);
 
-        let constructed_name = self.namer.next_name("enum.constructed");
+        let constructed_name = self.namer.next_name("enum");
         let construction_result = self.func.create_variable_definition(
             constructed_name.as_str(),
             typ,
@@ -801,7 +808,7 @@ impl<'a> FunctionBuilder<'a> {
 
         let args_operands = self.build_arguments(args, &parameters);
 
-        let name = self.namer.next_name("call.result");
+        let name = self.namer.next_name("call.res");
         let call_result = self.func.create_variable_definition(
             name.as_str(),
             ret_type,
@@ -835,25 +842,8 @@ impl<'a> FunctionBuilder<'a> {
                     self.build_expr_and_assign_to(expr, Some(arg_var));
                     vec.push(self.build_operand_from_var_def(arg_var));
                 }
-                TypedArgument::AtVar(name, typ) => {
-                    let arg_name = self.namer.next_name("at_arg");
-                    let arg_var = self.func.create_variable_definition(
-                        arg_name.as_str(),
-                        type_ref,
-                        VariableKind::TemporaryVariable,
-                    );
-
-                    self.build_expr_and_assign_to(
-                        &TypedExpr {
-                            expr: Box::new(ExprEnum::Path {
-                                path: [name.clone()].to_vec(),
-                                is_free_variable: false,
-                            }),
-                            typ: *typ,
-                        },
-                        Some(arg_var),
-                    );
-                    vec.push(self.build_operand_from_var_def(arg_var));
+                TypedArgument::AtVar(_, _) => {
+                    unimplemented!("not available");
                 }
             }
         }
@@ -867,7 +857,7 @@ impl<'a> FunctionBuilder<'a> {
         let typ = *typ;
 
         for element in elements.iter() {
-            let name = self.namer.next_name("make.tuple.field");
+            let name = self.namer.next_name("tuple.field");
             let field = self.func.create_variable_definition(
                 name.as_str(),
                 element.typ,
@@ -877,7 +867,7 @@ impl<'a> FunctionBuilder<'a> {
             self.build_expr_and_assign_to(element, Some(field));
         }
 
-        let name = self.namer.next_name("make.tuple");
+        let name = self.namer.next_name("tuple");
         let tuple = self.func.create_variable_definition(
             name.as_str(),
             typ,
@@ -916,12 +906,10 @@ impl<'a> FunctionBuilder<'a> {
         // assure here is only variable path, not function path or ctor path
         let TypedExpr { expr, .. } = expr;
         let ExprEnum::Path { path, .. } = expr.as_ref() else { unreachable!() };
-        let var = self
-            .var_ctx
-            .find_symbol(path)
-            .unwrap_or_else(|| panic!("variable {} not defined", path.join(".")));
 
-        var
+        self.var_ctx
+            .find_symbol(path)
+            .unwrap_or_else(|| panic!("variable {} not defined", path.join(".")))
     }
 
     fn build_bracket_expr(&mut self, expr: &TypedExpr) -> Operand {
@@ -929,7 +917,7 @@ impl<'a> FunctionBuilder<'a> {
         let ExprEnum::Bracket { stmts, ret_expr } = expr.as_ref() else { unreachable!() };
         let typ = *typ;
 
-        let name = self.namer.next_name("bracket.out");
+        let name = self.namer.next_name("out");
         let output_var = self.func.create_variable_definition(
             name.as_str(),
             typ,
@@ -1059,10 +1047,12 @@ impl MiddleIR {
     }
 
     fn convert_ast(&mut self, fn_def: &Vec<TypedFuncDef>) {
+        self.name_ctx.entry_scope();
         for func in fn_def {
             let new_def = self.convert_fn_definition(func);
             self.module.push(new_def);
         }
+        self.name_ctx.exit_scope();
     }
 
     fn convert_fn_definition(&mut self, func: &TypedFuncDef) -> FuncDef {
@@ -1076,28 +1066,34 @@ impl MiddleIR {
 
         // create the return value variable
         let ret_var =
-            def.create_variable_definition("#ret.var", func.ret_type, VariableKind::ReturnVariable);
+            def.create_variable_definition("ret.var", func.ret_type, VariableKind::ReturnVariable);
 
-        // insert the return value variable
+        let mut params_type = vec![];
         var_ctx.entry_scope();
-        var_ctx
-            .insert_symbol("ret.var".to_string(), ret_var)
-            .unwrap_or_default();
-
         for TypedBind {
             with_at: _,
             var_name,
             typ,
         } in &func.params
         {
-            let name = format!("#{var_name}");
             let param =
-                def.create_variable_definition(name.as_str(), *typ, VariableKind::Parameter);
+                def.create_variable_definition(var_name.as_str(), *typ, VariableKind::Parameter);
+            params_type.push(*typ);
 
-            var_ctx
-                .insert_symbol(var_name.to_string(), param)
-                .unwrap_or_default();
+            if var_name != "_" {
+                var_ctx
+                    .insert_symbol(var_name.to_string(), param)
+                    .and_then(|_| -> Option<()> { panic!("parameter redefined") });
+            }
         }
+
+        // insert function type to the name context
+        let fn_type = self
+            .ty_ctx
+            .callable_type(CallKind::Function, func.ret_type, params_type);
+        self.name_ctx
+            .insert_symbol(func.name.clone(), fn_type)
+            .and_then(|_| -> Option<()> { panic!("function {} redefined", func.name) });
 
         def.initialize_blocks();
         let entry_block = def.entry_block;
@@ -1191,7 +1187,7 @@ impl Dump for (&TypeContext, &FuncDef, &Block) {
     fn dump_string(&self) -> String {
         let (ty_ctx, func, block) = self;
         let mut s = "".to_string();
-        writeln!(s, "{}:", block.name).unwrap();
+        writeln!(s, "[{}]:", block.name).unwrap();
         for stmt in &block.stmts {
             writeln!(s, "    {}", (*ty_ctx, *func, stmt).dump_string()).unwrap();
         }
@@ -1431,21 +1427,24 @@ impl Dump for MiddleIR {
             } = func;
 
             writeln!(s, "fn {name} {{").unwrap();
-            let mut print_var = |var: VarDefRef| {
+            let mut print_var = |var: VarDefRef, prefix: &'static str| {
                 writeln!(
                     s,
-                    "    {}",
+                    "    {prefix}{}",
                     (&ty_ctx_with_all_opaque_recovered, func, var).dump_string()
                 )
                 .unwrap()
             };
 
-            print_var(return_value.unwrap());
-            params.iter().copied().for_each(&mut print_var);
-            locals.iter().copied().for_each(&mut print_var);
-            temporaries.iter().copied().for_each(&mut print_var);
-            obj_reference.iter().copied().for_each(&mut print_var);
-            unwrapped.iter().copied().for_each(&mut print_var);
+            print_var(return_value.unwrap(), "#");
+            params.iter().copied().for_each(|x| print_var(x, "#"));
+            locals.iter().copied().for_each(|x| print_var(x, "$"));
+            temporaries.iter().copied().for_each(|x| print_var(x, "$"));
+            obj_reference
+                .iter()
+                .copied()
+                .for_each(|x| print_var(x, "@"));
+            unwrapped.iter().copied().for_each(|x| print_var(x, "~"));
 
             writeln!(s).unwrap();
             for block in blocks {
