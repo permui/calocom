@@ -1,3 +1,4 @@
+#![feature(let_else)]
 extern crate pest;
 #[macro_use]
 extern crate pest_derive;
@@ -20,7 +21,7 @@ pub mod midend;
 pub use midend::typed_ast::TypedAST;
 
 #[cfg(feature = "middle-ir")]
-pub use midend::middle_ir::MiddleIR;
+pub use midend::new_middle_ir::MiddleIR;
 
 #[cfg(feature = "backend")]
 #[path = ""]
@@ -44,7 +45,7 @@ pub use export_frontend::*;
 #[cfg(feature = "backend")]
 pub use export_backend::*;
 
-pub mod sym;
+mod common;
 
 use clap::{ArgEnum, Parser};
 use owo_colors::OwoColorize;

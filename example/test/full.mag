@@ -1,0 +1,126 @@
+import std
+import std.io
+
+data Rec1 = Ctor1(Rec2) ;
+data Rec2 = Ctor2(Rec1) ;
+data Nat = O | S(Nat);
+
+test_if: () -> i32 {
+    if true { 1 } else { 2 }
+}
+
+test_nested_if: () -> i32 {
+    let i: i32 = 0;
+    if i != 1 {
+        i + 2
+    } else {
+        if i != 3 {
+            i + 4
+        } else {
+            i + 5
+        }
+    }
+}
+
+test_while: () -> () {
+    let i: i32 = 0;
+    while i < 100 {
+        i = i + 1;
+    };
+}
+
+test_for: () -> () {
+    for i in 0 .. 100 {
+        io.print(i);
+    };
+}
+
+test_nested_for: () -> () {
+    let sum: i32 = 0;
+    for i in 0 .. 10 {
+        for j in -100 .. 100 {
+            sum = sum + i + j;
+        };
+    };
+}
+
+test_break: () -> () {
+    let i : i32 = 0;
+    while true {
+        if i > 10 {
+            break;
+        };
+        i = i + 1;
+    };
+}
+
+test_continue: () -> () {
+    let i : i32 = 0;
+    while i < 10 {
+        if i == 0 {
+            continue;
+        };
+        i = i + 1;
+    };
+}
+
+test_float: () -> f64 {
+    2.33
+}
+
+test_int_convert_float: () -> f64 {
+    0
+}
+
+test_tuple: () -> (i32, f64, str) {
+    (0, 1.2, "tuple")
+}
+
+test_nat_ctor_1: () -> Nat {
+    O
+}
+
+test_nat_ctor_2: (n: Nat) -> Nat {
+    S(n)
+}
+
+test_array: (arr: [[i32]]) -> i32 {
+    arr[0][0] = 1;
+    arr[0][0]
+}
+
+test_ret_array: (arr: [[i32]]) -> [[i32]] {
+    arr
+}
+
+test_ret_assign: (arr: [[[i32]]]) -> i32 {
+    test_ret_array(arr[0])[1][2] = 3;
+    test_ret_array(arr[4])[5][6]
+}
+
+test_wildcard: (_: i32) -> () {
+    let _ : i32 = 0;
+    for _ in 0 .. 1 {
+    };
+}
+
+test_closure: () -> i32 -> () -> i32 {
+    let fv: i32 = 0;
+    let x: i32 = 1;
+    \ (x: i32) -> () -> i32 => {
+        \ () -> i32 => {
+            io.print(fv + x);
+            fv + x
+        }
+    }
+}
+
+
+test_closure_call: () -> i32 {
+    let c: i32 -> () -> i32 = test_closure();
+    let c: () -> i32 = c(10);
+    c()
+}
+
+main: () -> () {
+}

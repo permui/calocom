@@ -17,12 +17,14 @@ clap = { version = "3.1", features = ["derive"] }
 owo-colors = "3"
 num_enum = "0.5.7"
 strum = { version = "0.24", features = ["derive"] }
+slotmap = "1.0"
+uuid = { version = "1.0.0", features = ["v5"] }
 
 [features]
 frontend = []
 typed-ast = ["frontend"]
-visualize = ["typed-ast"]
-#middle-ir = ["typed-ast"]
-#midend = ["middle-ir", "typed-ast"]
+visualize = ["frontend"]
+middle-ir = ["typed-ast"]
+midend = ["middle-ir", "typed-ast"]
 #backend = ["midend"]
-default = ["visualize"]
+default = ["visualize", "midend"]
