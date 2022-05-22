@@ -192,11 +192,12 @@ pub fn compile_with_arguments(args: Args) -> Result<(), ()> {
 
     #[cfg(feature = "visualize")]
     if args.using_visualize {
-        return match vis::generate_html(input_file) {
+        match vis::generate_html(input_file) {
             Ok(_) => Ok(()),
             Err(_) => Err(()),
-        }
-    }
+        }?;
+    };
+
     #[cfg(feature = "frontend")]
     check_flag_and_do(&mut output_kinds, OutputType::Ast, || {
         let output_file = output_file.with_extension("ast.ir");
