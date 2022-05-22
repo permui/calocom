@@ -1,7 +1,8 @@
 use slotmap::{new_key_type, SlotMap};
-use std::borrow::Borrow;
+use std::collections::HashSet;
 use std::fmt::Display;
 use std::fmt::Write;
+use std::fmt::format;
 use std::{panic, vec};
 
 use super::typed_ast::*;
@@ -26,6 +27,7 @@ pub struct FuncDef {
     pub variables: SlotMap<VarDefRef, VarDef>,
 
     pub params: Vec<VarDefRef>,
+    pub captured: Vec<VarDefRef>,
     pub locals: Vec<VarDefRef>, // represents a local stack slot containing a pointer to a object
     pub temporaries: Vec<VarDefRef>, // be the same as var_def but it's not named by users
     pub obj_reference: Vec<VarDefRef>, // only represents a local stack slot containing a ptr to a ptr to a object
@@ -44,6 +46,7 @@ enum VariableKind {
     RawVariable,
     ReturnVariable,
     ObjectReference,
+    CapturedVariable,
 }
 
 #[derive(Debug, Hash, PartialEq, Eq, Clone)]
@@ -112,6 +115,10 @@ pub enum OperandEnum {
 pub enum ValueEnum {
     Call(Vec<String>, Vec<Operand>),
     ExtCall(Vec<String>, Vec<Operand>),
+    MakeClosure {
+        path: Vec<String>,
+        capture: Vec<Operand>,
+    },
     BinaryOp(BinOp, Operand, Operand),
     UnaryOp(UnaryOp, Operand),
     MakeTuple(Vec<Operand>),
@@ -123,14 +130,16 @@ pub enum ValueEnum {
 
 #[derive(Debug)]
 struct FunctionBuilder<'a> {
-    pub position: Option<BlockRef>,
-    pub namer: UniqueName,
-    pub var_ctx: NameContext<VarDefRef>,
-    pub name_ctx: &'a NameContext<TypeRef>,
-    pub ty_ctx: &'a TypeContext,
-    pub func: &'a mut FuncDef,
-    pub continue_blocks: Vec<BlockRef>,
-    pub break_blocks: Vec<BlockRef>,
+    position: Option<BlockRef>,
+    namer: UniqueName,
+    var_ctx: NameContext<VarDefRef>,
+    name_ctx: &'a NameContext<TypeRef>,
+    ty_ctx: &'a TypeContext,
+    func: &'a mut FuncDef,
+    continue_blocks: Vec<BlockRef>,
+    break_blocks: Vec<BlockRef>,
+    closure_depth: usize,
+    anonymous_function: Vec<FuncDef>,
 }
 
 #[derive(Debug, Default, Clone)]
@@ -160,6 +169,7 @@ impl FuncDef {
                 VariableKind::TemporaryVariable => &mut self.temporaries,
                 VariableKind::ObjectReference => &mut self.obj_reference,
                 VariableKind::RawVariable => &mut self.unwrapped,
+                VariableKind::CapturedVariable => &mut self.captured,
                 _ => unreachable!(),
             }
             .push(var_ref);
@@ -218,6 +228,7 @@ impl FuncDef {
 }
 
 impl<'a> FunctionBuilder<'a> {
+    const ANONYMOUS_FUNCTION_UUID: uuid::Uuid = uuid::uuid!("67a1aaad-70ab-4107-be56-0a3c3b10ac29");
     fn create(
         func: &'a mut FuncDef,
         entry: BlockRef,
@@ -234,11 +245,13 @@ impl<'a> FunctionBuilder<'a> {
             ty_ctx,
             continue_blocks: vec![],
             break_blocks: vec![],
+            closure_depth: 0,
+            anonymous_function: vec![],
         }
     }
 
     fn build_function_body(&mut self, body: &TypedBracketBody, ret: VarDefRef) {
-        self.build_bracket(body, Some(ret));
+        self.build_bracket_body(body, Some(ret));
     }
 
     fn build_stmt(&mut self, stmt: &TypedASTStmt) {
@@ -298,21 +311,15 @@ impl<'a> FunctionBuilder<'a> {
         new_var.and_then(|new_var| self.var_ctx.insert_symbol(var_name.clone(), new_var));
     }
 
-    fn build_bracket(&mut self, body: &TypedBracketBody, out: Option<VarDefRef>) {
+    fn build_bracket_body(&mut self, body: &TypedBracketBody, out: Option<VarDefRef>) {
         self.var_ctx.entry_scope();
         for stmt in &body.stmts {
             self.build_stmt(stmt);
         }
         if let Some(ret_expr) = &body.ret_expr {
             self.build_expr_and_assign_to(ret_expr, out);
-        } else {
-            self.build_expr_and_assign_to(
-                &TypedExpr {
-                    expr: Box::new(ExprEnum::Lit(Literal::Unit)),
-                    typ: self.ty_ctx.singleton_type(Primitive::Unit),
-                },
-                out,
-            );
+        } else if let Some(out) = out {
+            self.build_unit_and_assign_to(out);
         }
         self.var_ctx.exit_scope();
     }
@@ -358,7 +365,7 @@ impl<'a> FunctionBuilder<'a> {
         // change its terminator to loop back to the cond block
         self.var_ctx.entry_scope();
         self.position = Some(body_block);
-        self.build_bracket(body, None);
+        self.build_bracket_body(body, None);
         self.change_terminator_at_position(Terminator::Jump(cond_block));
         self.var_ctx.exit_scope();
 
@@ -460,7 +467,7 @@ impl<'a> FunctionBuilder<'a> {
         ));
 
         self.position = Some(body_block);
-        self.build_bracket(body, None);
+        self.build_bracket_body(body, None);
         self.change_terminator_at_position(Terminator::Jump(check_block));
 
         self.insert_stmt_at_position(Stmt {
@@ -585,7 +592,291 @@ impl<'a> FunctionBuilder<'a> {
     }
 
     fn build_closure_expr(&mut self, expr: &TypedExpr) -> Operand {
-        todo!()
+        let TypedExpr { expr, typ } = expr;
+        let ExprEnum::Closure { param_list, ret_type, body } = expr.as_ref() else { unreachable!() };
+        let typ = *typ;
+
+        self.closure_depth += 1;
+
+        let mut fv_list = vec![];
+        self.collect_free_variables_list_in_expr(body, &mut fv_list, self.closure_depth);
+
+        let fv_list: HashSet<_> = fv_list.into_iter().collect();
+        let fv_list: Vec<_> = fv_list.into_iter().collect();
+
+        let closure_name = self.namer.next_name("closure");
+        let closure_var = self.func.create_variable_definition(
+            closure_name.as_str(),
+            typ,
+            VariableKind::LocalVariable,
+        );
+
+        let capture: Vec<_> = fv_list
+            .iter()
+            .map(|path| {
+                self.var_ctx
+                    .find_symbol(path)
+                    .unwrap_or_else(|| panic!("unable to capture variable {}", path.join(".")))
+            })
+            .collect();
+
+        let closure_uuid = uuid::Uuid::new_v5(
+            &FunctionBuilder::ANONYMOUS_FUNCTION_UUID,
+            self.namer
+                .next_name(format!("{}@closure", self.func.name).as_str())
+                .as_bytes(),
+        )
+        .simple();
+        
+        let closure_function_name = format!("closure_{}", closure_uuid);
+        let capture_name_type_list: Vec<_> = fv_list
+            .iter()
+            .zip(capture.iter())
+            .map(|(name, var_def_ref)| {
+                let typ = self.get_var_type(*var_def_ref);
+                (name[0].to_string(), typ)
+            })
+            .collect();
+
+        let mut fn_def = self.build_closure_function(
+            closure_function_name.as_str(),
+            *ret_type,
+            param_list,
+            body,
+            &capture_name_type_list,
+        );
+
+        self.anonymous_function.append(&mut fn_def);
+
+        self.insert_stmt_at_position(Stmt {
+            left: Some(closure_var),
+            right: Some(Value {
+                typ,
+                val: ValueEnum::MakeClosure {
+                    path: vec![closure_function_name],
+                    capture: capture
+                        .iter()
+                        .map(|var| self.build_operand_from_var_def(*var))
+                        .collect(),
+                },
+            }),
+            note: "make a closure",
+        });
+
+        self.closure_depth -= 1;
+
+        self.build_operand_from_var_def(closure_var)
+    }
+
+    fn build_closure_function(
+        &mut self,
+        name: &str,
+        ret_type: TypeRef,
+        params: &[TypedBind],
+        body: &TypedExpr,
+        captured: &[(String, TypeRef)],
+    ) -> Vec<FuncDef> {
+        let mut def = FuncDef {
+            name: name.to_string(),
+            ..Default::default()
+        };
+
+        // setup the symbol table
+        let mut var_ctx: NameContext<VarDefRef> = Default::default();
+
+        // create the return value variable
+        let ret_var =
+            def.create_variable_definition("ret.var", ret_type, VariableKind::ReturnVariable);
+
+        let mut params_type = vec![];
+        var_ctx.entry_scope();
+        for TypedBind {
+            with_at: _,
+            var_name,
+            typ,
+        } in params
+        {
+            let param =
+                def.create_variable_definition(var_name.as_str(), *typ, VariableKind::Parameter);
+            params_type.push(*typ);
+
+            if var_name != "_" {
+                var_ctx
+                    .insert_symbol(var_name.to_string(), param)
+                    .and_then(|_| -> Option<()> { panic!("parameter redefined") });
+            }
+        }
+
+        def.initialize_blocks();
+        let entry_block = def.entry_block;
+
+        var_ctx.entry_scope();
+        let mut fn_builder =
+            FunctionBuilder::create(&mut def, entry_block, var_ctx, self.name_ctx, self.ty_ctx);
+        fn_builder.initialize_captured_variable(captured);
+        fn_builder.build_expr_and_assign_to(body, Some(ret_var));
+
+        fn_builder.var_ctx.exit_scope();
+        fn_builder.var_ctx.exit_scope();
+
+        let mut other_defs = fn_builder.anonymous_function;
+        let mut def_vec = vec![def];
+        def_vec.append(&mut other_defs);
+        def_vec
+    }
+
+    fn initialize_captured_variable(&mut self, captured: &[(String, TypeRef)]) {
+        for captured in captured {
+            let captured_var = self.func.create_variable_definition(
+                captured.0.as_str(),
+                captured.1,
+                VariableKind::CapturedVariable,
+            );
+            if captured.0 != "_" {
+                self.var_ctx
+                    .insert_symbol(captured.0.to_string(), captured_var)
+                    .and_then(|_| -> Option<()> { panic!("duplicate capture") });
+            }
+        }
+    }
+
+    fn collect_free_variables_list_in_bracket(
+        &self,
+        body: &TypedBracketBody,
+        out: &mut Vec<Vec<String>>,
+        depth: usize,
+    ) {
+        let TypedBracketBody {
+            stmts,
+            ret_expr,
+            typ,
+        } = body;
+        for stmt in stmts {
+            self.collect_free_variables_list_in_stmt(stmt, out, depth);
+        }
+        if let Some(ret_expr) = ret_expr {
+            self.collect_free_variables_list_in_expr(ret_expr, out, depth);
+        }
+    }
+
+    fn collect_free_variables_list_in_stmt(
+        &self,
+        stmt: &TypedASTStmt,
+        out: &mut Vec<Vec<String>>,
+        depth: usize,
+    ) {
+        match stmt {
+            TypedASTStmt::Let(x) => self.collect_free_variables_list_in_expr(&x.expr, out, depth),
+            TypedASTStmt::While(x) => {
+                let TypedWhileStmt { condition, body } = x.as_ref();
+                self.collect_free_variables_list_in_expr(condition, out, depth);
+                self.collect_free_variables_list_in_bracket(body, out, depth);
+            }
+            TypedASTStmt::For(x) => {
+                let TypedForStmt {
+                    range_l,
+                    range_r,
+                    body,
+                    ..
+                } = x.as_ref();
+                self.collect_free_variables_list_in_expr(range_l, out, depth);
+                self.collect_free_variables_list_in_expr(range_r, out, depth);
+                self.collect_free_variables_list_in_bracket(body, out, depth);
+            }
+            TypedASTStmt::Return => {}
+            TypedASTStmt::Break => {}
+            TypedASTStmt::Continue => {}
+            TypedASTStmt::Asgn(x) => {
+                let TypedAsgnStmt { lhs, rhs } = x.as_ref();
+                self.collect_free_variables_list_in_expr(lhs, out, depth);
+                self.collect_free_variables_list_in_expr(rhs, out, depth);
+            }
+            TypedASTStmt::Expr(x) => self.collect_free_variables_list_in_expr(x, out, depth),
+        }
+    }
+
+    fn collect_free_variables_list_in_expr(
+        &self,
+        expr: &TypedExpr,
+        out: &mut Vec<Vec<String>>,
+        depth: usize,
+    ) {
+        let TypedExpr { expr, .. } = expr;
+        match expr.as_ref() {
+            ExprEnum::Closure { body, .. } => {
+                self.collect_free_variables_list_in_expr(body, out, depth + 1)
+            }
+            ExprEnum::Match { expr, arms } => {
+                self.collect_free_variables_list_in_expr(expr, out, depth);
+                for arm in arms.iter() {
+                    self.collect_free_variables_list_in_expr(&arm.1, out, depth);
+                }
+            }
+            ExprEnum::If {
+                condition,
+                then,
+                or,
+            } => {
+                self.collect_free_variables_list_in_expr(condition, out, depth);
+                self.collect_free_variables_list_in_expr(then, out, depth);
+                if let Some(or) = or {
+                    self.collect_free_variables_list_in_expr(or, out, depth);
+                }
+            }
+            ExprEnum::BinOp { lhs, rhs, .. } => {
+                self.collect_free_variables_list_in_expr(lhs, out, depth);
+                self.collect_free_variables_list_in_expr(rhs, out, depth);
+            }
+            ExprEnum::UnaryOp { expr, op } => {
+                self.collect_free_variables_list_in_expr(expr, out, depth);
+            }
+            ExprEnum::Subscript { arr, index } => {
+                self.collect_free_variables_list_in_expr(arr, out, depth);
+                self.collect_free_variables_list_in_expr(index, out, depth);
+            }
+            ExprEnum::ClosureCall { expr, args } => {
+                self.collect_free_variables_list_in_expr(expr, out, depth);
+                args.iter()
+                    .map(|arg| match arg {
+                        TypedArgument::Expr(expr) => expr,
+                        TypedArgument::AtVar(_, _) => unimplemented!("not available"),
+                    })
+                    .for_each(|arg| self.collect_free_variables_list_in_expr(arg, out, depth));
+            }
+            ExprEnum::CtorCall { name, args } => {
+                args.iter()
+                    .map(|arg| match arg {
+                        TypedArgument::Expr(expr) => expr,
+                        TypedArgument::AtVar(_, _) => unimplemented!("not available"),
+                    })
+                    .for_each(|arg| self.collect_free_variables_list_in_expr(arg, out, depth));
+            }
+            ExprEnum::Call { path, args } => {
+                args.iter()
+                    .map(|arg| match arg {
+                        TypedArgument::Expr(expr) => expr,
+                        TypedArgument::AtVar(_, _) => unimplemented!("not available"),
+                    })
+                    .for_each(|arg| self.collect_free_variables_list_in_expr(arg, out, depth));
+            }
+            ExprEnum::Tuple { elements } => {
+                elements
+                    .iter()
+                    .for_each(|elem| self.collect_free_variables_list_in_expr(elem, out, depth));
+            }
+            ExprEnum::Lit(_) => {}
+            ExprEnum::Path {
+                capture_depth,
+                path,
+            } => {
+                if depth as isize - *capture_depth as isize <= 0 {
+                    out.push(path.clone());
+                }
+            }
+            ExprEnum::Bracket(body) => {
+                self.collect_free_variables_list_in_bracket(body, out, depth);
+            }
+        }
     }
 
     fn build_match_expr(&mut self, expr: &TypedExpr) -> Operand {
@@ -914,7 +1205,7 @@ impl<'a> FunctionBuilder<'a> {
 
     fn build_bracket_expr(&mut self, expr: &TypedExpr) -> Operand {
         let TypedExpr { expr, typ } = expr;
-        let ExprEnum::Bracket { stmts, ret_expr } = expr.as_ref() else { unreachable!() };
+        let ExprEnum::Bracket (body) = expr.as_ref() else { unreachable!() };
         let typ = *typ;
 
         let name = self.namer.next_name("out");
@@ -924,16 +1215,7 @@ impl<'a> FunctionBuilder<'a> {
             VariableKind::TemporaryVariable,
         );
 
-        self.var_ctx.entry_scope();
-        for stmt in stmts.iter() {
-            self.build_stmt(stmt);
-        }
-        if let Some(ret_expr) = ret_expr {
-            self.build_expr_and_assign_to(ret_expr, Some(output_var));
-        } else {
-            self.build_unit_and_assign_to(output_var);
-        }
-        self.var_ctx.exit_scope();
+        self.build_bracket_body(body, Some(output_var));
         self.build_operand_from_var_def(output_var)
     }
 
@@ -1031,7 +1313,6 @@ impl MiddleIR {
             name_ctx,
             ty_ctx,
             module,
-            delimiter: _,
         } = ty_ast;
 
         let name_ctx = NameContext::inherit_environment(name_ctx);
@@ -1049,13 +1330,13 @@ impl MiddleIR {
     fn convert_ast(&mut self, fn_def: &Vec<TypedFuncDef>) {
         self.name_ctx.entry_scope();
         for func in fn_def {
-            let new_def = self.convert_fn_definition(func);
-            self.module.push(new_def);
+            let mut new_def = self.convert_fn_definition(func);
+            self.module.append(&mut new_def);
         }
         self.name_ctx.exit_scope();
     }
 
-    fn convert_fn_definition(&mut self, func: &TypedFuncDef) -> FuncDef {
+    fn convert_fn_definition(&mut self, func: &TypedFuncDef) -> Vec<FuncDef> {
         let mut def = FuncDef {
             name: func.name.clone(),
             ..Default::default()
@@ -1088,9 +1369,9 @@ impl MiddleIR {
         }
 
         // insert function type to the name context
-        let fn_type = self
-            .ty_ctx
-            .callable_type(CallKind::Function, func.ret_type, params_type);
+        let fn_type =
+            self.ty_ctx
+                .callable_type(CallKind::Function, func.ret_type, params_type, false);
         self.name_ctx
             .insert_symbol(func.name.clone(), fn_type)
             .and_then(|_| -> Option<()> { panic!("function {} redefined", func.name) });
@@ -1103,9 +1384,13 @@ impl MiddleIR {
         // convert the function body
         fn_builder.build_function_body(&func.body, ret_var);
 
-        // exit the symbol table scope (1: bracket scope, 2: parameter scope)
+        // exit the symbol table scope
         fn_builder.var_ctx.exit_scope();
-        def
+
+        let mut other_defs = fn_builder.anonymous_function;
+        let mut def_vec = vec![def];
+        def_vec.append(&mut other_defs);
+        def_vec
     }
 
     fn get_type(&self, typ: TypeRef) -> Type {
@@ -1306,7 +1591,7 @@ impl Dump for (&TypeContext, &FuncDef, &ValueEnum) {
             ValueEnum::Call(path, args) => {
                 write!(
                     s,
-                    "call {} ({})",
+                    "call {:?} ({})",
                     path.dump_string(),
                     (*ty_ctx, *func, args).dump_string()
                 )
@@ -1315,7 +1600,7 @@ impl Dump for (&TypeContext, &FuncDef, &ValueEnum) {
             ValueEnum::ExtCall(path, args) => {
                 write!(
                     s,
-                    "extern-call {} ({})",
+                    "extern-call {:?} ({})",
                     path.dump_string(),
                     (*ty_ctx, *func, args).dump_string()
                 )
@@ -1367,6 +1652,15 @@ impl Dump for (&TypeContext, &FuncDef, &ValueEnum) {
 
             ValueEnum::Operand(operand) => {
                 write!(s, "{}", (*ty_ctx, *func, operand).dump_string()).unwrap();
+            }
+            ValueEnum::MakeClosure { path, capture } => {
+                write!(
+                    s,
+                    "make_closure {:?} capture {}",
+                    path,
+                    (*ty_ctx, *func, capture).dump_string()
+                )
+                .unwrap();
             }
         }
         s
@@ -1424,6 +1718,7 @@ impl Dump for MiddleIR {
                 entry_block: _,
                 return_block: _,
                 panic_block: _,
+                captured,
             } = func;
 
             writeln!(s, "fn {name} {{").unwrap();
@@ -1438,6 +1733,7 @@ impl Dump for MiddleIR {
 
             print_var(return_value.unwrap(), "#");
             params.iter().copied().for_each(|x| print_var(x, "#"));
+            captured.iter().copied().for_each(|x| print_var(x, "^"));
             locals.iter().copied().for_each(|x| print_var(x, "$"));
             temporaries.iter().copied().for_each(|x| print_var(x, "$"));
             obj_reference

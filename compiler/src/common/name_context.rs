@@ -6,12 +6,25 @@ use std::{cell::RefCell, collections::HashMap, rc::Rc};
 type SymTable<K, T> = Vec<HashMap<K, T>>;
 
 // map name into context
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct NameContext<T> {
     pub import_env: HashMap<String, Vec<String>>,
     pub fully_qualified_name_env: HashMap<Vec<String>, T>,
     pub env: SymTable<String, T>,
     pub ctor_env: Option<Rc<RefCell<HashMap<String, T>>>>, // share with type context
+    pub delimiter: Vec<isize>, // the start symbol depth stack of a lambda expression
+}
+
+impl<T> Default for NameContext<T> {
+    fn default() -> Self {
+        Self {
+            import_env: Default::default(),
+            fully_qualified_name_env: Default::default(),
+            env: Default::default(),
+            ctor_env: Default::default(),
+            delimiter: vec![-1],
+        }
+    }
 }
 
 impl<T> NameContext<T>
@@ -24,7 +37,26 @@ where
             fully_qualified_name_env: self.fully_qualified_name_env,
             env: Default::default(),
             ctor_env: self.ctor_env,
+            delimiter: vec![-1],
         }
+    }
+
+    pub fn start_delimiter(&mut self, level: isize) {
+        self.delimiter.push(level)
+    }
+
+    pub fn end_delimiter(&mut self) -> Option<isize> {
+        self.delimiter.pop()
+    }
+
+    pub fn find_capture_depth_by_level(&self, level: isize) -> usize {
+        for (index, delimiter) in self.delimiter.iter().rev().enumerate() {
+            if level >= *delimiter {
+                return index
+            }
+        }
+        dbg!(&self.delimiter);
+        panic!("no delimiter found")
     }
 
     pub fn find_ctor(&self, key: &str) -> Option<T> {
@@ -48,7 +80,7 @@ where
                 ctor_env.as_ref().borrow().get(key[0].as_str()).cloned()
             } else {
                 None
-            }
+            };
         } else if let Some(path) = self.import_env.get(key.root()) {
             let fully_qualified_name = key.suffix().unwrap().with_prefix(path);
             if let Some(ty) = self.fully_qualified_name_env.get(&fully_qualified_name) {

@@ -118,13 +118,10 @@ pub enum ExprEnum {
     },
     Lit(TypedASTLiteral),
     Path {
-        is_free_variable: bool,
+        capture_depth: usize,
         path: Vec<String>,
     },
-    Bracket {
-        stmts: Vec<TypedASTStmt>,
-        ret_expr: Option<TypedExpr>,
-    },
+    Bracket(TypedBracketBody),
 }
 
 #[derive(Debug, Clone)]
@@ -162,7 +159,6 @@ pub struct TypedASTConstructorVar {
 pub struct TypedAST {
     pub name_ctx: NameContext<TypeRef>,
     pub ty_ctx: TypeContext,
-    pub delimiter: Vec<isize>, // the start symbol depth stack of a lambda expression
     pub module: Vec<TypedFuncDef>,
 }
 
@@ -171,7 +167,7 @@ macro_rules! declare_library_function {
         $name_ctx
             .insert_fully_qualified_symbol(
                 [$(stringify!($fn_name)),+].map(|s| s.to_string()).to_vec(),
-                $ty_ctx.callable_type(CallKind::Function, $ret_type, [].to_vec()),
+                $ty_ctx.callable_type(CallKind::Function, $ret_type, [].to_vec(), false),
             )
             .and_then(|_| -> Option<()> { unreachable!() });
     };
@@ -179,7 +175,7 @@ macro_rules! declare_library_function {
         $name_ctx
             .insert_fully_qualified_symbol(
                 [$(stringify!($fn_name)),+].map(|s| s.to_string()).to_vec(),
-                $ty_ctx.callable_type(CallKind::Function, $ret_type, [$($param_type),*].to_vec()),
+                $ty_ctx.callable_type(CallKind::Function, $ret_type, [$($param_type),*].to_vec(), false),
             )
             .and_then(|_| -> Option<()> { unreachable!() });
     };
@@ -204,8 +200,11 @@ impl From<&crate::ast::ComplexPattern> for TypedASTComplexPattern {
 
 impl TypedAST {
     fn resolve_type_with_at(&mut self, ast_type: &crate::ast::Type) -> TypeRef {
+        unimplemented!("not available")
+        /*
         let type_ref = self.resolve_type(None, ast_type, false);
         self.ty_ctx.reference_type(type_ref)
+        */
     }
 
     fn resolve_type(
@@ -215,7 +214,12 @@ impl TypedAST {
         allow_opaque: bool,
     ) -> TypeRef {
         match ast_type {
-            crate::ast::Type::Arrow(_, _) => unimplemented!(),
+            crate::ast::Type::Arrow(ty1, ty2) => {
+                let ty1 = self.resolve_type(None, ty1, allow_opaque);
+                let ty2 = self.resolve_type(None, ty2, allow_opaque);
+                self.ty_ctx
+                    .callable_type(CallKind::ClosureValue, ty2, vec![ty1], true)
+            }
             crate::ast::Type::Array(ty) => {
                 let elem_ty = self.resolve_type(None, ty, allow_opaque);
                 self.ty_ctx.array_type(elem_ty)
@@ -386,7 +390,7 @@ impl TypedAST {
                 let path = match expr.as_ref() {
                     ExprEnum::Path {
                         path,
-                        is_free_variable: _,
+                        capture_depth: _,
                     } => path,
                     _ => panic!("not a path in a constructor expression"),
                 };
@@ -432,7 +436,7 @@ impl TypedAST {
                     let path = match expr.as_ref() {
                         ExprEnum::Path {
                             path,
-                            is_free_variable: _,
+                            capture_depth: _,
                         } => path,
                         _ => panic!("not a path in a function call expression"),
                     };
@@ -547,7 +551,6 @@ impl TypedAST {
         matched_type: TypeRef,
     ) -> (TypedASTComplexPattern, TypedExpr) {
         self.name_ctx.entry_scope();
-
         let new_complex_pattern = self.convert_pattern_struct(pattern);
         self.insert_pattern_symbol_binding(matched_type, &new_complex_pattern);
         let typed_expr = self.check_type_of_expr(expr);
@@ -617,7 +620,11 @@ impl TypedAST {
 
                 TypedExpr {
                     typ,
-                    expr: Box::new(ExprEnum::Bracket { stmts, ret_expr }),
+                    expr: Box::new(ExprEnum::Bracket(TypedBracketBody {
+                        stmts,
+                        ret_expr,
+                        typ,
+                    })),
                 }
             }
             crate::ast::Expr::Call(x) => self.check_type_of_call(x),
@@ -713,12 +720,12 @@ impl TypedAST {
             )
             .collect();
 
-        let fn_ty = self
-            .ty_ctx
-            .callable_type(CallKind::Function, ret_type, params_type.clone());
+        let fn_ty =
+            self.ty_ctx
+                .callable_type(CallKind::ClosureValue, ret_type, params_type.clone(), false);
 
         let inner_level = self.name_ctx.entry_scope();
-        self.delimiter.push(inner_level);
+        self.name_ctx.start_delimiter(inner_level);
         for (tp, var_name) in params_type.iter().zip(param_list.iter().map(
             |crate::ast::NameTypeBind {
                  with_at: _,
@@ -737,7 +744,7 @@ impl TypedAST {
         }
 
         self.name_ctx.exit_scope();
-        self.delimiter.pop();
+        self.name_ctx.end_delimiter();
 
         TypedExpr {
             expr: Box::new(ExprEnum::Closure {
@@ -837,11 +844,11 @@ impl TypedAST {
             }
         }
 
-        let is_free_variable = level < *self.delimiter.last().unwrap();
+        let capture_depth = self.name_ctx.find_capture_depth_by_level(level);
         TypedExpr {
             expr: Box::new(ExprEnum::Path {
                 path: items.clone(),
-                is_free_variable,
+                capture_depth,
             }),
             typ,
         }
@@ -1039,7 +1046,7 @@ impl TypedAST {
 
         let fn_type = self
             .ty_ctx
-            .callable_type(CallKind::Function, ret_type, params_type);
+            .callable_type(CallKind::Function, ret_type, params_type, false);
         self.name_ctx
             .insert_symbol(func.name.clone(), fn_type)
             .and_then(|_| -> Option<()> { panic!("function {} redefined", func.name) });
@@ -1091,7 +1098,15 @@ impl TypedAST {
 
         let body = self.check_type_of_bracket_body(&func.body);
         if !self.ty_ctx.is_type_compatible(body.typ, *ret_type) {
-            panic!("return type inconsistent: {}", func.name);
+            let body_type = body.typ;
+            let ret_type = *ret_type;
+            let s1 = self.ty_ctx.get_type_ref_string(body_type);
+            let s2 = self.ty_ctx.get_type_ref_string(ret_type);
+            dbg!(&self.ty_ctx);
+            panic!(
+                "return type of {} inconsistent: expect {s2} but got {s1}",
+                func.name
+            );
         }
 
         self.name_ctx.exit_scope();
@@ -1128,7 +1143,6 @@ impl TypedAST {
         let mut typed_ast = TypedAST::default();
 
         typed_ast.name_ctx.ctor_env = Some(typed_ast.ty_ctx.get_ctor_map());
-        typed_ast.delimiter.push(-1); // closest delimiter is at -1, which means a global level
 
         typed_ast.entry_scope();
         typed_ast.create_library_function_signature();

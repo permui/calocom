@@ -84,5 +84,16 @@ test_wildcard: (_: i32) -> () {
     };
 }
 
+test_closure: () -> i32 -> () -> i32 {
+    let fv: i32 = 0;
+    let x: i32 = 1;
+    \ (x: i32) -> () -> i32 => {
+        \ () -> i32 => {
+            io.print(fv + x);
+            fv + x
+        }
+    }
+}
+
 main: () -> () {
 }

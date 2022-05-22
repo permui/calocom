@@ -93,15 +93,8 @@ impl Default for TypeContext {
 }
 
 impl TypeContext {
-    pub const PRIMITIVE_TYPE_NAME: [&'static str; 7] = [
-        "object!",
-        "unit!",
-        "str",
-        "bool",
-        "i32",
-        "f64",
-        "c_i32!",
-    ];
+    pub const PRIMITIVE_TYPE_NAME: [&'static str; 7] =
+        ["object!", "unit!", "str", "bool", "i32", "f64", "c_i32!"];
 
     pub fn types(&self) -> &SlotMap<TypeRef, Type> {
         &self.types
@@ -167,7 +160,7 @@ impl TypeContext {
     }
 
     fn ctor_type(&mut self, typ: (TypeRef, Vec<TypeRef>)) -> TypeRef {
-        self.callable_type(CallKind::Constructor, typ.0, typ.1)
+        self.callable_type(CallKind::Constructor, typ.0, typ.1, false)
     }
 
     pub fn enum_type(&mut self, ctors: Vec<(String, Vec<TypeRef>)>, name: String) -> TypeRef {
@@ -204,8 +197,15 @@ impl TypeContext {
         &mut self,
         kind: CallKind,
         ret_type: TypeRef,
-        parameters: Vec<TypeRef>,
+        mut parameters: Vec<TypeRef>,
+        unit_elimination: bool,
     ) -> TypeRef {
+        if unit_elimination
+            && parameters.len() == 1
+            && parameters[0] == self.singleton_type(Primitive::Unit)
+        {
+            parameters.clear();
+        }
         let res = Type::Callable {
             kind,
             ret_type,
