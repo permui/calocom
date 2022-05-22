@@ -119,7 +119,11 @@ test_closure: () -> i32 -> () -> i32 {
 test_closure_call: () -> i32 {
     let c: i32 -> () -> i32 = test_closure();
     let c: () -> i32 = c(10);
-    c()
+    if test_closure()(10)() == c() {
+        1
+    } else {
+        2
+    }
 }
 
 main: () -> () {
