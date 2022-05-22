@@ -1,5 +1,6 @@
 import std.io
 import std.string
+import std.array
 
 data StrList = StrNil | StrCon(str, StrList) ;
 
@@ -61,8 +62,8 @@ satisfy_and: (l: StrList, alr: StrList) -> bool {
 satisfy_or: (r: OrRequire, alr: StrList) -> bool {
     match r {
         OrNil => false,
-        OrCon(al, tail) => {
-            if satisfy_and(al, alr) { true } else { satisfy_or(tail, alr) }
+        OrCon(l, tail) => {
+            if satisfy_and(l, alr) { true } else { satisfy_or(tail, alr) }
         }
     }
 }
@@ -85,6 +86,27 @@ recommend: (l: ReqList, alr: StrList) -> () {
             recommend(tail, alr);
         }
     }
+}
+
+to_require_and: (s: str) -> StrList {
+    let a : [str] = string.split(s, ",");
+    let n : i32 = array.len(a);
+    let ret : StrList = StrNil;
+    for i in 0 .. n {
+        ret = StrCon(a[i], ret);
+    };
+    ret
+}
+
+to_require: (s: str) -> OrRequire {
+    let a : [str] = string.split(s, ";");
+    let n : i32 = array.len(a);
+    let ret : OrRequire = OrNil;
+    for i in 0 .. n {
+        let p : StrList = to_require_and(a[i]);
+        ret = OrCon(p, ret);
+    };
+    ret
 }
 
 main: () -> () {
