@@ -369,32 +369,32 @@ fn parse_expression<'i>(p: Pair<'i, Rule>) -> Expr {
         }
         Rule::Call => {
             let mut it = p.into_inner();
-            let fir = parse_expression(it.next().unwrap());
-            match it.next() {
-                None => fir,
-                Some(q) => {
-                    match q.as_rule() {
-                        Rule::GenericNotation => {
-                            let gen = Some(parse_generic_notation(q));
-                            let args = parse_call_arguments(it.next().unwrap());
-                            Expr::Call(CallExpr {
-                                func: Box::new(fir),
-                                gen,
-                                args
-                            })
-                        }
-                        Rule::CallArguments => {
-                            let args = parse_call_arguments(q);
-                            Expr::Call(CallExpr {
-                                func: Box::new(fir),
-                                gen: None,
-                                args
-                            })
-                        }
-                        _ => unreachable!()
+            let mut fir = parse_expression(it.next().unwrap());
+            while let Some(q) = it.next() {
+                let mut jt = q.into_inner();
+                let v = jt.next().unwrap();
+                fir = match v.as_rule() {
+                    Rule::GenericNotation => {
+                        let gen = Some(parse_generic_notation(v));
+                        let args = parse_call_arguments(jt.next().unwrap());
+                        Expr::Call(CallExpr {
+                            func: Box::new(fir),
+                            gen,
+                            args
+                        })
                     }
+                    Rule::CallArguments => {
+                        let args = parse_call_arguments(v);
+                        Expr::Call(CallExpr {
+                            func: Box::new(fir),
+                            gen: None,
+                            args
+                        })
+                    }
+                    _ => unreachable!()
                 }
             }
+            fir
         }
         Rule::Tuple => {
             let mut it = p.into_inner();
