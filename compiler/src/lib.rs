@@ -10,6 +10,10 @@ mod export_frontend {
     pub mod frontend;
 }
 
+
+#[cfg(feature = "visualize")]
+pub mod vis;
+
 #[cfg(any(feature = "typed-ast", feature = "middle-ir", feature = "midend"))]
 pub mod midend;
 
@@ -79,6 +83,10 @@ pub struct Args {
     /// Specify if need to enable debug log for llvm passes
     #[clap(long)]
     llvm_pass_debug: bool,
+
+    /// Use this option to generate the visualized ast in html
+    #[clap(short, long = "visualize")]
+    using_visualize: bool,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, ArgEnum)]
@@ -181,6 +189,15 @@ pub fn compile_with_arguments(args: Args) -> Result<(), ()> {
 
     #[cfg(feature = "frontend")]
     let ast = frontend::parse(&source);
+
+    #[cfg(feature = "visualize")]
+    if args.using_visualize {
+        match vis::generate_html(input_file) {
+            Ok(_) => Ok(()),
+            Err(_) => Err(()),
+        }?;
+    };
+
     #[cfg(feature = "frontend")]
     check_flag_and_do(&mut output_kinds, OutputType::Ast, || {
         let output_file = output_file.with_extension("ast.ir");

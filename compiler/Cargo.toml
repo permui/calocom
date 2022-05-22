@@ -23,6 +23,7 @@ uuid = { version = "1.0.0", features = ["v5"] }
 [features]
 frontend = []
 typed-ast = ["frontend"]
+visualize = ["frontend"]
 middle-ir = ["typed-ast"]
 midend = ["middle-ir", "typed-ast"]
 #backend = ["midend"]

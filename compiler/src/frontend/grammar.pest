@@ -219,9 +219,13 @@ Subscript = {
 
 // function call
 
+CallPart = {
+    GenericNotation ~ "(" ~ CallArguments ~ ")"
+  | "(" ~ CallArguments ~ ")"
+}
+
 Call = {
-    Tuple ~ GenericNotation ~ "(" ~ CallArguments ~ ")"
-  | Tuple ~ "(" ~ CallArguments ~ ")"
+    Tuple ~ CallPart+
   | Tuple
 }
 
