@@ -765,7 +765,7 @@ impl<'a> FunctionBuilder<'a> {
         let TypedBracketBody {
             stmts,
             ret_expr,
-            typ,
+            typ: _,
         } = body;
         for stmt in stmts {
             self.collect_free_variables_list_in_stmt(stmt, out, depth);
@@ -843,7 +843,7 @@ impl<'a> FunctionBuilder<'a> {
                 self.collect_free_variables_list_in_expr(lhs, out, depth);
                 self.collect_free_variables_list_in_expr(rhs, out, depth);
             }
-            ExprEnum::UnaryOp { expr, op } => {
+            ExprEnum::UnaryOp { expr, .. } => {
                 self.collect_free_variables_list_in_expr(expr, out, depth);
             }
             ExprEnum::Subscript { arr, index } => {
@@ -859,7 +859,7 @@ impl<'a> FunctionBuilder<'a> {
                     })
                     .for_each(|arg| self.collect_free_variables_list_in_expr(arg, out, depth));
             }
-            ExprEnum::CtorCall { name, args } => {
+            ExprEnum::CtorCall { args, .. } => {
                 args.iter()
                     .map(|arg| match arg {
                         TypedArgument::Expr(expr) => expr,
@@ -867,7 +867,7 @@ impl<'a> FunctionBuilder<'a> {
                     })
                     .for_each(|arg| self.collect_free_variables_list_in_expr(arg, out, depth));
             }
-            ExprEnum::Call { path, args } => {
+            ExprEnum::Call { args, .. } => {
                 args.iter()
                     .map(|arg| match arg {
                         TypedArgument::Expr(expr) => expr,
@@ -1059,7 +1059,7 @@ impl<'a> FunctionBuilder<'a> {
     }
 
     fn build_closure_call_expr(&mut self, expr: &TypedExpr) -> Operand {
-        let TypedExpr { expr, typ } = expr;
+        let TypedExpr { expr, .. } = expr;
         let ExprEnum::ClosureCall { expr, args  } = expr.as_ref() else { unreachable!() };
 
         let closure = self.build_expr_as_operand(expr);
@@ -1279,15 +1279,7 @@ impl<'a> FunctionBuilder<'a> {
             val: Box::new(OperandEnum::Var(var_def)),
         }
     }
-
-    fn build_operand_from_var_def_with_type(
-        &mut self,
-        typ: TypeRef,
-        var_def: VarDefRef,
-    ) -> Operand {
-        self.build_type_conversion_if_need(self.build_operand_from_var_def(var_def), typ)
-    }
-
+    
     fn build_operand_from_literal(&self, literal: Literal) -> Operand {
         let typ = match literal {
             Literal::Float(_) => self.ty_ctx.singleton_type(Primitive::Float64),
@@ -1302,11 +1294,6 @@ impl<'a> FunctionBuilder<'a> {
         }
     }
 
-    fn build_value_from_var_def(&self, var_def: VarDefRef) -> Value {
-        let operand = self.build_operand_from_var_def(var_def);
-        self.build_value_from_operand(operand)
-    }
-
     fn build_unit_and_assign_to(&mut self, output_var: VarDefRef) {
         self.build_expr_and_assign_to(
             &TypedExpr {
@@ -1317,16 +1304,8 @@ impl<'a> FunctionBuilder<'a> {
         );
     }
 
-    fn get_var_def(&self, var_def: VarDefRef) -> &VarDef {
-        self.func.get_var_def(var_def)
-    }
-
     fn get_var_type(&self, var_def: VarDefRef) -> TypeRef {
         self.func.get_var_type(var_def)
-    }
-
-    fn get_block(&self, block_ref: BlockRef) -> &Block {
-        self.func.get_block(block_ref)
     }
 
     fn create_block(&mut self, name: Option<&str>, term: Option<Terminator>) -> BlockRef {
@@ -1437,10 +1416,6 @@ impl MiddleIR {
         let mut def_vec = vec![def];
         def_vec.append(&mut other_defs);
         def_vec
-    }
-
-    fn get_type(&self, typ: TypeRef) -> Type {
-        self.ty_ctx.get_type_by_ref(typ)
     }
 }
 

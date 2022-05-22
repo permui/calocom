@@ -24,6 +24,6 @@ uuid = { version = "1.0.0", features = ["v5"] }
 frontend = []
 typed-ast = ["frontend"]
 middle-ir = ["typed-ast"]
-#midend = ["middle-ir", "typed-ast"]
+midend = ["middle-ir", "typed-ast"]
 #backend = ["midend"]
-default = ["middle-ir"]
+default = ["midend"]

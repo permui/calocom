@@ -199,7 +199,7 @@ impl From<&crate::ast::ComplexPattern> for TypedASTComplexPattern {
 }
 
 impl TypedAST {
-    fn resolve_type_with_at(&mut self, ast_type: &crate::ast::Type) -> TypeRef {
+    fn resolve_type_with_at(&mut self, _ast_type: &crate::ast::Type) -> TypeRef {
         unimplemented!("not available")
         /*
         let type_ref = self.resolve_type(None, ast_type, false);
