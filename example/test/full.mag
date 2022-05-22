@@ -44,6 +44,26 @@ test_nested_for: () -> () {
     };
 }
 
+test_break: () -> () {
+    let i : i32 = 0;
+    while true {
+        if i > 10 {
+            break;
+        };
+        i = i + 1;
+    };
+}
+
+test_continue: () -> () {
+    let i : i32 = 0;
+    while i < 10 {
+        if i == 0 {
+            continue;
+        };
+        i = i + 1;
+    };
+}
+
 test_float: () -> f64 {
     2.33
 }
@@ -93,6 +113,13 @@ test_closure: () -> i32 -> () -> i32 {
             fv + x
         }
     }
+}
+
+
+test_closure_call: () -> i32 {
+    let c: i32 -> () -> i32 = test_closure();
+    let c: () -> i32 = c(10);
+    c()
 }
 
 main: () -> () {

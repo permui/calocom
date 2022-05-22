@@ -2,7 +2,6 @@ use slotmap::{new_key_type, SlotMap};
 use std::collections::HashSet;
 use std::fmt::Display;
 use std::fmt::Write;
-use std::fmt::format;
 use std::{panic, vec};
 
 use super::typed_ast::*;
@@ -115,6 +114,8 @@ pub enum OperandEnum {
 pub enum ValueEnum {
     Call(Vec<String>, Vec<Operand>),
     ExtCall(Vec<String>, Vec<Operand>),
+    ExtractClosureCapture(VarDefRef, usize),
+    ClosureCall(Operand, Vec<Operand>),
     MakeClosure {
         path: Vec<String>,
         capture: Vec<Operand>,
@@ -627,7 +628,7 @@ impl<'a> FunctionBuilder<'a> {
                 .as_bytes(),
         )
         .simple();
-        
+
         let closure_function_name = format!("closure_{}", closure_uuid);
         let capture_name_type_list: Vec<_> = fv_list
             .iter()
@@ -688,7 +689,12 @@ impl<'a> FunctionBuilder<'a> {
         let ret_var =
             def.create_variable_definition("ret.var", ret_type, VariableKind::ReturnVariable);
 
-        let mut params_type = vec![];
+        let closure_object = def.create_variable_definition(
+            "closure.self",
+            self.ty_ctx.singleton_type(Primitive::Object),
+            VariableKind::Parameter,
+        );
+
         var_ctx.entry_scope();
         for TypedBind {
             with_at: _,
@@ -698,8 +704,6 @@ impl<'a> FunctionBuilder<'a> {
         {
             let param =
                 def.create_variable_definition(var_name.as_str(), *typ, VariableKind::Parameter);
-            params_type.push(*typ);
-
             if var_name != "_" {
                 var_ctx
                     .insert_symbol(var_name.to_string(), param)
@@ -713,7 +717,7 @@ impl<'a> FunctionBuilder<'a> {
         var_ctx.entry_scope();
         let mut fn_builder =
             FunctionBuilder::create(&mut def, entry_block, var_ctx, self.name_ctx, self.ty_ctx);
-        fn_builder.initialize_captured_variable(captured);
+        fn_builder.initialize_captured_variable(captured, closure_object);
         fn_builder.build_expr_and_assign_to(body, Some(ret_var));
 
         fn_builder.var_ctx.exit_scope();
@@ -725,8 +729,12 @@ impl<'a> FunctionBuilder<'a> {
         def_vec
     }
 
-    fn initialize_captured_variable(&mut self, captured: &[(String, TypeRef)]) {
-        for captured in captured {
+    fn initialize_captured_variable(
+        &mut self,
+        captured: &[(String, TypeRef)],
+        closure_object: VarDefRef,
+    ) {
+        for (idx, captured) in captured.iter().enumerate() {
             let captured_var = self.func.create_variable_definition(
                 captured.0.as_str(),
                 captured.1,
@@ -737,6 +745,14 @@ impl<'a> FunctionBuilder<'a> {
                     .insert_symbol(captured.0.to_string(), captured_var)
                     .and_then(|_| -> Option<()> { panic!("duplicate capture") });
             }
+            self.insert_stmt_at_position(Stmt {
+                left: Some(captured_var),
+                right: Some(Value {
+                    typ: captured.1,
+                    val: ValueEnum::ExtractClosureCapture(closure_object, idx),
+                }),
+                note: "extract captured value from closure",
+            })
         }
     }
 
@@ -1043,7 +1059,38 @@ impl<'a> FunctionBuilder<'a> {
     }
 
     fn build_closure_call_expr(&mut self, expr: &TypedExpr) -> Operand {
-        todo!()
+        let TypedExpr { expr, typ } = expr;
+        let ExprEnum::ClosureCall { expr, args  } = expr.as_ref() else { unreachable!() };
+
+        let closure = self.build_expr_as_operand(expr);
+
+        let Type::Callable { kind , ret_type, parameters } = self.ty_ctx.get_type_by_ref(expr.typ) else {
+            unreachable!();
+        };
+
+        if kind != CallKind::ClosureValue {
+            panic!("internal error");
+        }
+
+        let args_operands = self.build_arguments(args, &parameters);
+
+        let name = self.namer.next_name("call.res");
+        let call_result = self.func.create_variable_definition(
+            name.as_str(),
+            ret_type,
+            VariableKind::TemporaryVariable,
+        );
+
+        self.insert_stmt_at_position(Stmt {
+            left: Some(call_result),
+            right: Some(Value {
+                typ: ret_type,
+                val: ValueEnum::ClosureCall(closure, args_operands),
+            }),
+            note: "make a closure call here",
+        });
+
+        self.build_operand_from_var_def(call_result)
     }
 
     fn build_constructor_expr(&mut self, expr: &TypedExpr) -> Operand {
@@ -1360,7 +1407,6 @@ impl MiddleIR {
             let param =
                 def.create_variable_definition(var_name.as_str(), *typ, VariableKind::Parameter);
             params_type.push(*typ);
-
             if var_name != "_" {
                 var_ctx
                     .insert_symbol(var_name.to_string(), param)
@@ -1656,12 +1702,30 @@ impl Dump for (&TypeContext, &FuncDef, &ValueEnum) {
             ValueEnum::MakeClosure { path, capture } => {
                 write!(
                     s,
-                    "make_closure {:?} capture {}",
+                    "make-closure {:?} capture {}",
                     path,
                     (*ty_ctx, *func, capture).dump_string()
                 )
                 .unwrap();
             }
+            ValueEnum::ExtractClosureCapture(var, index) => {
+                write!(
+                    s,
+                    "extract-captured {}[{index}]",
+                    (*func, *var).dump_string()
+                )
+                .unwrap();
+            }
+            ValueEnum::ClosureCall(closure, args) => {
+                write!(
+                    s,
+                    "closure-call {} ({}, {})",
+                    (*ty_ctx, *func, closure).dump_string(),
+                    (*ty_ctx, *func, closure).dump_string(),
+                    (*ty_ctx, *func, args).dump_string()
+                )
+                .unwrap();
+            },
         }
         s
     }

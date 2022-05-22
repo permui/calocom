@@ -317,9 +317,7 @@ impl TypedAST {
         }
 
         if var_name != "_" {
-            self.name_ctx
-                .insert_symbol(var_name.clone(), type_ref)
-                .and_then(|_| -> Option<()> { panic!("duplicate definition {}", var_name) });
+            self.name_ctx.insert_symbol(var_name.clone(), type_ref).and::<()>(None);
         }
 
         TypedLetStmt {
