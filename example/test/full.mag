@@ -115,16 +115,24 @@ test_closure: () -> i32 -> () -> i32 {
     }
 }
 
+test_closure_pass: (closure: () -> i32) -> i32 {
+    closure()
+}
 
 test_closure_call: () -> i32 {
-    let c: i32 -> () -> i32 = test_closure();
+    let c: () -> i32 -> () -> i32 =
+        \ () -> i32 -> () -> i32 => {
+            test_closure()
+        };
+    let c: i32 -> () -> i32 = c();
     let c: () -> i32 = c(10);
-    if test_closure()(10)() == c() {
+    if test_closure_call() == c() {
         1
     } else {
-        2
+        test_closure_pass(test_closure()(10))
     }
 }
+
 
 main: () -> () {
 }

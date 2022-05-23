@@ -313,7 +313,7 @@ impl TypedAST {
         let type_ref = self.resolve_type(None, typ, false);
         let typed_expr = self.check_type_of_expr(expr);
         if !self.ty_ctx.is_type_compatible(type_ref, typed_expr.typ) {
-            panic!("initializer of variable {} has incorrect type", var_name);
+            panic!("initializer of variable {var_name} has incorrect type");
         }
 
         if var_name != "_" {

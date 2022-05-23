@@ -1279,7 +1279,7 @@ impl<'a> FunctionBuilder<'a> {
             val: Box::new(OperandEnum::Var(var_def)),
         }
     }
-    
+
     fn build_operand_from_literal(&self, literal: Literal) -> Operand {
         let typ = match literal {
             Literal::Float(_) => self.ty_ctx.singleton_type(Primitive::Float64),
@@ -1356,10 +1356,35 @@ impl MiddleIR {
     fn convert_ast(&mut self, fn_def: &Vec<TypedFuncDef>) {
         self.name_ctx.entry_scope();
         for func in fn_def {
+            self.insert_fn_signature(func);
+        }
+        for func in fn_def {
             let mut new_def = self.convert_fn_definition(func);
             self.module.append(&mut new_def);
         }
         self.name_ctx.exit_scope();
+    }
+
+    fn insert_fn_signature(&mut self, func: &TypedFuncDef) {
+        // insert function type to the name context
+        let fn_type = self.ty_ctx.callable_type(
+            CallKind::Function,
+            func.ret_type,
+            func.params
+                .iter()
+                .map(
+                    |TypedBind {
+                         with_at: _,
+                         var_name: _,
+                         typ,
+                     }| *typ,
+                )
+                .collect(),
+            false,
+        );
+        self.name_ctx
+            .insert_symbol(func.name.clone(), fn_type)
+            .and_then(|_| -> Option<()> { panic!("function {} redefined", func.name) });
     }
 
     fn convert_fn_definition(&mut self, func: &TypedFuncDef) -> Vec<FuncDef> {
@@ -1392,14 +1417,6 @@ impl MiddleIR {
                     .and_then(|_| -> Option<()> { panic!("parameter redefined") });
             }
         }
-
-        // insert function type to the name context
-        let fn_type =
-            self.ty_ctx
-                .callable_type(CallKind::Function, func.ret_type, params_type, false);
-        self.name_ctx
-            .insert_symbol(func.name.clone(), fn_type)
-            .and_then(|_| -> Option<()> { panic!("function {} redefined", func.name) });
 
         def.initialize_blocks();
         let entry_block = def.entry_block;
@@ -1700,7 +1717,7 @@ impl Dump for (&TypeContext, &FuncDef, &ValueEnum) {
                     (*ty_ctx, *func, args).dump_string()
                 )
                 .unwrap();
-            },
+            }
         }
         s
     }
