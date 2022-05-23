@@ -85,7 +85,7 @@ pub struct Stmt {
 
 #[derive(Debug, Clone)]
 pub enum Terminator {
-    Select(Operand, Vec<(Literal, BlockRef)>, BlockRef),
+    Select(Operand, Vec<(usize, BlockRef)>, BlockRef),
     Branch(Operand, BlockRef, BlockRef),
     Jump(BlockRef),
     Return,
@@ -895,12 +895,151 @@ impl<'a> FunctionBuilder<'a> {
         }
     }
 
+    fn build_string_match_expr(
+        &mut self,
+        matched: Operand,
+        arms: &[(TypedASTComplexPattern, TypedExpr)],
+        out: VarDefRef,
+    ) -> Operand {
+        todo!()
+    }
+
+    fn build_integer_match_expr(
+        &mut self,
+        matched: Operand,
+        arms: &[(TypedASTComplexPattern, TypedExpr)],
+        out: VarDefRef,
+    ) -> Operand {
+        let exhaustive = arms.iter().any(|(pat, _)| {
+            use TypedASTComplexPattern::*;
+            matches!(pat, Wildcard | Variable(_))
+        });
+
+        if !exhaustive {
+            panic!("not exhaustive pattern matching");
+        }
+
+        let name = self.namer.next_name("int");
+        let unboxed_integer = self.func.create_variable_definition(
+            name.as_str(),
+            self.ty_ctx.singleton_type(Primitive::CInt32),
+            VariableKind::RawVariable,
+        );
+        self.insert_stmt_at_position(Stmt {
+            left: Some(unboxed_integer),
+            right: Some(Value {
+                typ: self.ty_ctx.singleton_type(Primitive::CInt32),
+                val: ValueEnum::Intrinsic("unbox-i32", vec![matched.clone()]),
+            }),
+            note: "load a i32 value",
+        });
+
+        let mut terminator_other = None;
+        let mut choices = vec![];
+        let last_block = self.position.unwrap();
+        let old_terminator = self.change_terminator_at_position(Terminator::Select(
+            self.build_operand_from_var_def(unboxed_integer),
+            vec![],
+            self.func.panic_block,
+        ));
+        let end_block = self.create_block(Some("match.end"), Some(old_terminator));
+
+        for (index, (pat, expr)) in arms.iter().enumerate() {
+            use crate::ast::Literal::*;
+            use TypedASTComplexPattern::*;
+            match pat {
+                Ctor { .. }
+                | Tuple { .. }
+                | Literal(Float(_))
+                | Literal(Str(_))
+                | Literal(Bool(_))
+                | Literal(Unit) => {
+                    panic!("not a valid pattern for matching integer")
+                }
+                Literal(Int(x)) => {
+                    let arm_block =
+                        self.create_block(Some("arm"), Some(Terminator::Jump(end_block)));
+
+                    choices.push((*x as usize, arm_block));
+                    self.position = Some(arm_block);
+                    self.build_expr_and_assign_to(expr, Some(out));
+                }
+                Variable(name) => {
+                    if index != arms.len() - 1 {
+                        panic!(
+                            "this variable capture the expression but it's not the last match arm"
+                        )
+                    }
+
+                    let Operand { val, .. } = &matched;
+                    let OperandEnum::Var(x) = val.as_ref() else {
+                        unreachable!()
+                    };
+
+                    self.var_ctx.entry_scope();
+                    self.var_ctx
+                        .insert_symbol(name.to_string(), *x)
+                        .and_then(|_| -> Option<()> { unreachable!() });
+
+                    let arm_block =
+                        self.create_block(Some("arm"), Some(Terminator::Jump(end_block)));
+                    terminator_other = Some(arm_block);
+                    self.position = Some(arm_block);
+                    self.build_expr_and_assign_to(expr, Some(out));
+                    self.var_ctx.exit_scope();
+                }
+                Wildcard => {
+                    if index != arms.len() - 1 {
+                        panic!(
+                            "the wildcard capture the expression but it's not the last match arm"
+                        )
+                    }
+
+                    let arm_block =
+                        self.create_block(Some("arm"), Some(Terminator::Jump(end_block)));
+                    terminator_other = Some(arm_block);
+                    self.position = Some(arm_block);
+                    self.build_expr_and_assign_to(expr, Some(out));
+                }
+            }
+        }
+
+        let operand = self.build_operand_from_var_def(unboxed_integer);
+        let other_position = terminator_other.unwrap_or(self.func.panic_block);
+        self.position = Some(last_block);
+        let term = self.get_terminator_at_position();
+        *term = Terminator::Select(operand, choices, other_position);
+
+        self.position = Some(end_block);
+        self.build_operand_from_var_def(out)
+    }
+
     fn build_match_expr(&mut self, expr: &TypedExpr) -> Operand {
         let TypedExpr { expr, typ } = expr;
         let ExprEnum::Match { expr, arms  } = expr.as_ref() else { unreachable!() };
         let typ = *typ;
 
-        todo!()
+        let matched_expr = self.build_expr_as_operand(expr);
+        let out =
+            self.func
+                .create_variable_definition("match.out", typ, VariableKind::TemporaryVariable);
+        match self.get_type(expr.typ) {
+            Type::Tuple { .. } => todo!(),
+            Type::Enum { .. } => todo!(),
+            Type::Primitive(x) => match x {
+                Primitive::Object => unreachable!(),
+                Primitive::Unit => panic!("it's useless to match a unit type"),
+                Primitive::Str => self.build_string_match_expr(matched_expr, arms, out),
+                Primitive::Bool => unimplemented!("bool match not available"),
+                Primitive::Int32 => self.build_integer_match_expr(matched_expr, arms, out),
+                Primitive::Float64 => panic!("can't match float type"),
+                Primitive::CInt32 => unreachable!(),
+            },
+            Type::Opaque { .. } => unreachable!("opaque should has been eliminated"),
+            Type::Reference { .. } => unimplemented!("reference match not available"),
+            Type::Array(_) => unimplemented!("array match not available"),
+            Type::Callable { .. } => panic!("can't match a callable value"),
+        }
     }
 
     fn build_if_expr(&mut self, expr: &TypedExpr) -> Operand {
@@ -1325,6 +1464,16 @@ impl<'a> FunctionBuilder<'a> {
         block.terminator = term;
         old
     }
+
+    fn get_terminator_at_position(&mut self) -> &mut Terminator {
+        let block_ref = self.position.expect("expect a insert position");
+        let block = self.func.blocks.get_mut(block_ref).unwrap();
+        &mut block.terminator
+    }
+
+    fn get_type(&self, type_ref: TypeRef) -> Type {
+        self.ty_ctx.get_type_by_ref(type_ref)
+    }
 }
 
 impl From<TypedAST> for MiddleIR {
@@ -1535,13 +1684,7 @@ impl Dump for (&TypeContext, &FuncDef, &Terminator) {
                     if idx != 0 {
                         write!(s, ", ").unwrap();
                     }
-                    write!(
-                        s,
-                        "{} => {}",
-                        target.0.dump_string(),
-                        (*func, *other).dump_string(),
-                    )
-                    .unwrap();
+                    write!(s, "{} => {}", target.0, (*func, *other).dump_string(),).unwrap();
                 }
                 write!(s, ", _ => {}]", (*func, *other).dump_string()).unwrap();
             }

@@ -284,7 +284,6 @@ impl MiddleIR {
         arms: &[(TypedASTComplexPattern, TypedExpr)],
         output: Rc<VarDef>,
     ) {
-        /*
         let current_bb = Rc::clone(builder.position.as_ref().unwrap());
         let next_bb = {
             let current_terminator = &current_bb.as_ref().borrow().terminator;
@@ -379,12 +378,9 @@ impl MiddleIR {
         current_bb.borrow_mut().terminator = select;
         let next_position = Some(Rc::clone(&next_bb));
         builder.position = next_position;
-        */
     }
 
     fn convert_match_expr(&mut self, builder: &mut FunctionBuilder, x: &TypedExpr) -> TypedValue {
-        todo!()
-        /*
         let TypedMatchExpr { e, arms, typ } = x;
 
         let mut expr_typ = e.typ;
@@ -440,7 +436,6 @@ impl MiddleIR {
         }
         let val = Value::VarRef(match_output_var);
         TypedValue { typ: *typ, val }
-        */
     }
 
     fn convert_call_expr(&mut self, builder: &mut FunctionBuilder, x: &TypedExpr) -> TypedValue {
