@@ -45,14 +45,12 @@ pub fn generate_html(path: PathBuf) -> Result<(), String> {
 fn generate_imports(m: &Module) -> String {
 	let mut ret = String::from("imports((Imports))\n");
 	let imports = &m.imports;
-	let mut import_cnt = 0;
-	for import in imports {
+	for (import_cnt, import) in imports.iter().enumerate() {
 		let items = &import.items;
 		let full_path: String = items.join(".");
 		let cnt_string = import_cnt.to_string();
 		let cnt_str = cnt_string.as_str();
 		ret.push_str(format!("imports_{}_(({}))\nimports-->imports_{}_\n",cnt_str, full_path, cnt_str).as_str());
-		import_cnt = import_cnt + 1;
 	}
 	ret
 }
@@ -60,11 +58,9 @@ fn generate_imports(m: &Module) -> String {
 fn generate_data_defs(m: &Module) -> String {
 	let mut ret = String::from("data_defs((Data Definitions))\n");
 	let data_defs = &m.data_defs;
-	let mut data_def_cnt = 0;
-	for data_def in data_defs {
+	for (data_def_cnt, data_def) in data_defs.iter().enumerate() {
 		ret.push_str(generate_data_def(data_def, data_def_cnt.to_string()).as_str());
 		ret.push_str(format!("data_defs-->data_def__{}_\n", data_def_cnt.to_string().as_str()).as_str());
-		data_def_cnt = data_def_cnt + 1;
 	}
 	ret
 }
@@ -86,8 +82,8 @@ fn generate_type(con_list: &Type, prefix: String) -> String {
 	let type_string = match con_list {
 		Type::Arrow(first, second) => {
 			let mut arrow_ret = format!("type_arrow__{}_((Arrow))\n", prefix);
-			arrow_ret.push_str(generate_type(&first, prefix.clone() + "_0_").as_str());
-			arrow_ret.push_str(generate_type(&second, prefix.clone() + "_1_").as_str());
+			arrow_ret.push_str(generate_type(first, prefix.clone() + "_0_").as_str());
+			arrow_ret.push_str(generate_type(second, prefix.clone() + "_1_").as_str());
 			arrow_ret.push_str(format!("type_arrow__{}_-->type_arrow__{}__0_\n", prefix, prefix).as_str());
 			arrow_ret.push_str(format!("type_arrow__{}_-->type_arrow__{}__1_\n", prefix, prefix).as_str());
 			arrow_ret.push_str(format!("type__{}_-->type_arrow__{}_\n", prefix, prefix).as_str());
@@ -95,7 +91,7 @@ fn generate_type(con_list: &Type, prefix: String) -> String {
 		},
 		Type::Enum(first)=> {
 			let mut enum_ret = format!("type_enum__{}_((Enum))\n", prefix);
-			enum_ret.push_str(&generate_vec_constructor_type(first, prefix.clone() + "_").as_str());
+			enum_ret.push_str(generate_vec_constructor_type(first, prefix.clone() + "_").as_str());
 			enum_ret.push_str(format!("type_enum__{}_-->type_vec_constructor_type__{}_\n", prefix, prefix.clone() + "_").as_str());
 			enum_ret.push_str(format!("type__{}_-->type_enum__{}_\n", prefix, prefix).as_str());
 			enum_ret
@@ -108,11 +104,9 @@ fn generate_type(con_list: &Type, prefix: String) -> String {
 		},
 		Type::Tuple(first) => {
 			let mut tuple_ret = format!("type_tuple__{}_((Tuple))\n", prefix);
-			let mut tuple_ret_cnt = 0;
-			for i in first {
+			for (tuple_ret_cnt, i) in first.iter().enumerate() {
 				tuple_ret.push_str(generate_type(i, prefix.clone() + tuple_ret_cnt.to_string().as_str()).as_str());
 				tuple_ret.push_str(format!("type_tuple__{}_--> type__{}_\n", prefix, prefix.clone() + tuple_ret_cnt.to_string().as_str()).as_str());
-				tuple_ret_cnt = tuple_ret_cnt + 1;
 			}
 			tuple_ret.push_str(format!("type__{}_-->type_tuple__{}_\n", prefix, prefix).as_str());
 			tuple_ret
@@ -132,13 +126,11 @@ fn generate_type(con_list: &Type, prefix: String) -> String {
 	ret
 }
 
-fn generate_vec_constructor_type(vector: &Vec<ConstructorType>, prefix: String) -> String {
+fn generate_vec_constructor_type(vector: &[ConstructorType], prefix: String) -> String {
 	let mut ret = format!("type_vec_constructor_type__{}_((VecConstructorType))\n", prefix);
-	let mut ret_cnt = 0;
-	for i in vector {
+	for (ret_cnt, i) in vector.iter().enumerate() {
 		ret.push_str(generate_construct_type(i, prefix.clone() + ret_cnt.to_string().as_str()).as_str());
 		ret.push_str(format!("type_vec_constructor_type__{}_-->type_constructor_type__{}_\n", prefix, prefix.clone() + ret_cnt.to_string().as_str()).as_str());	
-		ret_cnt = ret_cnt + 1;
 	}
 	ret
 }
@@ -151,22 +143,18 @@ fn generate_construct_type(constructor_type: &ConstructorType, prefix: String) -
 	// 	ret.push_str(generate_type(ano_type, prefix.clone() + "_").as_str());
 	// 	ret.push_str(format!("type_constructor_type_{}-->type_{}\n", prefix, prefix.clone() + "_").as_str());
 	// }
-    let mut generate_cnt = 0;
-    for i in &constructor_type.inner {
+    for (generate_cnt, i) in constructor_type.inner.iter().enumerate() {
 		ret.push_str(generate_type(i, prefix.clone() + "__" + &generate_cnt.to_string() + "_").as_str());
 		ret.push_str(format!("type_constructor_type__{}_-->type__{}_\n", prefix, prefix.clone() + "__" + &generate_cnt.to_string() + "_").as_str());
-        generate_cnt = generate_cnt + 1;
     }
 	ret
 }
 
 fn generate_func_defs(m: &Module) -> String {
 	let mut ret = String::from("func_defs((Function Definitions))\n");
-	let mut ret_cnt = 0;
-	for i in &m.func_defs {
+	for (ret_cnt, i) in m.func_defs.iter().enumerate() {
 		ret.push_str(generate_func_def(i, ret_cnt.to_string()).as_str());
-		ret.push_str(format!("func_defs-->func_def__{}_\n", ret_cnt.to_string()).as_str());
-		ret_cnt = ret_cnt + 1;
+		ret.push_str(format!("func_defs-->func_def__{}_\n", ret_cnt).as_str());
 	}
 	ret
 }
@@ -178,9 +166,9 @@ fn generate_func_def(func_def: &FuncDef, prefix: String) -> String {
 	ret.push_str(generate_vec_name_type_bind(&func_def.param_list, prefix.clone()).as_str());
 	ret.push_str(format!("func_def__{}_-->vec_name_type_bind__{}_\n", prefix, prefix).as_str());
 	// ret.push_str(format!("func_def_right_param_paren__{}_((\")\"))\nfunc_def__{}_-->func_def_right_param_paren__{}_\n", prefix, prefix, prefix).as_str());	
-	ret.push_str(&generate_type(&func_def.ret_type, prefix.clone() + "_in_func_def_").as_str());
+	ret.push_str(generate_type(&func_def.ret_type, prefix.clone() + "_in_func_def_").as_str());
 	ret.push_str(format!("func_def__{}_-->type__{}_\n", prefix, prefix.clone() + "_in_func_def_").as_str());
-    ret.push_str(&generate_bracket_body(&func_def.body, prefix.clone() + "_in_bracket_body_").as_str());
+    ret.push_str(generate_bracket_body(&func_def.body, prefix.clone() + "_in_bracket_body_").as_str());
     ret.push_str(format!("func_def__{}_-->bracket_body__{}_\n", prefix, prefix.clone() + "_in_bracket_body_").as_str());
 	ret
 }
@@ -190,7 +178,7 @@ fn generate_bracket_body(bracket_body: &BracketBody, prefix: String) -> String {
     ret.push_str(&generate_vec_stmt(&bracket_body.stmts, prefix.clone()));
     ret.push_str(format!("bracket_body__{}_-->vec_stmt__{}_\n", prefix, prefix).as_str());
     if let Some(ref ret_expr) = bracket_body.ret_expr {
-        ret.push_str(&generate_expr(&ret_expr, prefix.clone() + "_in_expr_"));
+        ret.push_str(&generate_expr(ret_expr, prefix.clone() + "_in_expr_"));
         ret.push_str(format!("bracket_body__{}_-->expr__{}_\n", prefix, prefix.clone() + "_in_expr_" ).as_str());
     }
     ret
@@ -211,11 +199,9 @@ fn generate_match_expr(match_expr: &MatchExpr, prefix: String) -> String {
     let mut ret = format!("match_expr__{}_((MatchExpr))\n", prefix);
     ret.push_str(&generate_expr(&match_expr.e, prefix.clone() + "_expr_from_match_condition_"));
     ret.push_str(format!("match_expr__{}_-->expr__{}_\n", prefix, prefix.clone() + "_expr_from_match_condition_").as_str());
-    let mut cnt = 0;
-    for i in  &match_expr.arms {
+    for (cnt, i) in match_expr.arms.iter().enumerate() {
         ret.push_str(&generate_complex_pattern(&i.0, prefix.clone() + "_in_complex_from_match_" + cnt.to_string().as_str() + "_"));
         ret.push_str(format!("match_expr__{}_-->complex_pattern__{}_\n", prefix,  prefix.clone() + "_in_complex_from_match_" + cnt.to_string().as_str() + "_").as_str());
-        cnt += 1;
     }
     ret
 }
@@ -237,11 +223,9 @@ fn generate_complex_pattern(complex_pattern: &ComplexPattern, prefix: String) ->
 fn generate_ctor_pattern(ctor_pattern: &CtorPattern, prefix: String) -> String {
     let mut ret = format!("ctor_pattern__{}_((Ctor))", prefix);
     ret.push_str(format!("ctor_pattern_name__{}_(({}))\nctor_pattern__{}_-->ctor_pattern_name__{}_\n", prefix, ctor_pattern.name, prefix, prefix).as_str());
-    let mut cnt = 0;
-    for i in &ctor_pattern.inner {
+    for (cnt, i) in ctor_pattern.inner.iter().enumerate() {
         ret.push_str(&generate_complex_pattern(i, prefix.clone() + "_" + cnt.to_string().as_str() + "_item_in_inner_"));
         ret.push_str(format!("ctor_pattern__{}_-->complex_pattern__{}_\n", prefix, prefix.clone() + "_" + cnt.to_string().as_str() + "_item_in_inner_").as_str());
-        cnt += 1;
     }
     ret
 }
@@ -253,7 +237,7 @@ fn generate_if_expr(if_expr: &IfExpr, prefix: String) -> String {
     ret.push_str(&generate_expr(&if_expr.t_branch, prefix.clone() + "_in_t_branch_"));
     ret.push_str(format!("if_expr__{}_-->expr__{}_\n", prefix, prefix.clone() + "_in_t_branch_").as_str());
     if let Some(ref f_branch) = if_expr.f_branch {
-        ret.push_str(&generate_expr(&f_branch, prefix.clone() + "_in_f_branch_"));
+        ret.push_str(&generate_expr(f_branch, prefix.clone() + "_in_f_branch_"));
         ret.push_str(format!("if_expr__{}_-->expr__{}_\n", prefix, prefix.clone() + "_in_f_branch_").as_str());
     };
     ret
@@ -318,15 +302,13 @@ fn generate_call_expr(call_expr: &CallExpr, prefix: String) -> String {
     ret.push_str(&generate_expr(&call_expr.func, prefix.clone() + "_func_"));
     ret.push_str(format!("call_expr__{}_-->expr__{}_\n", prefix, prefix.clone() + "_func_").as_str());
     if let Some(gen_type) = &call_expr.gen {
-        ret.push_str(&generate_type(&gen_type, prefix.clone() + "_gen_"));
+        ret.push_str(&generate_type(gen_type, prefix.clone() + "_gen_"));
         ret.push_str(format!("call_expr__{}_-->type__{}_\n", prefix, prefix.clone() + "_gen_").as_str());
 
     }
-    let mut cnt = 0;
-    for i in &call_expr.args {
+    for (cnt, i) in call_expr.args.iter().enumerate() {
         ret.push_str(&generate_argument(i, prefix.clone() + "_arg_" + cnt.to_string().as_str() + "_"));
         ret.push_str(format!("call_expr__{}_-->argument__{}_\n", prefix, prefix.clone() + "_arg_" + cnt.to_string().as_str() + "_").as_str());
-        cnt += 1;
     }
     ret
 }
@@ -345,13 +327,11 @@ fn generate_argument(argument: &Argument, prefix: String) -> String {
     ret
 }
 
-fn generate_tuple_expr(tuple_expr: &Vec<Expr>, prefix: String) -> String {
+fn generate_tuple_expr(tuple_expr: &[Expr], prefix: String) -> String {
     let mut ret = format!("tuple__{}_((Tuple))\n", prefix);
-    let mut cnt = 0;
-    for i in tuple_expr {
+    for (cnt, i) in tuple_expr.iter().enumerate() {
         ret.push_str(&generate_expr(i, prefix.clone() + "_tuple_" + cnt.to_string().as_str() + "_"));
         ret.push_str(format!("tuple__{}_-->expr__{}_\n", prefix, prefix.clone() + "_tuple_" + cnt.to_string().as_str() + "_").as_str());
-        cnt += 1;
     }
     ret
 }
@@ -420,13 +400,11 @@ fn generate_expr(expr: &Expr, prefix: String) -> String {
     ret
 }
 
-fn generate_vec_stmt(vec_stmt: &Vec<Stmt>, prefix: String) -> String {
+fn generate_vec_stmt(vec_stmt: &[Stmt], prefix: String) -> String {
     let mut ret = format!("vec_stmt__{}_((VecStmt))\n", prefix);
-    let mut stmt_cnt = 0;
-    for i in vec_stmt {
+    for (stmt_cnt, i) in vec_stmt.iter().enumerate() {
         ret.push_str(&generate_stmt(i, prefix.clone() + "_in_stmt_from_vec__" + stmt_cnt.to_string().as_str() + "_"));
         ret.push_str(format!("vec_stmt__{}_-->stmt__{}_\n", prefix, prefix.clone() + "_in_stmt_from_vec__" + stmt_cnt.to_string().as_str() + "_").as_str());
-        stmt_cnt = stmt_cnt + 1;
     }
     ret
 }
@@ -507,13 +485,11 @@ fn generate_let_stmt(let_stmt: &LetStmt, prefix: String) -> String {
     ret
 }
 
-fn generate_vec_name_type_bind(vector: &Vec<NameTypeBind>, prefix: String) -> String {
+fn generate_vec_name_type_bind(vector: &[NameTypeBind], prefix: String) -> String {
 	let mut ret = format!("vec_name_type_bind__{}_((VecNameTypeBind))\n", prefix);
-	let mut ret_cnt = 0;
-	for i in vector {
+	for (ret_cnt, i) in vector.iter().enumerate() {
 		ret.push_str(generate_name_type_bind(i, prefix.clone() + ret_cnt.to_string().as_str()).as_str());
 		ret.push_str(format!("vec_name_type_bind__{}_-->name_type_bind__{}_\n", prefix, prefix.clone() + ret_cnt.to_string().as_str()).as_str());
-		ret_cnt = ret_cnt + 1;
 	}
 	ret
 }
