@@ -1684,7 +1684,7 @@ impl Dump for (&TypeContext, &FuncDef, &Terminator) {
                     if idx != 0 {
                         write!(s, ", ").unwrap();
                     }
-                    write!(s, "{} => {}", target.0, (*func, *other).dump_string(),).unwrap();
+                    write!(s, "{} => {}", target.0, (*func, target.1).dump_string(),).unwrap();
                 }
                 write!(s, ", _ => {}]", (*func, *other).dump_string()).unwrap();
             }
