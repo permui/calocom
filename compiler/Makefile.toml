@@ -1,0 +1,10 @@
+[tasks.build]
+command = "cargo"
+args = ["build"]
+
+[tasks.release]
+command = "cargo"
+args = ["build", "--release"]
+
+[tasks.default]
+alias = "build"

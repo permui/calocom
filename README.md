@@ -1,6 +1,10 @@
 # Calocom Project
 
 ## Build
+### Build with cargo-make
+Just run `cargo make` in the root directory of the project.
+Or, if you want to build it in release mode, run `cargo make release`.
+
 ### Build the runtime
 The calocom compiler requires the runtime to be a LLVM IR form so that it can link the runtime before compiling the program into a object file. In a sense, it looks like a typical LTO operation. Because cargo is not intend to let users to modify the compiling options of rustc automatically and easily, we need to build the runtime manually.
 
@@ -51,6 +55,7 @@ OPTIONS:
                                  static, dynamic-no-pic, pic, default]
         --runtime <RUNTIME>      Specify the runtime file [default: calocom_runtime.ll]
     -t, --type <TYPE>            Specify the type of the output file [possible values: llvm-bc,
-                                 llvm-asm, mir, tast, asm, bin, obj]
+                                 llvm-asm, mir, tast, ast, asm, bin, obj]
+    -u, --visualize              Use this option to generate the visualized ast in html
     -V, --version                Print version information
 ```

@@ -52,7 +52,7 @@ where
     pub fn find_capture_depth_by_level(&self, level: isize) -> usize {
         for (index, delimiter) in self.delimiter.iter().rev().enumerate() {
             if level >= *delimiter {
-                return index
+                return index;
             }
         }
         dbg!(&self.delimiter);

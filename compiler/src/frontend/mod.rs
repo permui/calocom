@@ -21,9 +21,9 @@ pub fn parse<'a>(s: &'a str) -> Module {
 fn parse_module<'i>(p: Pair<'i, Rule>) -> Module {
     assert_eq!(p.as_rule(), Rule::Module);
 
-    let mut imports : Vec<RefPath> = Vec::new();
-    let mut data_defs : Vec<DataDef> = Vec::new();
-    let mut func_defs : Vec<FuncDef> = Vec::new();
+    let mut imports: Vec<RefPath> = Vec::new();
+    let mut data_defs: Vec<DataDef> = Vec::new();
+    let mut func_defs: Vec<FuncDef> = Vec::new();
 
     let mut it = p.into_inner();
     let imp = it.next().unwrap();
@@ -36,11 +36,15 @@ fn parse_module<'i>(p: Pair<'i, Rule>) -> Module {
         match def.as_rule() {
             Rule::DataDefinition => data_defs.push(parse_data_definition(def)),
             Rule::FunctionDefinition => func_defs.push(parse_function_definition(def)),
-            _ => unreachable!()
+            _ => unreachable!(),
         }
     }
 
-    Module { imports, data_defs, func_defs }
+    Module {
+        imports,
+        data_defs,
+        func_defs,
+    }
 }
 
 fn parse_path<'i>(p: Pair<'i, Rule>) -> RefPath {
@@ -55,10 +59,13 @@ fn parse_data_definition<'i>(p: Pair<'i, Rule>) -> DataDef {
 
     let mut it = p.into_inner();
     let name = it.next().unwrap().as_str().to_string();
-    let con_list = Type::Enum(it.next().unwrap()
-        .into_inner()
-        .map(parse_constructor_type)
-        .collect());
+    let con_list = Type::Enum(
+        it.next()
+            .unwrap()
+            .into_inner()
+            .map(parse_constructor_type)
+            .collect(),
+    );
     DataDef { name, con_list }
 }
 
@@ -69,7 +76,7 @@ fn parse_constructor_type<'i>(p: Pair<'i, Rule>) -> ConstructorType {
     let name = it.next().unwrap().as_str().to_string();
     let inner = match it.next() {
         None => Vec::new(),
-        Some(pr) => pr.into_inner().map(parse_type).collect()
+        Some(pr) => pr.into_inner().map(parse_type).collect(),
     };
     ConstructorType { name, inner }
 }
@@ -86,7 +93,7 @@ fn parse_type<'i>(p: Pair<'i, Rule>) -> Type {
                 tp = Type::Arrow(Box::new(t), Box::new(tp));
             }
             tp
-        },
+        }
         Rule::TupleT => {
             let mut it = p.into_inner();
             let fir = it.next().unwrap();
@@ -96,34 +103,33 @@ fn parse_type<'i>(p: Pair<'i, Rule>) -> Type {
                     let mut tps: Vec<Type> = vec![parse_type(fir)];
                     tps.extend(it.map(parse_type));
                     Type::Tuple(tps)
-                },
+                }
                 Rule::ArrayT => parse_type(fir),
-                _ => unreachable!()
+                _ => unreachable!(),
             }
-        },
+        }
         Rule::ArrayT => {
             let fir = p.into_inner().next().unwrap();
             match fir.as_rule() {
                 Rule::Type => {
                     let t = parse_type(fir);
                     Type::Array(Box::new(t))
-                },
+                }
                 Rule::HighT => parse_type(fir),
-                _ => unreachable!()
-
+                _ => unreachable!(),
             }
-        },
+        }
         Rule::HighT => {
             let fir = get_first(p);
             parse_type(fir)
-        },
+        }
         Rule::UnitT => Type::Unit,
         Rule::NamedT => {
             let fir = get_first(p);
             let s = fir.as_str().to_string();
             Type::Named(s)
         }
-        _ => unreachable!()
+        _ => unreachable!(),
     }
 }
 
@@ -135,7 +141,12 @@ fn parse_function_definition<'i>(p: Pair<'i, Rule>) -> FuncDef {
     let param_list = parse_parameter_list(it.next().unwrap());
     let ret_type = parse_type(it.next().unwrap());
     let body = Box::new(parse_bracket_expression(it.next().unwrap()));
-    FuncDef { name, param_list, ret_type, body }
+    FuncDef {
+        name,
+        param_list,
+        ret_type,
+        body,
+    }
 }
 
 fn parse_parameter_list<'i>(p: Pair<'i, Rule>) -> Vec<NameTypeBind> {
@@ -143,16 +154,20 @@ fn parse_parameter_list<'i>(p: Pair<'i, Rule>) -> Vec<NameTypeBind> {
 }
 
 fn parse_name_type_bind<'i>(p: Pair<'i, Rule>) -> NameTypeBind {
-    let with_at : bool;
+    let with_at: bool;
     match p.as_rule() {
         Rule::AtNameTypeBind => with_at = true,
         Rule::OrdNameTypeBind => with_at = false,
-        _ => unreachable!()
+        _ => unreachable!(),
     }
     let mut it = p.into_inner();
     let var_name = it.next().unwrap().as_str().to_string();
     let typ = parse_type(it.next().unwrap());
-    NameTypeBind { with_at, var_name, typ }
+    NameTypeBind {
+        with_at,
+        var_name,
+        typ,
+    }
 }
 
 fn parse_bracket_expression<'i>(p: Pair<'i, Rule>) -> BracketBody {
@@ -169,7 +184,7 @@ fn parse_bracket_body<'i>(p: Pair<'i, Rule>) -> BracketBody {
         match q.as_rule() {
             Rule::Statement => stmts.push(parse_statement(q)),
             Rule::Expression => ret_expr = Some(Box::new(parse_expression(q))),
-            _ => unreachable!()
+            _ => unreachable!(),
         }
     }
     BracketBody { stmts, ret_expr }
@@ -190,7 +205,11 @@ fn parse_statement_body<'i>(p: Pair<'i, Rule>) -> Stmt {
             let var_name = it.next().unwrap().as_str().to_string();
             let typ = parse_type(it.next().unwrap());
             let expr = Box::new(parse_expression(it.next().unwrap()));
-            Stmt::Let(Box::new(LetStmt { var_name, typ, expr }))
+            Stmt::Let(Box::new(LetStmt {
+                var_name,
+                typ,
+                expr,
+            }))
         }
         Rule::While => {
             let mut it = p.into_inner();
@@ -203,7 +222,12 @@ fn parse_statement_body<'i>(p: Pair<'i, Rule>) -> Stmt {
             let var_name = it.next().unwrap().as_str().to_string();
             let (range_l, range_r) = parse_for_range(it.next().unwrap());
             let body = Box::new(parse_bracket_expression(it.next().unwrap()));
-            Stmt::For(Box::new(ForStmt { var_name, range_l, range_r, body }))
+            Stmt::For(Box::new(ForStmt {
+                var_name,
+                range_l,
+                range_r,
+                body,
+            }))
         }
         Rule::Return => Stmt::Return,
         Rule::Break => Stmt::Break,
@@ -212,13 +236,16 @@ fn parse_statement_body<'i>(p: Pair<'i, Rule>) -> Stmt {
             let mut it = p.into_inner();
             let lexp = Box::new(parse_expression(it.next().unwrap()));
             let rexp = Box::new(parse_expression(it.next().unwrap()));
-            Stmt::Asgn(Box::new(AsgnStmt { lhs: lexp, rhs: rexp }))
+            Stmt::Asgn(Box::new(AsgnStmt {
+                lhs: lexp,
+                rhs: rexp,
+            }))
         }
         Rule::Expression => {
             let t = parse_expression(p);
             Stmt::Expr(Box::new(t))
         }
-        _ => unreachable!()
+        _ => unreachable!(),
     }
 }
 
@@ -241,17 +268,26 @@ fn parse_expression<'i>(p: Pair<'i, Rule>) -> Expr {
                     let param_list = parse_parameter_list(fir);
                     let ret_type = Box::new(parse_type(it.next().unwrap()));
                     let body = Box::new(parse_expression(it.next().unwrap()));
-                    Expr::Closure(ClosureExpr { param_list, ret_type, body })
+                    Expr::Closure(ClosureExpr {
+                        param_list,
+                        ret_type,
+                        body,
+                    })
                 }
                 Rule::ControlFlow => parse_expression(fir),
-                _ => unreachable!()
+                _ => unreachable!(),
             }
         }
         Rule::ControlFlow => parse_expression(get_first(p)),
         Rule::Match => {
             let mut it = p.into_inner();
             let e = Box::new(parse_expression(it.next().unwrap()));
-            let arms: Vec<_> = it.next().unwrap().into_inner().map(parse_match_arm).collect();
+            let arms: Vec<_> = it
+                .next()
+                .unwrap()
+                .into_inner()
+                .map(parse_match_arm)
+                .collect();
             Expr::Match(MatchExpr { e, arms })
         }
         Rule::If => {
@@ -259,7 +295,11 @@ fn parse_expression<'i>(p: Pair<'i, Rule>) -> Expr {
             let condition = Box::new(parse_expression(it.next().unwrap()));
             let t_branch = Box::new(parse_expression(it.next().unwrap()));
             let f_branch = it.next().map(|q| Box::new(parse_expression(q)));
-            Expr::If(IfExpr { condition, t_branch, f_branch })
+            Expr::If(IfExpr {
+                condition,
+                t_branch,
+                f_branch,
+            })
         }
         Rule::Or => {
             let mut it = p.into_inner();
@@ -269,7 +309,7 @@ fn parse_expression<'i>(p: Pair<'i, Rule>) -> Expr {
                 fir = Expr::BinOp(BinOpExpr {
                     lhs: Box::new(fir),
                     rhs: Box::new(sec),
-                    op: BinOp::Or
+                    op: BinOp::Or,
                 });
             }
             fir
@@ -282,7 +322,7 @@ fn parse_expression<'i>(p: Pair<'i, Rule>) -> Expr {
                 fir = Expr::BinOp(BinOpExpr {
                     lhs: Box::new(fir),
                     rhs: Box::new(sec),
-                    op: BinOp::And
+                    op: BinOp::And,
                 });
             }
             fir
@@ -292,7 +332,7 @@ fn parse_expression<'i>(p: Pair<'i, Rule>) -> Expr {
             let fir = parse_expression(get_first(p));
             Expr::UnaryOp(UnaryOpExpr {
                 expr: Box::new(fir),
-                op: UnaryOp::Not
+                op: UnaryOp::Not,
             })
         }
         Rule::Compare => {
@@ -306,7 +346,7 @@ fn parse_expression<'i>(p: Pair<'i, Rule>) -> Expr {
                     Expr::BinOp(BinOpExpr {
                         lhs: Box::new(fir),
                         rhs: Box::new(sec),
-                        op
+                        op,
                     })
                 }
             }
@@ -320,7 +360,7 @@ fn parse_expression<'i>(p: Pair<'i, Rule>) -> Expr {
                 fir = Expr::BinOp(BinOpExpr {
                     lhs: Box::new(fir),
                     rhs: Box::new(sec),
-                    op
+                    op,
                 });
             }
             fir
@@ -334,7 +374,7 @@ fn parse_expression<'i>(p: Pair<'i, Rule>) -> Expr {
                 fir = Expr::BinOp(BinOpExpr {
                     lhs: Box::new(fir),
                     rhs: Box::new(sec),
-                    op
+                    op,
                 });
             }
             fir
@@ -348,11 +388,11 @@ fn parse_expression<'i>(p: Pair<'i, Rule>) -> Expr {
                     let x = parse_expression(it.next().unwrap());
                     Expr::UnaryOp(UnaryOpExpr {
                         expr: Box::new(x),
-                        op
+                        op,
                     })
                 }
                 Rule::Subscript => parse_expression(fir),
-                _ => unreachable!()
+                _ => unreachable!(),
             }
         }
         Rule::Subscript => {
@@ -362,7 +402,7 @@ fn parse_expression<'i>(p: Pair<'i, Rule>) -> Expr {
                 let index = parse_expression(q);
                 fir = Expr::Subscript(SubscriptExpr {
                     arr: Box::new(fir),
-                    index: Box::new(index)
+                    index: Box::new(index),
                 });
             }
             fir
@@ -380,7 +420,7 @@ fn parse_expression<'i>(p: Pair<'i, Rule>) -> Expr {
                         Expr::Call(CallExpr {
                             func: Box::new(fir),
                             gen,
-                            args
+                            args,
                         })
                     }
                     Rule::CallArguments => {
@@ -388,10 +428,10 @@ fn parse_expression<'i>(p: Pair<'i, Rule>) -> Expr {
                         Expr::Call(CallExpr {
                             func: Box::new(fir),
                             gen: None,
-                            args
+                            args,
                         })
                     }
-                    _ => unreachable!()
+                    _ => unreachable!(),
                 }
             }
             fir
@@ -406,7 +446,7 @@ fn parse_expression<'i>(p: Pair<'i, Rule>) -> Expr {
                     Expr::Tuple(tup)
                 }
                 Rule::High => parse_expression(fir),
-                _ => unreachable!()
+                _ => unreachable!(),
             }
         }
         Rule::High => parse_expression(get_first(p)),
@@ -414,7 +454,7 @@ fn parse_expression<'i>(p: Pair<'i, Rule>) -> Expr {
         Rule::Literal => Expr::Lit(parse_literal(p)),
         Rule::Path => Expr::Path(parse_path(p)),
         Rule::UnitVal => Expr::Lit(Literal::Unit),
-        _ => unreachable!()
+        _ => unreachable!(),
     }
 }
 
@@ -436,7 +476,10 @@ fn parse_pattern<'i>(p: Pair<'i, Rule>) -> ComplexPattern {
             let mut it = p.into_inner();
             let con_name = it.next().unwrap().as_str().to_string();
             let inner = it.map(parse_pattern).collect();
-            ComplexPattern::Ctor(CtorPattern { name: con_name, inner })
+            ComplexPattern::Ctor(CtorPattern {
+                name: con_name,
+                inner,
+            })
         }
         Rule::TuplePattern => {
             let inner = p.into_inner().map(parse_pattern).collect();
@@ -447,7 +490,7 @@ fn parse_pattern<'i>(p: Pair<'i, Rule>) -> ComplexPattern {
             let l = parse_literal(p);
             ComplexPattern::Literal(l)
         }
-        _ => unreachable!()
+        _ => unreachable!(),
     }
 }
 
@@ -460,7 +503,7 @@ fn parse_literal<'i>(p: Pair<'i, Rule>) -> Literal {
         Rule::integer_lit => Literal::Int(p.as_str().parse().expect("parse integer literal fail")),
         Rule::string_lit => Literal::Str(get_first(p).as_str().to_string()),
         Rule::bool_lit => Literal::Bool(p.as_str().parse().unwrap()),
-        _ => unreachable!()
+        _ => unreachable!(),
     }
 }
 
@@ -468,33 +511,27 @@ fn parse_bin_op<'i>(p: Pair<'i, Rule>) -> BinOp {
     use BinOp::*;
 
     match p.as_rule() {
-        Rule::CompareOp => {
-            match p.as_str() {
-                "<=" => Le,
-                ">=" => Ge,
-                "==" => Eq,
-                "!=" => Ne,
-                "<" => Lt,
-                ">" => Gt,
-                _ => unreachable!()
-            }
-        }
-        Rule::Arith1Op => {
-            match p.as_str() {
-                "+" => Plus,
-                "-" => Sub,
-                _ => unreachable!()
-            }
-        }
-        Rule::Arith2Op => {
-            match p.as_str() {
-                "*" => Mul,
-                "/" => Div,
-                "%" => Mod,
-                _ => unreachable!()
-            }
-        }
-        _ => unreachable!()
+        Rule::CompareOp => match p.as_str() {
+            "<=" => Le,
+            ">=" => Ge,
+            "==" => Eq,
+            "!=" => Ne,
+            "<" => Lt,
+            ">" => Gt,
+            _ => unreachable!(),
+        },
+        Rule::Arith1Op => match p.as_str() {
+            "+" => Plus,
+            "-" => Sub,
+            _ => unreachable!(),
+        },
+        Rule::Arith2Op => match p.as_str() {
+            "*" => Mul,
+            "/" => Div,
+            "%" => Mod,
+            _ => unreachable!(),
+        },
+        _ => unreachable!(),
     }
 }
 
@@ -502,14 +539,12 @@ fn parse_una_op<'i>(p: Pair<'i, Rule>) -> UnaryOp {
     use UnaryOp::*;
 
     match p.as_rule() {
-        Rule::Arith3Op => {
-            match p.as_str() {
-                "+" => Positive,
-                "-" => Negative,
-                _ => unreachable!()
-            }
-        }
-        _ => unreachable!()
+        Rule::Arith3Op => match p.as_str() {
+            "+" => Positive,
+            "-" => Negative,
+            _ => unreachable!(),
+        },
+        _ => unreachable!(),
     }
 }
 
@@ -532,7 +567,7 @@ fn parse_argument<'i>(p: Pair<'i, Rule>) -> Argument {
     match p.as_rule() {
         Rule::VariableName => Argument::AtVar(p.as_str().to_string()),
         Rule::Expression => Argument::Expr(parse_expression(p)),
-        _ => unreachable!()
+        _ => unreachable!(),
     }
 }
 

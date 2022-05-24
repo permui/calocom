@@ -30,6 +30,8 @@ extern "C" {
 #[no_mangle]
 #[export_name = "main"]
 pub extern "C" fn runtime_main(_argc: i32, _argv: *const *const libc::c_char) -> i32 {
-    unsafe { user_main(); }
+    unsafe {
+        user_main();
+    }
     0
 }

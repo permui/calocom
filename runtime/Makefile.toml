@@ -1,0 +1,9 @@
+[tasks.build]
+command = "cargo"
+args = ["rustc", "--lib", "--release", "--", "--emit=llvm-ir"]
+
+[tasks.release]
+alias = "build"
+
+[tasks.default]
+alias = "build"

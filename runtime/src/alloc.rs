@@ -125,8 +125,7 @@ pub extern "C" fn alloc_tuple(n: size_t) -> *mut _Tuple {
 #[no_mangle]
 #[export_name = "__calocom_runtime_alloc_enum"]
 pub extern "C" fn alloc_enum() -> *mut _Enum {
-    let mem = alloc(::core::mem::size_of::<_Enum>())
-        as *mut _Enum;
+    let mem = alloc(::core::mem::size_of::<_Enum>()) as *mut _Enum;
     unsafe {
         (*mem).header.tag = _ObjectType::Enum;
     }

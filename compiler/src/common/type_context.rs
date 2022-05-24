@@ -1,11 +1,5 @@
 use std::{
-    cell::RefCell,
-    collections::HashMap,
-    fmt::Debug,
-    fmt::Display,
-    hash::Hash,
-    panic,
-    rc::Rc,
+    cell::RefCell, collections::HashMap, fmt::Debug, fmt::Display, hash::Hash, panic, rc::Rc,
 };
 
 use super::unique_name::UniqueName;

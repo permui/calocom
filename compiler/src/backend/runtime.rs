@@ -148,6 +148,5 @@ impl<'ctx> CoreLibrary<'ctx> for Module<'ctx> {
             .expect("unable to make runtime module");
         self.link_in_module(runtime_module)
             .expect("unable to link runtime module");
-        
     }
 }
