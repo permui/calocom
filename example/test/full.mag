@@ -141,5 +141,21 @@ test_match_i32: (x: i32) -> i32 {
     }
 }
 
+test_match_i32_literal: () -> i32 {
+    match 1 {
+        1 => 1,
+        _ => 2
+    }
+}
+
+test_match_str: (x: str) -> i32 {
+    match x {
+        "1" => { if true { 10010 } else { 10086 }},
+        "2" => 2,
+        "3" => 3,
+        _ => 0
+    }
+} 
+
 main: () -> () {
 }

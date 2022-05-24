@@ -901,7 +901,124 @@ impl<'a> FunctionBuilder<'a> {
         arms: &[(TypedASTComplexPattern, TypedExpr)],
         out: VarDefRef,
     ) -> Operand {
-        todo!()
+        let exhaustive = arms.iter().any(|(pat, _)| {
+            use TypedASTComplexPattern::*;
+            matches!(pat, Wildcard | Variable(_))
+        });
+
+        if !exhaustive {
+            panic!("not exhaustive pattern matching");
+        }
+
+        self.position.unwrap();
+        let old_terminator = self.get_terminator_at_position().clone();
+        let end_block = self.create_block(Some("match.end"), Some(old_terminator));
+
+        for (index, (pat, expr)) in arms.iter().enumerate() {
+            use crate::ast::Literal::*;
+            use TypedASTComplexPattern::*;
+            match pat {
+                Ctor { .. }
+                | Tuple { .. }
+                | Literal(Float(_))
+                | Literal(Int(_))
+                | Literal(Bool(_))
+                | Literal(Unit) => {
+                    panic!("not a valid pattern for matching integer")
+                }
+                Literal(x) => {
+                    let name = self.namer.next_name("str.cmp");
+                    let cmp_res = self.func.create_variable_definition(
+                        name.as_str(),
+                        self.ty_ctx.singleton_type(Primitive::CInt32),
+                        VariableKind::TemporaryVariable,
+                    );
+
+                    // compare the string with the literal in current block
+                    self.insert_stmt_at_position(Stmt {
+                        left: Some(cmp_res),
+                        right: Some(Value {
+                            typ: self.ty_ctx.singleton_type(Primitive::CInt32),
+                            val: ValueEnum::Intrinsic(
+                                "cmp-str-eq",
+                                vec![matched.clone(), self.build_operand_from_literal(x.clone())],
+                            ),
+                        }),
+                        note: "compare string and returns an i32",
+                    });
+
+                    // create next block for possible following comparison
+                    let next_try_block =
+                        self.create_block(Some("arm.check"), Some(Terminator::Jump(end_block)));
+
+                    // create expr block to do the work of expr
+                    let expr_block =
+                        self.create_block(Some("arm"), Some(Terminator::Jump(end_block)));
+
+                    self.change_terminator_at_position(Terminator::Branch(
+                        self.build_operand_from_var_def(cmp_res),
+                        next_try_block,
+                        expr_block,
+                    ));
+
+                    self.position = Some(expr_block);
+                    self.build_expr_and_assign_to(expr, Some(out));
+
+                    self.position = Some(next_try_block);
+                }
+                Variable(name) => {
+                    if index != arms.len() - 1 {
+                        panic!(
+                            "this variable capture the expression but it's not the last match arm"
+                        )
+                    }
+
+                    let Operand { val, typ } = &matched;
+                    let typ = *typ;
+                    let x = match val.as_ref() {
+                        OperandEnum::Imm(_) => {
+                            let tmp_name = self.namer.next_name("tmp");
+                            let tmp = self.func.create_variable_definition(
+                                tmp_name.as_str(),
+                                typ,
+                                VariableKind::TemporaryVariable,
+                            );
+                            self.insert_stmt_at_position(Stmt {
+                                left: Some(tmp),
+                                right: Some(Value {
+                                    typ,
+                                    val: ValueEnum::Operand(matched.clone()),
+                                }),
+                                note: "insert a tmp variable for match binding",
+                            });
+                            tmp
+                        }
+                        OperandEnum::Var(var) => *var,
+                    };
+
+                    self.var_ctx.entry_scope();
+                    self.var_ctx
+                        .insert_symbol(name.to_string(), x)
+                        .and_then(|_| -> Option<()> { unreachable!() });
+
+                    self.build_expr_and_assign_to(expr, Some(out));
+                    self.var_ctx.exit_scope();
+                }
+                Wildcard => {
+                    if index != arms.len() - 1 {
+                        panic!(
+                            "the wildcard capture the expression but it's not the last match arm"
+                        )
+                    }
+
+                    self.build_expr_and_assign_to(expr, Some(out));
+                    self.var_ctx.exit_scope();
+                }
+            }
+        }
+
+        self.position = Some(end_block);
+        self.build_operand_from_var_def(out)
     }
 
     fn build_integer_match_expr(
@@ -971,14 +1088,32 @@ impl<'a> FunctionBuilder<'a> {
                         )
                     }
 
-                    let Operand { val, .. } = &matched;
-                    let OperandEnum::Var(x) = val.as_ref() else {
-                        unreachable!()
+                    let Operand { val, typ } = &matched;
+                    let typ = *typ;
+                    let x = match val.as_ref() {
+                        OperandEnum::Imm(_) => {
+                            let tmp_name = self.namer.next_name("tmp");
+                            let tmp = self.func.create_variable_definition(
+                                tmp_name.as_str(),
+                                typ,
+                                VariableKind::TemporaryVariable,
+                            );
+                            self.insert_stmt_at_position(Stmt {
+                                left: Some(tmp),
+                                right: Some(Value {
+                                    typ,
+                                    val: ValueEnum::Operand(matched.clone()),
+                                }),
+                                note: "insert a tmp variable for match binding",
+                            });
+                            tmp
+                        }
+                        OperandEnum::Var(var) => *var,
                     };
 
                     self.var_ctx.entry_scope();
                     self.var_ctx
-                        .insert_symbol(name.to_string(), *x)
+                        .insert_symbol(name.to_string(), x)
                         .and_then(|_| -> Option<()> { unreachable!() });
 
                     let arm_block =
@@ -1020,9 +1155,12 @@ impl<'a> FunctionBuilder<'a> {
         let typ = *typ;
 
         let matched_expr = self.build_expr_as_operand(expr);
-        let out =
-            self.func
-                .create_variable_definition("match.out", typ, VariableKind::TemporaryVariable);
+        let match_out_name = self.namer.next_name("match.out");
+        let out = self.func.create_variable_definition(
+            match_out_name.as_str(),
+            typ,
+            VariableKind::TemporaryVariable,
+        );
         match self.get_type(expr.typ) {
             Type::Tuple { .. } => todo!(),
             Type::Enum { .. } => todo!(),
