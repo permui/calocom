@@ -568,7 +568,7 @@ impl<'a> FunctionBuilder<'a> {
         self.check_assignee(expr);
         match expr.expr.as_ref() {
             ExprEnum::Subscript { .. } => self.build_subscript_expr_as_var_def(expr),
-            ExprEnum::ClosureCall { .. } => todo!(),
+            ExprEnum::ClosureCall { .. } => self.build_closure_call_expr_as_var_def(expr),
             ExprEnum::Call { .. } => self.build_call_expr_as_var_def(expr),
             ExprEnum::Path { .. } => self.build_path_expr_as_var_def(expr),
             _ => unreachable!("check assignee missed"),
@@ -1149,6 +1149,24 @@ impl<'a> FunctionBuilder<'a> {
         self.build_operand_from_var_def(out)
     }
 
+    fn destruct_tuple_pattern(tuple_pat: &TypedASTComplexPattern) {}
+
+    fn transpose_patterns(
+        &mut self,
+        arms: &[(TypedASTComplexPattern, TypedExpr)],
+    ) -> Vec<Vec<TypedASTComplexPattern>> {
+        todo!()
+    }
+
+    fn build_complex_match_expr(
+        &mut self,
+        matched: Operand,
+        arms: &[(TypedASTComplexPattern, TypedExpr)],
+        out: VarDefRef,
+    ) -> Operand {
+        todo!()
+    }
+
     fn build_match_expr(&mut self, expr: &TypedExpr) -> Operand {
         let TypedExpr { expr, typ } = expr;
         let ExprEnum::Match { expr, arms  } = expr.as_ref() else { unreachable!() };
@@ -1162,8 +1180,9 @@ impl<'a> FunctionBuilder<'a> {
             VariableKind::TemporaryVariable,
         );
         match self.get_type(expr.typ) {
-            Type::Tuple { .. } => todo!(),
-            Type::Enum { .. } => todo!(),
+            Type::Tuple { .. } | Type::Enum { .. } => {
+                self.build_complex_match_expr(matched_expr, arms, out)
+            }
             Type::Primitive(x) => match x {
                 Primitive::Object => unreachable!(),
                 Primitive::Unit => panic!("it's useless to match a unit type"),
@@ -1336,6 +1355,11 @@ impl<'a> FunctionBuilder<'a> {
     }
 
     fn build_closure_call_expr(&mut self, expr: &TypedExpr) -> Operand {
+        let call_result = self.build_closure_call_expr_as_var_def(expr);
+        self.build_operand_from_var_def(call_result)
+    }
+
+    fn build_closure_call_expr_as_var_def(&mut self, expr: &TypedExpr) -> VarDefRef {
         let TypedExpr { expr, .. } = expr;
         let ExprEnum::ClosureCall { expr, args  } = expr.as_ref() else { unreachable!() };
 
@@ -1367,7 +1391,7 @@ impl<'a> FunctionBuilder<'a> {
             note: "make a closure call here",
         });
 
-        self.build_operand_from_var_def(call_result)
+        call_result
     }
 
     fn build_constructor_expr(&mut self, expr: &TypedExpr) -> Operand {
