@@ -20,7 +20,7 @@ pub mod midend;
 pub use midend::typed_ast::TypedAST;
 
 #[cfg(feature = "middle-ir")]
-pub use midend::new_middle_ir::MiddleIR;
+pub use midend::middle_ir::MiddleIR;
 
 #[cfg(feature = "backend")]
 #[path = ""]
