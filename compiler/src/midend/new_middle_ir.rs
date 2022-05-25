@@ -106,7 +106,8 @@ pub struct Operand {
 
 #[derive(Debug, Clone)]
 pub enum OperandEnum {
-    Imm(Literal),
+    Imm(i32),
+    Literal(Literal),
     Var(VarDefRef),
 }
 
@@ -127,6 +128,10 @@ pub enum ValueEnum {
     Intrinsic(&'static str, Vec<Operand>),
     Index(Operand, Operand),
     Operand(Operand),
+    ExtractTupleField(Operand, usize),
+    ExtractEnumField(usize, Operand, usize),
+    ExtractEnumTag(Operand),
+    CombineByFoldWithAnd1(Vec<Operand>),
 }
 
 #[derive(Debug)]
@@ -151,13 +156,12 @@ pub struct MiddleIR {
 }
 
 impl FuncDef {
-    fn create_variable_definition(
+    fn create_variable_definition_with_name(
         &mut self,
-        name: &str,
+        name: String,
         typ: TypeRef,
         kind: VariableKind,
     ) -> VarDefRef {
-        let name = name.to_string();
         let var_ref = self.variables.insert(VarDef { name, typ });
         if let VariableKind::ReturnVariable = kind {
             self.return_value
@@ -176,6 +180,16 @@ impl FuncDef {
             .push(var_ref);
         }
         var_ref
+    }
+    fn create_variable_definition(
+        &mut self,
+        name: Option<&str>,
+        namer: &mut UniqueName,
+        typ: TypeRef,
+        kind: VariableKind,
+    ) -> VarDefRef {
+        let name = namer.next_name(name.unwrap_or("var"));
+        self.create_variable_definition_with_name(name, typ, kind)
     }
 
     fn initialize_blocks(&mut self) {
@@ -215,8 +229,8 @@ impl FuncDef {
 
     fn create_block(
         &mut self,
-        namer: &mut UniqueName,
         name: Option<&str>,
+        namer: &mut UniqueName,
         term: Option<Terminator>,
     ) -> BlockRef {
         self.blocks.insert(Block::new(
@@ -298,9 +312,8 @@ impl<'a> FunctionBuilder<'a> {
         } = stmt;
 
         let new_var = if var_name != "_" {
-            let name = self.namer.next_name(var_name);
-            Some(self.func.create_variable_definition(
-                name.as_str(),
+            Some(self.create_variable(
+                Some(var_name.as_str()),
                 *var_type,
                 VariableKind::LocalVariable,
             ))
@@ -412,20 +425,15 @@ impl<'a> FunctionBuilder<'a> {
         self.var_ctx.entry_scope();
 
         // this is the induction variable
-        let name = self.namer.next_name(var_name);
-        let ind_var = self.func.create_variable_definition(
-            name.as_str(),
-            range_l.typ,
-            VariableKind::LocalVariable,
-        );
+        let ind_var =
+            self.create_variable(Some(var_name), range_l.typ, VariableKind::LocalVariable);
 
         // we assign the initial value to the induction variable
         self.build_expr_and_assign_to(range_l, Some(ind_var));
 
         // we calculate the termination value of the for range
-        let term_value_name = self.namer.next_name("for.range.terminate");
-        let term_value = self.func.create_variable_definition(
-            term_value_name.as_str(),
+        let term_value = self.create_variable(
+            Some("for.range.terminate"),
             range_r.typ,
             VariableKind::TemporaryVariable,
         );
@@ -441,9 +449,8 @@ impl<'a> FunctionBuilder<'a> {
         self.position = Some(check_block);
 
         // this is the test result of equality of induction variable and termination value
-        let cond_check_name = self.namer.next_name("for.cond.check");
-        let cond_check_var = self.func.create_variable_definition(
-            cond_check_name.as_str(),
+        let cond_check_var = self.create_variable(
+            Some("for.cond.check"),
             self.ty_ctx.singleton_type(Primitive::Bool),
             VariableKind::TemporaryVariable,
         );
@@ -477,7 +484,7 @@ impl<'a> FunctionBuilder<'a> {
                 typ: self.ty_ctx.singleton_type(Primitive::Bool),
                 val: ValueEnum::BinaryOp(
                     BinOp::Plus,
-                    self.build_operand_from_literal(Literal::Int(1)),
+                    self.build_operand_from_imm(1),
                     self.build_operand_from_var_def(ind_var),
                 ),
             }),
@@ -546,9 +553,8 @@ impl<'a> FunctionBuilder<'a> {
         }
         assert!(self.ty_ctx.is_type_compatible(source_type, target_type));
 
-        let name = self.namer.next_name("conversion");
-        let result = self.func.create_variable_definition(
-            name.as_str(),
+        let result = self.create_variable(
+            Some("convert"),
             target_type,
             VariableKind::TemporaryVariable,
         );
@@ -605,12 +611,7 @@ impl<'a> FunctionBuilder<'a> {
         let fv_list: HashSet<_> = fv_list.into_iter().collect();
         let fv_list: Vec<_> = fv_list.into_iter().collect();
 
-        let closure_name = self.namer.next_name("closure");
-        let closure_var = self.func.create_variable_definition(
-            closure_name.as_str(),
-            typ,
-            VariableKind::LocalVariable,
-        );
+        let closure_var = self.create_variable(Some("closure"), typ, VariableKind::LocalVariable);
 
         let capture: Vec<_> = fv_list
             .iter()
@@ -686,11 +687,14 @@ impl<'a> FunctionBuilder<'a> {
         let mut var_ctx: NameContext<VarDefRef> = Default::default();
 
         // create the return value variable
-        let ret_var =
-            def.create_variable_definition("ret.var", ret_type, VariableKind::ReturnVariable);
+        let ret_var = def.create_variable_definition_with_name(
+            "ret.var".to_string(),
+            ret_type,
+            VariableKind::ReturnVariable,
+        );
 
-        let closure_object = def.create_variable_definition(
-            "closure.self",
+        let closure_object = def.create_variable_definition_with_name(
+            "closure.self".to_string(),
             self.ty_ctx.singleton_type(Primitive::Object),
             VariableKind::Parameter,
         );
@@ -702,8 +706,11 @@ impl<'a> FunctionBuilder<'a> {
             typ,
         } in params
         {
-            let param =
-                def.create_variable_definition(var_name.as_str(), *typ, VariableKind::Parameter);
+            let param = def.create_variable_definition_with_name(
+                var_name.to_string(),
+                *typ,
+                VariableKind::Parameter,
+            );
             if var_name != "_" {
                 var_ctx
                     .insert_symbol(var_name.to_string(), param)
@@ -735,8 +742,8 @@ impl<'a> FunctionBuilder<'a> {
         closure_object: VarDefRef,
     ) {
         for (idx, captured) in captured.iter().enumerate() {
-            let captured_var = self.func.create_variable_definition(
-                captured.0.as_str(),
+            let captured_var = self.func.create_variable_definition_with_name(
+                captured.0.to_string(),
                 captured.1,
                 VariableKind::CapturedVariable,
             );
@@ -895,6 +902,28 @@ impl<'a> FunctionBuilder<'a> {
         }
     }
 
+    fn build_var_def_from_operand(&mut self, operand: &Operand) -> VarDefRef {
+        let Operand { val, typ } = operand;
+        let typ = *typ;
+        let x = match val.as_ref() {
+            OperandEnum::Literal(_) => {
+                let tmp = self.create_variable(Some("tmp"), typ, VariableKind::TemporaryVariable);
+                self.insert_stmt_at_position(Stmt {
+                    left: Some(tmp),
+                    right: Some(Value {
+                        typ,
+                        val: ValueEnum::Operand(operand.clone()),
+                    }),
+                    note: "insert a tmp variable for match binding",
+                });
+                tmp
+            }
+            OperandEnum::Var(var) => *var,
+            OperandEnum::Imm(_) => unreachable!(),
+        };
+        x
+    }
+
     fn build_string_match_expr(
         &mut self,
         matched: Operand,
@@ -927,9 +956,8 @@ impl<'a> FunctionBuilder<'a> {
                     panic!("not a valid pattern for matching integer")
                 }
                 Literal(x) => {
-                    let name = self.namer.next_name("str.cmp");
-                    let cmp_res = self.func.create_variable_definition(
-                        name.as_str(),
+                    let cmp_res = self.create_variable(
+                        Some("str.cmp"),
                         self.ty_ctx.singleton_type(Primitive::CInt32),
                         VariableKind::TemporaryVariable,
                     );
@@ -973,28 +1001,7 @@ impl<'a> FunctionBuilder<'a> {
                         )
                     }
 
-                    let Operand { val, typ } = &matched;
-                    let typ = *typ;
-                    let x = match val.as_ref() {
-                        OperandEnum::Imm(_) => {
-                            let tmp_name = self.namer.next_name("tmp");
-                            let tmp = self.func.create_variable_definition(
-                                tmp_name.as_str(),
-                                typ,
-                                VariableKind::TemporaryVariable,
-                            );
-                            self.insert_stmt_at_position(Stmt {
-                                left: Some(tmp),
-                                right: Some(Value {
-                                    typ,
-                                    val: ValueEnum::Operand(matched.clone()),
-                                }),
-                                note: "insert a tmp variable for match binding",
-                            });
-                            tmp
-                        }
-                        OperandEnum::Var(var) => *var,
-                    };
+                    let x = self.build_var_def_from_operand(&matched);
 
                     self.var_ctx.entry_scope();
                     self.var_ctx
@@ -1036,12 +1043,12 @@ impl<'a> FunctionBuilder<'a> {
             panic!("not exhaustive pattern matching");
         }
 
-        let name = self.namer.next_name("int");
-        let unboxed_integer = self.func.create_variable_definition(
-            name.as_str(),
+        let unboxed_integer = self.create_variable(
+            Some("int"),
             self.ty_ctx.singleton_type(Primitive::CInt32),
             VariableKind::RawVariable,
         );
+
         self.insert_stmt_at_position(Stmt {
             left: Some(unboxed_integer),
             right: Some(Value {
@@ -1088,28 +1095,7 @@ impl<'a> FunctionBuilder<'a> {
                         )
                     }
 
-                    let Operand { val, typ } = &matched;
-                    let typ = *typ;
-                    let x = match val.as_ref() {
-                        OperandEnum::Imm(_) => {
-                            let tmp_name = self.namer.next_name("tmp");
-                            let tmp = self.func.create_variable_definition(
-                                tmp_name.as_str(),
-                                typ,
-                                VariableKind::TemporaryVariable,
-                            );
-                            self.insert_stmt_at_position(Stmt {
-                                left: Some(tmp),
-                                right: Some(Value {
-                                    typ,
-                                    val: ValueEnum::Operand(matched.clone()),
-                                }),
-                                note: "insert a tmp variable for match binding",
-                            });
-                            tmp
-                        }
-                        OperandEnum::Var(var) => *var,
-                    };
+                    let x = self.build_var_def_from_operand(&matched);
 
                     self.var_ctx.entry_scope();
                     self.var_ctx
@@ -1149,13 +1135,268 @@ impl<'a> FunctionBuilder<'a> {
         self.build_operand_from_var_def(out)
     }
 
-    fn destruct_tuple_pattern(tuple_pat: &TypedASTComplexPattern) {}
-
-    fn transpose_patterns(
+    fn build_pattern_matches_operand_condition_check_and_insert_binding(
         &mut self,
-        arms: &[(TypedASTComplexPattern, TypedExpr)],
-    ) -> Vec<Vec<TypedASTComplexPattern>> {
-        todo!()
+        matched: Operand,
+        pat: &TypedASTComplexPattern,
+        check_status: VarDefRef,
+    ) {
+        use crate::ast::Literal::*;
+        use TypedASTComplexPattern::*;
+
+        match pat {
+            Ctor { name, inner } => {
+                let (ctor_idx, types) = self
+                    .ty_ctx
+                    .get_ctor_index_and_field_type_ref_by_name(matched.typ, name);
+
+                let tag_var = self.create_variable(
+                    Some("tag"),
+                    self.ty_ctx.singleton_type(Primitive::CInt32),
+                    VariableKind::RawVariable,
+                );
+
+                self.insert_stmt_at_position(Stmt {
+                    left: Some(tag_var),
+                    right: Some(Value {
+                        typ: self.ty_ctx.singleton_type(Primitive::CInt32),
+                        val: ValueEnum::ExtractEnumTag(matched.clone()),
+                    }),
+                    note: "extract the tag from the enum",
+                });
+
+                let cmp_var = self.create_variable(
+                    Some("cmp.ci32"),
+                    self.ty_ctx.singleton_type(Primitive::CInt32),
+                    VariableKind::RawVariable,
+                );
+
+                self.insert_stmt_at_position(Stmt {
+                    left: Some(cmp_var),
+                    right: Some(Value {
+                        typ: self.ty_ctx.singleton_type(Primitive::CInt32),
+                        val: ValueEnum::Intrinsic(
+                            "cmp-ci32-eq",
+                            vec![
+                                self.build_operand_from_var_def(tag_var),
+                                self.build_operand_from_imm(ctor_idx as i32),
+                            ],
+                        ),
+                    }),
+                    note: "compare tag and pattern",
+                });
+
+                let current = self.get_terminator_at_position().clone();
+
+                let check_end_block =
+                    self.create_block(Some("match.arm.check.ctor.end"), Some(current));
+
+                let check_succeeded_block = self.create_block(
+                    Some("match.arm.check.ctor.succeeded"),
+                    Some(Terminator::Jump(check_end_block)),
+                );
+
+                let check_failed_block = self.create_block(
+                    Some("match.arm.check.ctor.failed"),
+                    Some(Terminator::Jump(check_end_block)),
+                );
+
+                self.change_terminator_at_position(Terminator::Branch(
+                    self.build_operand_from_var_def(cmp_var),
+                    check_succeeded_block,
+                    check_failed_block,
+                ));
+
+                let check_inner_result_var: Vec<_> = inner
+                    .iter()
+                    .map(|_| {
+                        self.create_variable(
+                            Some("check.inner.res"),
+                            self.ty_ctx.singleton_type(Primitive::CInt32),
+                            VariableKind::RawVariable,
+                        )
+                    })
+                    .collect();
+
+                // ctor check passed, remain its all fields to be checked
+                self.position = Some(check_succeeded_block);
+                for (index, ((inner, typ), res)) in inner
+                    .iter()
+                    .zip(types)
+                    .zip(check_inner_result_var.iter())
+                    .enumerate()
+                {
+                    let ctor_field = self.create_variable(
+                        Some("ctor.field"),
+                        typ,
+                        VariableKind::TemporaryVariable,
+                    );
+
+                    self.insert_stmt_at_position(Stmt {
+                        left: Some(ctor_field),
+                        right: Some(Value {
+                            typ,
+                            val: ValueEnum::ExtractEnumField(ctor_idx, matched.clone(), index),
+                        }),
+                        note: "extract the field of ctor",
+                    });
+
+                    self.build_pattern_matches_operand_condition_check_and_insert_binding(
+                        self.build_operand_from_var_def(ctor_field),
+                        inner,
+                        *res,
+                    )
+                }
+
+                let check_inner_result = check_inner_result_var
+                    .iter()
+                    .copied()
+                    .map(|x| self.build_operand_from_var_def(x))
+                    .collect();
+                self.insert_stmt_at_position(Stmt {
+                    left: Some(check_status),
+                    right: Some(Value {
+                        typ: self.ty_ctx.singleton_type(Primitive::CInt32),
+                        val: ValueEnum::CombineByFoldWithAnd1(check_inner_result),
+                    }),
+                    note: "combine multiple conditions into one",
+                });
+
+                // ctor check didn't pass
+                self.position = Some(check_failed_block);
+                self.insert_stmt_at_position(Stmt {
+                    left: Some(check_status),
+                    right: Some(Value {
+                        typ: self.ty_ctx.singleton_type(Primitive::CInt32),
+                        val: ValueEnum::Operand(self.build_operand_from_imm(0)),
+                    }),
+                    note: "check not passed",
+                });
+
+                self.position = Some(check_end_block);
+            }
+            Tuple { fields } => {
+                let current = self.get_terminator_at_position().clone();
+
+                let check_end_block =
+                    self.create_block(Some("match.arm.check.tuple.end"), Some(current));
+
+                let check_field_result_var: Vec<_> = fields
+                    .iter()
+                    .map(|_| {
+                        self.create_variable(
+                            Some("check.field.res"),
+                            self.ty_ctx.singleton_type(Primitive::CInt32),
+                            VariableKind::RawVariable,
+                        )
+                    })
+                    .collect();
+
+                let types = self.ty_ctx.get_tuple_field_type_ref(matched.typ);
+                for (index, ((field, typ), res)) in fields
+                    .iter()
+                    .zip(types)
+                    .zip(check_field_result_var.iter())
+                    .enumerate()
+                {
+                    let tuple_field = self.create_variable(
+                        Some("tuple.field"),
+                        typ,
+                        VariableKind::TemporaryVariable,
+                    );
+
+                    self.insert_stmt_at_position(Stmt {
+                        left: Some(tuple_field),
+                        right: Some(Value {
+                            typ,
+                            val: ValueEnum::ExtractTupleField(matched.clone(), index),
+                        }),
+                        note: "extract the field of tuple",
+                    });
+
+                    self.build_pattern_matches_operand_condition_check_and_insert_binding(
+                        self.build_operand_from_var_def(tuple_field),
+                        field,
+                        *res,
+                    )
+                }
+
+                let check_field_result = check_field_result_var
+                    .iter()
+                    .copied()
+                    .map(|x| self.build_operand_from_var_def(x))
+                    .collect();
+
+                self.insert_stmt_at_position(Stmt {
+                    left: Some(check_status),
+                    right: Some(Value {
+                        typ: self.ty_ctx.singleton_type(Primitive::CInt32),
+                        val: ValueEnum::CombineByFoldWithAnd1(check_field_result),
+                    }),
+                    note: "combine multiple conditions into one",
+                });
+
+                self.position = Some(check_end_block);
+            }
+            Literal(lit) => {
+                let result = self.create_variable(
+                    Some("match.lit.cmp.res"),
+                    self.ty_ctx.singleton_type(Primitive::Bool),
+                    VariableKind::TemporaryVariable,
+                );
+
+                self.insert_stmt_at_position(Stmt {
+                    left: Some(result),
+                    right: Some(Value {
+                        typ: self.ty_ctx.singleton_type(Primitive::Bool),
+                        val: ValueEnum::BinaryOp(
+                            BinOp::Eq,
+                            matched,
+                            self.build_operand_from_literal(lit.clone()),
+                        ),
+                    }),
+                    note: "compare",
+                });
+
+                self.insert_stmt_at_position(Stmt {
+                    left: Some(check_status),
+                    right: Some(Value {
+                        typ: self.ty_ctx.singleton_type(Primitive::CInt32),
+                        val: ValueEnum::Intrinsic(
+                            "unbox-bool",
+                            vec![self.build_operand_from_var_def(result)],
+                        ),
+                    }),
+                    note: "unbox normal compare result",
+                });
+            }
+            Variable(x) => {
+                if x != "_" {
+                    let var = self.build_var_def_from_operand(&matched);
+                    self.var_ctx
+                        .insert_symbol(x.clone(), var)
+                        .and_then(|_| -> Option<()> { panic!("duplicate variable binding") });
+                }
+                self.insert_stmt_at_position(Stmt {
+                    left: Some(check_status),
+                    right: Some(Value {
+                        typ: self.ty_ctx.singleton_type(Primitive::CInt32),
+                        val: ValueEnum::Operand(self.build_operand_from_imm(1)),
+                    }),
+                    note: "check passed",
+                });
+            }
+            Wildcard => {
+                self.insert_stmt_at_position(Stmt {
+                    left: Some(check_status),
+                    right: Some(Value {
+                        typ: self.ty_ctx.singleton_type(Primitive::CInt32),
+                        val: ValueEnum::Operand(self.build_operand_from_imm(1)),
+                    }),
+                    note: "check passed",
+                });
+            }
+        }
     }
 
     fn build_complex_match_expr(
@@ -1164,7 +1405,48 @@ impl<'a> FunctionBuilder<'a> {
         arms: &[(TypedASTComplexPattern, TypedExpr)],
         out: VarDefRef,
     ) -> Operand {
-        todo!()
+        let old_terminator = self.get_terminator_at_position().clone();
+        let end_block = self.create_block(Some("match.end"), Some(old_terminator));
+
+        for (pat, expr) in arms.iter() {
+            let check = self.create_variable(
+                Some("match.check.arm"),
+                self.ty_ctx.singleton_type(Primitive::CInt32),
+                VariableKind::TemporaryVariable,
+            );
+
+            self.var_ctx.entry_scope();
+            self.build_pattern_matches_operand_condition_check_and_insert_binding(
+                matched.clone(),
+                pat,
+                check,
+            );
+
+            // create next block for possible following comparison
+            let next_try_block =
+                self.create_block(Some("arm.check"), Some(Terminator::Jump(end_block)));
+
+            // create expr block to do the work of expr
+            let expr_block = self.create_block(Some("arm"), Some(Terminator::Jump(end_block)));
+
+            self.change_terminator_at_position(Terminator::Branch(
+                self.build_operand_from_var_def(check),
+                expr_block,
+                next_try_block,
+            ));
+
+            self.position = Some(expr_block);
+            self.build_expr_and_assign_to(expr, Some(out));
+
+            self.var_ctx.exit_scope();
+            self.position = Some(next_try_block);
+        }
+
+        // non-exhaustive
+        self.change_terminator_at_position(Terminator::Panic);
+
+        self.position = Some(end_block);
+        self.build_operand_from_var_def(out)
     }
 
     fn build_match_expr(&mut self, expr: &TypedExpr) -> Operand {
@@ -1173,12 +1455,7 @@ impl<'a> FunctionBuilder<'a> {
         let typ = *typ;
 
         let matched_expr = self.build_expr_as_operand(expr);
-        let match_out_name = self.namer.next_name("match.out");
-        let out = self.func.create_variable_definition(
-            match_out_name.as_str(),
-            typ,
-            VariableKind::TemporaryVariable,
-        );
+        let out = self.create_variable(Some("match.out"), typ, VariableKind::TemporaryVariable);
         match self.get_type(expr.typ) {
             Type::Tuple { .. } | Type::Enum { .. } => {
                 self.build_complex_match_expr(matched_expr, arms, out)
@@ -1228,21 +1505,15 @@ impl<'a> FunctionBuilder<'a> {
             None
         };
 
-        let if_out_name = self.namer.next_name("if.result");
-        let if_out = self.func.create_variable_definition(
-            if_out_name.as_str(),
-            typ,
-            VariableKind::TemporaryVariable,
-        );
+        let if_out = self.create_variable(Some("if.res"), typ, VariableKind::TemporaryVariable);
 
         self.position.unwrap();
         let old_terminator_of_last_block =
             self.change_terminator_at_position(Terminator::Jump(cond_block));
 
         self.position = Some(cond_block);
-        let cond_check_name = self.namer.next_name("if.cond.check");
-        let cond_check_var = self.func.create_variable_definition(
-            cond_check_name.as_str(),
+        let cond_check_var = self.create_variable(
+            Some("if.cond.check"),
             self.ty_ctx.singleton_type(Primitive::Bool),
             VariableKind::TemporaryVariable,
         );
@@ -1280,12 +1551,7 @@ impl<'a> FunctionBuilder<'a> {
         let left_operand = self.build_expr_as_operand(lhs);
         let right_operand = self.build_expr_as_operand(rhs);
 
-        let name = self.namer.next_name("bin.op.res");
-        let result = self.func.create_variable_definition(
-            name.as_str(),
-            typ,
-            VariableKind::TemporaryVariable,
-        );
+        let result = self.create_variable(Some("bin.op.res"), typ, VariableKind::TemporaryVariable);
 
         self.insert_stmt_at_position(Stmt {
             left: Some(result),
@@ -1306,12 +1572,7 @@ impl<'a> FunctionBuilder<'a> {
 
         let operand = self.build_expr_as_operand(expr);
 
-        let name = self.namer.next_name("un.op.res");
-        let result = self.func.create_variable_definition(
-            name.as_str(),
-            typ,
-            VariableKind::TemporaryVariable,
-        );
+        let result = self.create_variable(Some("un.op.res"), typ, VariableKind::TemporaryVariable);
 
         self.insert_stmt_at_position(Stmt {
             left: Some(result),
@@ -1332,10 +1593,7 @@ impl<'a> FunctionBuilder<'a> {
 
         let arr = self.build_expr_as_operand(arr);
         let index = self.build_expr_as_operand(index);
-        let name = self.namer.next_name("elem");
-        let result =
-            self.func
-                .create_variable_definition(name.as_str(), typ, VariableKind::ObjectReference);
+        let result = self.create_variable(Some("elem"), typ, VariableKind::ObjectReference);
 
         self.insert_stmt_at_position(Stmt {
             left: Some(result),
@@ -1375,12 +1633,8 @@ impl<'a> FunctionBuilder<'a> {
 
         let args_operands = self.build_arguments(args, &parameters);
 
-        let name = self.namer.next_name("call.res");
-        let call_result = self.func.create_variable_definition(
-            name.as_str(),
-            ret_type,
-            VariableKind::TemporaryVariable,
-        );
+        let call_result =
+            self.create_variable(Some("call.res"), ret_type, VariableKind::TemporaryVariable);
 
         self.insert_stmt_at_position(Stmt {
             left: Some(call_result),
@@ -1404,12 +1658,8 @@ impl<'a> FunctionBuilder<'a> {
             .get_ctor_index_and_field_type_ref_by_name(typ, name);
         let args_value = self.build_arguments(args, &params_type);
 
-        let constructed_name = self.namer.next_name("enum");
-        let construction_result = self.func.create_variable_definition(
-            constructed_name.as_str(),
-            typ,
-            VariableKind::TemporaryVariable,
-        );
+        let construction_result =
+            self.create_variable(Some("enum"), typ, VariableKind::TemporaryVariable);
 
         self.insert_stmt_at_position(Stmt {
             left: Some(construction_result),
@@ -1447,12 +1697,8 @@ impl<'a> FunctionBuilder<'a> {
 
         let args_operands = self.build_arguments(args, &parameters);
 
-        let name = self.namer.next_name("call.res");
-        let call_result = self.func.create_variable_definition(
-            name.as_str(),
-            ret_type,
-            VariableKind::TemporaryVariable,
-        );
+        let call_result =
+            self.create_variable(Some("call.res"), ret_type, VariableKind::TemporaryVariable);
 
         self.insert_stmt_at_position(Stmt {
             left: Some(call_result),
@@ -1471,9 +1717,8 @@ impl<'a> FunctionBuilder<'a> {
         for (arg, &type_ref) in args.iter().zip(types.iter()) {
             match arg {
                 TypedArgument::Expr(expr) => {
-                    let name = self.namer.next_name("arg");
-                    let arg_var = self.func.create_variable_definition(
-                        name.as_str(),
+                    let arg_var = self.create_variable(
+                        Some("arg"),
                         type_ref,
                         VariableKind::TemporaryVariable,
                     );
@@ -1496,9 +1741,8 @@ impl<'a> FunctionBuilder<'a> {
         let typ = *typ;
 
         for element in elements.iter() {
-            let name = self.namer.next_name("tuple.field");
-            let field = self.func.create_variable_definition(
-                name.as_str(),
+            let field = self.create_variable(
+                Some("tuple.field"),
                 element.typ,
                 VariableKind::TemporaryVariable,
             );
@@ -1506,12 +1750,7 @@ impl<'a> FunctionBuilder<'a> {
             self.build_expr_and_assign_to(element, Some(field));
         }
 
-        let name = self.namer.next_name("tuple");
-        let tuple = self.func.create_variable_definition(
-            name.as_str(),
-            typ,
-            VariableKind::TemporaryVariable,
-        );
+        let tuple = self.create_variable(Some("tuple"), typ, VariableKind::TemporaryVariable);
 
         self.insert_stmt_at_position(Stmt {
             left: Some(tuple),
@@ -1532,7 +1771,7 @@ impl<'a> FunctionBuilder<'a> {
 
         Operand {
             typ,
-            val: Box::new(OperandEnum::Imm(lit.clone())),
+            val: Box::new(OperandEnum::Literal(lit.clone())),
         }
     }
 
@@ -1556,12 +1795,7 @@ impl<'a> FunctionBuilder<'a> {
         let ExprEnum::Bracket (body) = expr.as_ref() else { unreachable!() };
         let typ = *typ;
 
-        let name = self.namer.next_name("out");
-        let output_var = self.func.create_variable_definition(
-            name.as_str(),
-            typ,
-            VariableKind::TemporaryVariable,
-        );
+        let output_var = self.create_variable(Some("out"), typ, VariableKind::TemporaryVariable);
 
         self.build_bracket_body(body, Some(output_var));
         self.build_operand_from_var_def(output_var)
@@ -1591,7 +1825,14 @@ impl<'a> FunctionBuilder<'a> {
         };
         Operand {
             typ,
-            val: Box::new(OperandEnum::Imm(literal)),
+            val: Box::new(OperandEnum::Literal(literal)),
+        }
+    }
+
+    fn build_operand_from_imm(&self, imm: i32) -> Operand {
+        Operand {
+            typ: self.ty_ctx.singleton_type(Primitive::CInt32),
+            val: Box::new(OperandEnum::Imm(imm)),
         }
     }
 
@@ -1610,7 +1851,17 @@ impl<'a> FunctionBuilder<'a> {
     }
 
     fn create_block(&mut self, name: Option<&str>, term: Option<Terminator>) -> BlockRef {
-        self.func.create_block(&mut self.namer, name, term)
+        self.func.create_block(name, &mut self.namer, term)
+    }
+
+    fn create_variable(
+        &mut self,
+        name: Option<&str>,
+        typ: TypeRef,
+        kind: VariableKind,
+    ) -> VarDefRef {
+        self.func
+            .create_variable_definition(name, &mut self.namer, typ, kind)
     }
 
     fn insert_stmt_at_position(&mut self, stmt: Stmt) {
@@ -1708,8 +1959,11 @@ impl MiddleIR {
         let mut var_ctx: NameContext<VarDefRef> = Default::default();
 
         // create the return value variable
-        let ret_var =
-            def.create_variable_definition("ret.var", func.ret_type, VariableKind::ReturnVariable);
+        let ret_var = def.create_variable_definition_with_name(
+            "ret.var".to_string(),
+            func.ret_type,
+            VariableKind::ReturnVariable,
+        );
 
         let mut params_type = vec![];
         var_ctx.entry_scope();
@@ -1719,8 +1973,11 @@ impl MiddleIR {
             typ,
         } in &func.params
         {
-            let param =
-                def.create_variable_definition(var_name.as_str(), *typ, VariableKind::Parameter);
+            let param = def.create_variable_definition_with_name(
+                var_name.clone(),
+                *typ,
+                VariableKind::Parameter,
+            );
             params_type.push(*typ);
             if var_name != "_" {
                 var_ctx
@@ -1809,8 +2066,9 @@ impl Dump for (&TypeContext, &FuncDef, &Operand) {
         format!(
             "({} : {})",
             match val.as_ref() {
-                OperandEnum::Imm(lit) => lit.dump_string(),
+                OperandEnum::Literal(lit) => lit.dump_string(),
                 OperandEnum::Var(var) => (*func, *var).dump_string(),
+                OperandEnum::Imm(x) => x.to_string(),
             },
             (*ty_ctx, *typ).dump_string()
         )
@@ -2020,6 +2278,38 @@ impl Dump for (&TypeContext, &FuncDef, &ValueEnum) {
                     (*ty_ctx, *func, closure).dump_string(),
                     (*ty_ctx, *func, closure).dump_string(),
                     (*ty_ctx, *func, args).dump_string()
+                )
+                .unwrap();
+            }
+            ValueEnum::ExtractTupleField(var, idx) => {
+                write!(
+                    s,
+                    "extract-tuple-field {}[{idx}]",
+                    (*ty_ctx, *func, var).dump_string()
+                )
+                .unwrap();
+            }
+            ValueEnum::ExtractEnumField(ctor_idx, var, idx) => {
+                write!(
+                    s,
+                    "extract-enum-field {} at {ctor_idx}[{idx}]",
+                    (*ty_ctx, *func, var).dump_string()
+                )
+                .unwrap();
+            }
+            ValueEnum::ExtractEnumTag(var) => {
+                write!(
+                    s,
+                    "extract-enum-tag {}",
+                    (*ty_ctx, *func, var).dump_string()
+                )
+                .unwrap();
+            }
+            ValueEnum::CombineByFoldWithAnd1(vec) => {
+                write!(
+                    s,
+                    "fold-with-and-1 ({})",
+                    (*ty_ctx, *func, vec).dump_string()
                 )
                 .unwrap();
             }

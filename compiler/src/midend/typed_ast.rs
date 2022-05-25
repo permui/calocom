@@ -536,9 +536,11 @@ impl TypedAST {
             }
             Variable(name) => {
                 // regard this "ctor" as variable binding
-                self.name_ctx
-                    .insert_symbol(name.to_string(), matched_type)
-                    .and_then(|_| -> Option<()> { panic!("{} has existed", name) });
+                if name != "_" {
+                    self.name_ctx
+                        .insert_symbol(name.to_string(), matched_type)
+                        .and_then(|_| -> Option<()> { panic!("{} has existed", name) });
+                }
             }
         }
     }

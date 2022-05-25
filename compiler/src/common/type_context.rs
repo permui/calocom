@@ -140,6 +140,13 @@ impl TypeContext {
         }
     }
 
+    pub fn get_tuple_field_type_ref(&self, typ: TypeRef) -> Vec<TypeRef> {
+        match &self.types[typ] {
+            Type::Tuple { fields } => fields.clone(),
+            _ => panic!("can't get fields of non tuple type"),
+        }
+    }
+
     pub fn get_type_ref_by_name(&self, name: &str) -> Option<TypeRef> {
         self.name_ref_map.get(name).copied()
     }

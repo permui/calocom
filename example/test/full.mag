@@ -155,7 +155,23 @@ test_match_str: (x: str) -> i32 {
         "3" => 3,
         _ => 0
     }
-} 
+}
+
+test_normal_match: (x: Nat) -> i32 {
+    match x {
+        O => 0,
+        S(O) => 1,
+        S(S(x)) => 2 + test_normal_match(x)
+    }
+}
+
+test_tuple_match: (a: Nat, b: Nat) -> bool {
+    match (a, b) {
+        (O, O) => true,
+        (S(x), S(y)) => test_tuple_match(x, y),
+        (_, _) => false
+    }
+}
 
 main: () -> () {
 }
