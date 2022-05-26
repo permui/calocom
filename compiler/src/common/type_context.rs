@@ -90,6 +90,10 @@ impl TypeContext {
     pub const PRIMITIVE_TYPE_NAME: [&'static str; 7] =
         ["object!", "unit!", "str", "bool", "i32", "f64", "c_i32!"];
 
+    pub fn primitive_types(&self) -> &[TypeRef] {
+        &self.prim_ref_map
+    }
+
     pub fn types(&self) -> &SlotMap<TypeRef, Type> {
         &self.types
     }
@@ -102,7 +106,7 @@ impl TypeContext {
         self.types.get(type_ref).unwrap().clone()
     }
 
-    pub fn singleton_type(&self, typ: Primitive) -> TypeRef {
+    pub fn primitive_type(&self, typ: Primitive) -> TypeRef {
         let index: usize = typ.into();
         self.prim_ref_map[index]
     }
@@ -203,7 +207,7 @@ impl TypeContext {
     ) -> TypeRef {
         if unit_elimination
             && parameters.len() == 1
-            && parameters[0] == self.singleton_type(Primitive::Unit)
+            && parameters[0] == self.primitive_type(Primitive::Unit)
         {
             parameters.clear();
         }
@@ -438,8 +442,8 @@ impl TypeContext {
     pub fn is_type_compatible(&self, t1: TypeRef, t2: TypeRef) -> bool {
         self.is_type_eq(t1, t2) // the same nominal type
             || self.is_arithmetic_compatible(t1, t2) // can be cast 
-            || self.is_type_eq(t1, self.singleton_type(Primitive::Object)) // unsafe cast due to polymorphism
-            || self.is_type_eq(t2, self.singleton_type(Primitive::Object)) // unsafe cast due to polymorphism
+            || self.is_type_eq(t1, self.primitive_type(Primitive::Object)) // unsafe cast due to polymorphism
+            || self.is_type_eq(t2, self.primitive_type(Primitive::Object)) // unsafe cast due to polymorphism
             || self.is_t1_reference_of_t2(t1, t2) // one is reference and the other is the referred type
             || self.is_t1_reference_of_t2(t2, t1)
     }
@@ -460,35 +464,35 @@ impl TypeContext {
     }
 
     pub fn is_index_type(&self, t: TypeRef) -> bool {
-        self.is_type_eq(t, self.singleton_type(Primitive::Int32))
+        self.is_type_eq(t, self.primitive_type(Primitive::Int32))
     }
 
     pub fn is_arithmetic_type(&self, t: TypeRef) -> bool {
-        self.is_type_eq(t, self.singleton_type(Primitive::Int32))
-            || self.is_type_eq(t, self.singleton_type(Primitive::Float64))
+        self.is_type_eq(t, self.primitive_type(Primitive::Int32))
+            || self.is_type_eq(t, self.primitive_type(Primitive::Float64))
     }
 
     pub fn is_boolean_testable_type(&self, t: TypeRef) -> bool {
-        self.is_type_eq(t, self.singleton_type(Primitive::Bool))
+        self.is_type_eq(t, self.primitive_type(Primitive::Bool))
     }
 
     pub fn is_partially_ordered_type(&self, t: TypeRef) -> bool {
         self.is_totally_ordered_type(t)
-            || self.is_type_eq(t, self.singleton_type(Primitive::Float64))
+            || self.is_type_eq(t, self.primitive_type(Primitive::Float64))
     }
 
     pub fn is_partially_equal_type(&self, t: TypeRef) -> bool {
-        self.is_totally_equal_type(t) || self.is_type_eq(t, self.singleton_type(Primitive::Float64))
+        self.is_totally_equal_type(t) || self.is_type_eq(t, self.primitive_type(Primitive::Float64))
     }
 
     pub fn is_totally_ordered_type(&self, t: TypeRef) -> bool {
-        self.is_type_eq(t, self.singleton_type(Primitive::Int32))
+        self.is_type_eq(t, self.primitive_type(Primitive::Int32))
     }
 
     pub fn is_totally_equal_type(&self, t: TypeRef) -> bool {
-        self.is_type_eq(t, self.singleton_type(Primitive::Int32))
-            || self.is_type_eq(t, self.singleton_type(Primitive::Bool))
-            || self.is_type_eq(t, self.singleton_type(Primitive::Str))
+        self.is_type_eq(t, self.primitive_type(Primitive::Int32))
+            || self.is_type_eq(t, self.primitive_type(Primitive::Bool))
+            || self.is_type_eq(t, self.primitive_type(Primitive::Str))
     }
 
     pub fn get_display_name_map(&self) -> (Self, HashMap<TypeRef, String>) {

@@ -251,7 +251,7 @@ impl TypedAST {
                 )
             }
 
-            crate::ast::Type::Unit => self.ty_ctx.singleton_type(Primitive::Unit),
+            crate::ast::Type::Unit => self.ty_ctx.primitive_type(Primitive::Unit),
             crate::ast::Type::Named(s) => {
                 if let Some(type_ref) = self.ty_ctx.get_type_ref_by_name(s) {
                     type_ref
@@ -598,11 +598,11 @@ impl TypedAST {
     fn check_type_of_literal(&mut self, lit: &crate::ast::Literal) -> TypedExpr {
         use crate::ast::Literal::*;
         let typ = match lit {
-            Float(_) => self.ty_ctx.singleton_type(Primitive::Float64),
-            Int(_) => self.ty_ctx.singleton_type(Primitive::Int32),
-            Str(_) => self.ty_ctx.singleton_type(Primitive::Str),
-            Bool(_) => self.ty_ctx.singleton_type(Primitive::Bool),
-            Unit => self.ty_ctx.singleton_type(Primitive::Unit),
+            Float(_) => self.ty_ctx.primitive_type(Primitive::Float64),
+            Int(_) => self.ty_ctx.primitive_type(Primitive::Int32),
+            Str(_) => self.ty_ctx.primitive_type(Primitive::Str),
+            Bool(_) => self.ty_ctx.primitive_type(Primitive::Bool),
+            Unit => self.ty_ctx.primitive_type(Primitive::Unit),
         };
 
         TypedExpr {
@@ -662,7 +662,7 @@ impl TypedAST {
             }
         } else if !self
             .ty_ctx
-            .is_type_eq(self.ty_ctx.singleton_type(Primitive::Unit), then_expr.typ)
+            .is_type_eq(self.ty_ctx.primitive_type(Primitive::Unit), then_expr.typ)
         {
             panic!("if expression without false branch must be unit type");
         }
@@ -771,7 +771,7 @@ impl TypedAST {
         }
 
         let ret_typ = match op {
-            Not => self.ty_ctx.singleton_type(Primitive::Bool),
+            Not => self.ty_ctx.primitive_type(Primitive::Bool),
             Positive | Negative => expr.typ,
         };
 
@@ -859,16 +859,16 @@ impl TypedAST {
     fn determine_promoted_type(&self, t1: TypeRef, t2: TypeRef) -> TypeRef {
         match (
             self.ty_ctx
-                .is_type_eq(t1, self.ty_ctx.singleton_type(Primitive::Float64)),
+                .is_type_eq(t1, self.ty_ctx.primitive_type(Primitive::Float64)),
             self.ty_ctx
-                .is_type_eq(t1, self.ty_ctx.singleton_type(Primitive::Int32)),
+                .is_type_eq(t1, self.ty_ctx.primitive_type(Primitive::Int32)),
             self.ty_ctx
-                .is_type_eq(t2, self.ty_ctx.singleton_type(Primitive::Float64)),
+                .is_type_eq(t2, self.ty_ctx.primitive_type(Primitive::Float64)),
             self.ty_ctx
-                .is_type_eq(t2, self.ty_ctx.singleton_type(Primitive::Int32)),
+                .is_type_eq(t2, self.ty_ctx.primitive_type(Primitive::Int32)),
         ) {
-            (true, _, _, _) | (_, _, true, _) => self.ty_ctx.singleton_type(Primitive::Float64),
-            (_, true, _, true) => self.ty_ctx.singleton_type(Primitive::Int32),
+            (true, _, _, _) | (_, _, true, _) => self.ty_ctx.primitive_type(Primitive::Float64),
+            (_, true, _, true) => self.ty_ctx.primitive_type(Primitive::Int32),
             _ => panic!("unable to determine promote type"),
         }
     }
@@ -905,9 +905,9 @@ impl TypedAST {
         }
 
         let ret_typ = match op {
-            Or | And => self.ty_ctx.singleton_type(Primitive::Bool),
-            Eq | Ne => self.ty_ctx.singleton_type(Primitive::Bool),
-            Le | Ge | Lt | Gt => self.ty_ctx.singleton_type(Primitive::Bool),
+            Or | And => self.ty_ctx.primitive_type(Primitive::Bool),
+            Eq | Ne => self.ty_ctx.primitive_type(Primitive::Bool),
+            Le | Ge | Lt | Gt => self.ty_ctx.primitive_type(Primitive::Bool),
             Plus | Sub | Mul | Div | Mod => self.determine_promoted_type(left.typ, right.typ),
         };
 
@@ -1012,7 +1012,7 @@ impl TypedAST {
             .as_ref()
             .map(|expr| self.check_type_of_expr(expr));
         let typ = typed_expr.as_ref().map_or_else(
-            || self.ty_ctx.singleton_type(Primitive::Unit),
+            || self.ty_ctx.primitive_type(Primitive::Unit),
             |expr| expr.typ,
         );
 
@@ -1130,9 +1130,9 @@ impl TypedAST {
     }
 
     fn create_library_function_signature(&mut self) {
-        let unit = self.ty_ctx.singleton_type(Primitive::Unit);
-        let object = self.ty_ctx.singleton_type(Primitive::Object);
-        let string = self.ty_ctx.singleton_type(Primitive::Str);
+        let unit = self.ty_ctx.primitive_type(Primitive::Unit);
+        let object = self.ty_ctx.primitive_type(Primitive::Object);
+        let string = self.ty_ctx.primitive_type(Primitive::Str);
         let arr_of_str = self.ty_ctx.array_type(string);
 
         declare_library_function!(self.name_ctx, self.ty_ctx; std.io.print: |object| => unit);

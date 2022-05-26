@@ -8,7 +8,7 @@ use inkwell::types::StructType;
 use inkwell::values::FunctionValue;
 use paste::paste;
 
-use crate::midend::type_context::Primitive;
+use crate::common::type_context::Primitive;
 
 macro_rules! runtime_function {
     ($fn_name:ident, $lf: lifetime) => {
@@ -62,6 +62,33 @@ macro_rules! runtime_type_getter {
     };
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum RuntimeType {
+    Object,
+    Str,
+    Bool,
+    Int32,
+    Unit,
+    Float64,
+    CInt32,
+    Array,
+    Closure,
+}
+
+impl From<Primitive> for RuntimeType {
+    fn from(prim: Primitive) -> Self {
+        match prim {
+            Primitive::Object => Self::Object,
+            Primitive::Unit => Self::Unit,
+            Primitive::Str => Self::Str,
+            Primitive::Bool => Self::Bool,
+            Primitive::Int32 => Self::Int32,
+            Primitive::Float64 => Self::Float64,
+            Primitive::CInt32 => Self::CInt32,
+        }
+    }
+}
+
 pub trait CoreLibrary<'ctx> {
     runtime_function!(panic, 'ctx);
     runtime_function!(entry_panic_block, 'ctx);
@@ -90,10 +117,13 @@ pub trait CoreLibrary<'ctx> {
     runtime_type!(_Unit, 'ctx);
     runtime_type!(_Tuple, 'ctx);
     runtime_type!(_Int32, 'ctx);
+    runtime_type!(_Float64, 'ctx);
     runtime_type!(_String, 'ctx);
     runtime_type!(_Enum, 'ctx);
+    runtime_type!(_Array, 'ctx);
+    runtime_type!(_Closure, 'ctx);
 
-    fn get_calocom_type(&self, ty: Primitive) -> BasicTypeEnum<'ctx>;
+    fn get_calocom_type(&self, ty: RuntimeType) -> BasicTypeEnum<'ctx>;
     fn link_calocom_runtime_module(&mut self, path: &Path);
 }
 
@@ -125,18 +155,24 @@ impl<'ctx> CoreLibrary<'ctx> for Module<'ctx> {
     runtime_type_getter!(_Unit, 'ctx);
     runtime_type_getter!(_Tuple, 'ctx);
     runtime_type_getter!(_Int32, 'ctx);
+    runtime_type_getter!(_Float64, 'ctx);
     runtime_type_getter!(_String, 'ctx);
     runtime_type_getter!(_Enum, 'ctx);
+    runtime_type_getter!(_Array, 'ctx);
+    runtime_type_getter!(_Closure, 'ctx);
 
-    fn get_calocom_type(&self, ty: Primitive) -> BasicTypeEnum<'ctx> {
+    fn get_calocom_type(&self, ty: RuntimeType) -> BasicTypeEnum<'ctx> {
         let context = unsafe { &*(&*self.get_context() as *const Context) };
         match ty {
-            Primitive::Object => self.get_runtime_type__Object().into(),
-            Primitive::Str => self.get_runtime_type__String().into(),
-            Primitive::Bool => self.get_runtime_type__Int32().into(),
-            Primitive::Int32 => self.get_runtime_type__Int32().into(),
-            Primitive::Unit => self.get_runtime_type__Unit().into(),
-            Primitive::CInt32 => context.i32_type().into(),
+            RuntimeType::Object => self.get_runtime_type__Object().into(),
+            RuntimeType::Str => self.get_runtime_type__String().into(),
+            RuntimeType::Bool => self.get_runtime_type__Int32().into(),
+            RuntimeType::Int32 => self.get_runtime_type__Int32().into(),
+            RuntimeType::Unit => self.get_runtime_type__Unit().into(),
+            RuntimeType::Float64 => self.get_runtime_type__Float64().into(),
+            RuntimeType::CInt32 => context.i32_type().into(),
+            RuntimeType::Array => self.get_runtime_type__Array().into(),
+            RuntimeType::Closure => self.get_runtime_type__Closure().into(),
         }
     }
 

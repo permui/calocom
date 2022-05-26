@@ -451,14 +451,14 @@ impl<'a> FunctionBuilder<'a> {
         // this is the test result of equality of induction variable and termination value
         let cond_check_var = self.create_variable(
             Some("for.cond.check"),
-            self.ty_ctx.singleton_type(Primitive::Bool),
+            self.ty_ctx.primitive_type(Primitive::Bool),
             VariableKind::TemporaryVariable,
         );
 
         self.insert_stmt_at_position(Stmt {
             left: Some(cond_check_var),
             right: Some(Value {
-                typ: self.ty_ctx.singleton_type(Primitive::Bool),
+                typ: self.ty_ctx.primitive_type(Primitive::Bool),
                 val: ValueEnum::BinaryOp(
                     BinOp::Eq,
                     self.build_operand_from_var_def(ind_var),
@@ -481,7 +481,7 @@ impl<'a> FunctionBuilder<'a> {
         self.insert_stmt_at_position(Stmt {
             left: Some(ind_var),
             right: Some(Value {
-                typ: self.ty_ctx.singleton_type(Primitive::Bool),
+                typ: self.ty_ctx.primitive_type(Primitive::Bool),
                 val: ValueEnum::BinaryOp(
                     BinOp::Plus,
                     self.build_operand_from_imm(1),
@@ -695,7 +695,7 @@ impl<'a> FunctionBuilder<'a> {
 
         let closure_object = def.create_variable_definition_with_name(
             "closure.self".to_string(),
-            self.ty_ctx.singleton_type(Primitive::Object),
+            self.ty_ctx.primitive_type(Primitive::Object),
             VariableKind::Parameter,
         );
 
@@ -958,7 +958,7 @@ impl<'a> FunctionBuilder<'a> {
                 Literal(x) => {
                     let cmp_res = self.create_variable(
                         Some("str.cmp"),
-                        self.ty_ctx.singleton_type(Primitive::CInt32),
+                        self.ty_ctx.primitive_type(Primitive::CInt32),
                         VariableKind::TemporaryVariable,
                     );
 
@@ -966,7 +966,7 @@ impl<'a> FunctionBuilder<'a> {
                     self.insert_stmt_at_position(Stmt {
                         left: Some(cmp_res),
                         right: Some(Value {
-                            typ: self.ty_ctx.singleton_type(Primitive::CInt32),
+                            typ: self.ty_ctx.primitive_type(Primitive::CInt32),
                             val: ValueEnum::Intrinsic(
                                 "cmp-str-eq",
                                 vec![matched.clone(), self.build_operand_from_literal(x.clone())],
@@ -1045,14 +1045,14 @@ impl<'a> FunctionBuilder<'a> {
 
         let unboxed_integer = self.create_variable(
             Some("int"),
-            self.ty_ctx.singleton_type(Primitive::CInt32),
+            self.ty_ctx.primitive_type(Primitive::CInt32),
             VariableKind::RawVariable,
         );
 
         self.insert_stmt_at_position(Stmt {
             left: Some(unboxed_integer),
             right: Some(Value {
-                typ: self.ty_ctx.singleton_type(Primitive::CInt32),
+                typ: self.ty_ctx.primitive_type(Primitive::CInt32),
                 val: ValueEnum::Intrinsic("unbox-i32", vec![matched.clone()]),
             }),
             note: "load a i32 value",
@@ -1152,14 +1152,14 @@ impl<'a> FunctionBuilder<'a> {
 
                 let tag_var = self.create_variable(
                     Some("tag"),
-                    self.ty_ctx.singleton_type(Primitive::CInt32),
+                    self.ty_ctx.primitive_type(Primitive::CInt32),
                     VariableKind::RawVariable,
                 );
 
                 self.insert_stmt_at_position(Stmt {
                     left: Some(tag_var),
                     right: Some(Value {
-                        typ: self.ty_ctx.singleton_type(Primitive::CInt32),
+                        typ: self.ty_ctx.primitive_type(Primitive::CInt32),
                         val: ValueEnum::ExtractEnumTag(matched.clone()),
                     }),
                     note: "extract the tag from the enum",
@@ -1167,14 +1167,14 @@ impl<'a> FunctionBuilder<'a> {
 
                 let cmp_var = self.create_variable(
                     Some("cmp.ci32"),
-                    self.ty_ctx.singleton_type(Primitive::CInt32),
+                    self.ty_ctx.primitive_type(Primitive::CInt32),
                     VariableKind::RawVariable,
                 );
 
                 self.insert_stmt_at_position(Stmt {
                     left: Some(cmp_var),
                     right: Some(Value {
-                        typ: self.ty_ctx.singleton_type(Primitive::CInt32),
+                        typ: self.ty_ctx.primitive_type(Primitive::CInt32),
                         val: ValueEnum::Intrinsic(
                             "cmp-ci32-eq",
                             vec![
@@ -1212,7 +1212,7 @@ impl<'a> FunctionBuilder<'a> {
                     .map(|_| {
                         self.create_variable(
                             Some("check.inner.res"),
-                            self.ty_ctx.singleton_type(Primitive::CInt32),
+                            self.ty_ctx.primitive_type(Primitive::CInt32),
                             VariableKind::RawVariable,
                         )
                     })
@@ -1256,7 +1256,7 @@ impl<'a> FunctionBuilder<'a> {
                 self.insert_stmt_at_position(Stmt {
                     left: Some(check_status),
                     right: Some(Value {
-                        typ: self.ty_ctx.singleton_type(Primitive::CInt32),
+                        typ: self.ty_ctx.primitive_type(Primitive::CInt32),
                         val: ValueEnum::CombineByFoldWithAnd1(check_inner_result),
                     }),
                     note: "combine multiple conditions into one",
@@ -1267,7 +1267,7 @@ impl<'a> FunctionBuilder<'a> {
                 self.insert_stmt_at_position(Stmt {
                     left: Some(check_status),
                     right: Some(Value {
-                        typ: self.ty_ctx.singleton_type(Primitive::CInt32),
+                        typ: self.ty_ctx.primitive_type(Primitive::CInt32),
                         val: ValueEnum::Operand(self.build_operand_from_imm(0)),
                     }),
                     note: "check not passed",
@@ -1286,7 +1286,7 @@ impl<'a> FunctionBuilder<'a> {
                     .map(|_| {
                         self.create_variable(
                             Some("check.field.res"),
-                            self.ty_ctx.singleton_type(Primitive::CInt32),
+                            self.ty_ctx.primitive_type(Primitive::CInt32),
                             VariableKind::RawVariable,
                         )
                     })
@@ -1330,7 +1330,7 @@ impl<'a> FunctionBuilder<'a> {
                 self.insert_stmt_at_position(Stmt {
                     left: Some(check_status),
                     right: Some(Value {
-                        typ: self.ty_ctx.singleton_type(Primitive::CInt32),
+                        typ: self.ty_ctx.primitive_type(Primitive::CInt32),
                         val: ValueEnum::CombineByFoldWithAnd1(check_field_result),
                     }),
                     note: "combine multiple conditions into one",
@@ -1341,14 +1341,14 @@ impl<'a> FunctionBuilder<'a> {
             Literal(lit) => {
                 let result = self.create_variable(
                     Some("match.lit.cmp.res"),
-                    self.ty_ctx.singleton_type(Primitive::Bool),
+                    self.ty_ctx.primitive_type(Primitive::Bool),
                     VariableKind::TemporaryVariable,
                 );
 
                 self.insert_stmt_at_position(Stmt {
                     left: Some(result),
                     right: Some(Value {
-                        typ: self.ty_ctx.singleton_type(Primitive::Bool),
+                        typ: self.ty_ctx.primitive_type(Primitive::Bool),
                         val: ValueEnum::BinaryOp(
                             BinOp::Eq,
                             matched,
@@ -1361,7 +1361,7 @@ impl<'a> FunctionBuilder<'a> {
                 self.insert_stmt_at_position(Stmt {
                     left: Some(check_status),
                     right: Some(Value {
-                        typ: self.ty_ctx.singleton_type(Primitive::CInt32),
+                        typ: self.ty_ctx.primitive_type(Primitive::CInt32),
                         val: ValueEnum::Intrinsic(
                             "unbox-bool",
                             vec![self.build_operand_from_var_def(result)],
@@ -1380,7 +1380,7 @@ impl<'a> FunctionBuilder<'a> {
                 self.insert_stmt_at_position(Stmt {
                     left: Some(check_status),
                     right: Some(Value {
-                        typ: self.ty_ctx.singleton_type(Primitive::CInt32),
+                        typ: self.ty_ctx.primitive_type(Primitive::CInt32),
                         val: ValueEnum::Operand(self.build_operand_from_imm(1)),
                     }),
                     note: "check passed",
@@ -1390,7 +1390,7 @@ impl<'a> FunctionBuilder<'a> {
                 self.insert_stmt_at_position(Stmt {
                     left: Some(check_status),
                     right: Some(Value {
-                        typ: self.ty_ctx.singleton_type(Primitive::CInt32),
+                        typ: self.ty_ctx.primitive_type(Primitive::CInt32),
                         val: ValueEnum::Operand(self.build_operand_from_imm(1)),
                     }),
                     note: "check passed",
@@ -1411,7 +1411,7 @@ impl<'a> FunctionBuilder<'a> {
         for (pat, expr) in arms.iter() {
             let check = self.create_variable(
                 Some("match.check.arm"),
-                self.ty_ctx.singleton_type(Primitive::CInt32),
+                self.ty_ctx.primitive_type(Primitive::CInt32),
                 VariableKind::TemporaryVariable,
             );
 
@@ -1514,7 +1514,7 @@ impl<'a> FunctionBuilder<'a> {
         self.position = Some(cond_block);
         let cond_check_var = self.create_variable(
             Some("if.cond.check"),
-            self.ty_ctx.singleton_type(Primitive::Bool),
+            self.ty_ctx.primitive_type(Primitive::Bool),
             VariableKind::TemporaryVariable,
         );
 
@@ -1817,11 +1817,11 @@ impl<'a> FunctionBuilder<'a> {
 
     fn build_operand_from_literal(&self, literal: Literal) -> Operand {
         let typ = match literal {
-            Literal::Float(_) => self.ty_ctx.singleton_type(Primitive::Float64),
-            Literal::Int(_) => self.ty_ctx.singleton_type(Primitive::Int32),
-            Literal::Str(_) => self.ty_ctx.singleton_type(Primitive::Str),
-            Literal::Bool(_) => self.ty_ctx.singleton_type(Primitive::Bool),
-            Literal::Unit => self.ty_ctx.singleton_type(Primitive::Unit),
+            Literal::Float(_) => self.ty_ctx.primitive_type(Primitive::Float64),
+            Literal::Int(_) => self.ty_ctx.primitive_type(Primitive::Int32),
+            Literal::Str(_) => self.ty_ctx.primitive_type(Primitive::Str),
+            Literal::Bool(_) => self.ty_ctx.primitive_type(Primitive::Bool),
+            Literal::Unit => self.ty_ctx.primitive_type(Primitive::Unit),
         };
         Operand {
             typ,
@@ -1831,7 +1831,7 @@ impl<'a> FunctionBuilder<'a> {
 
     fn build_operand_from_imm(&self, imm: i32) -> Operand {
         Operand {
-            typ: self.ty_ctx.singleton_type(Primitive::CInt32),
+            typ: self.ty_ctx.primitive_type(Primitive::CInt32),
             val: Box::new(OperandEnum::Imm(imm)),
         }
     }
@@ -1840,7 +1840,7 @@ impl<'a> FunctionBuilder<'a> {
         self.build_expr_and_assign_to(
             &TypedExpr {
                 expr: Box::new(ExprEnum::Lit(Literal::Unit)),
-                typ: self.ty_ctx.singleton_type(Primitive::Unit),
+                typ: self.ty_ctx.primitive_type(Primitive::Unit),
             },
             Some(output_var),
         );
