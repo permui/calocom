@@ -1,8 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::vec;
 
-use crate::common::type_context::*;
-
 use inkwell::context::Context;
 use inkwell::module::Module;
 use inkwell::types::{BasicMetadataTypeEnum, BasicType, BasicTypeEnum, FunctionType};
@@ -10,6 +8,7 @@ use inkwell::AddressSpace;
 use strum::IntoEnumIterator;
 
 use super::runtime::{CoreLibrary, RuntimeType};
+use crate::common::type_context::*;
 
 pub struct MemoryLayoutContext<'ctx> {
     ty_ctx: TypeContext,
@@ -113,6 +112,7 @@ impl<'ctx> MemoryLayoutContext<'ctx> {
                         .unwrap()
                         .ptr_type(AddressSpace::Generic)
                         .as_basic_type_enum();
+
                     self.type_llvm_type_map
                         .get_mut(&ty_ref)
                         .unwrap()
@@ -140,12 +140,27 @@ impl<'ctx> MemoryLayoutContext<'ctx> {
                                 .into()
                         })
                         .collect();
-                    
-                    let fn_type = self
+
+                    let fn_ptr_type = self
                         .type_llvm_type_map
                         .get(ret_type)
                         .unwrap()
-                        .fn_type(&params_type, false);
+                        .ptr_type(AddressSpace::Generic)
+                        .fn_type(&params_type, false)
+                        .ptr_type(AddressSpace::Generic)
+                        .as_basic_type_enum();
+
+                    self.type_llvm_type_map
+                        .get_mut(&ty_ref)
+                        .unwrap()
+                        .into_struct_type()
+                        .set_body(
+                            &[
+                                self.llvm_module.get_calocom_type(RuntimeType::Closure),
+                                fn_ptr_type,
+                            ],
+                            true,
+                        );
                 }
                 _ => {}
             }
