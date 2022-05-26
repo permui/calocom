@@ -1141,7 +1141,6 @@ impl<'a> FunctionBuilder<'a> {
         pat: &TypedASTComplexPattern,
         check_status: VarDefRef,
     ) {
-        use crate::ast::Literal::*;
         use TypedASTComplexPattern::*;
 
         match pat {
