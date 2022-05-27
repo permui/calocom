@@ -130,7 +130,7 @@ impl<'ctx> MemoryLayoutContext<'ctx> {
                     ret_type,
                     parameters,
                 } if matches!(kind, CallKind::ClosureValue) => {
-                    let params_type: Vec<_> = parameters
+                    let mut params_type: Vec<_> = parameters
                         .iter()
                         .map(|param| {
                             self.type_llvm_type_map
@@ -140,6 +140,15 @@ impl<'ctx> MemoryLayoutContext<'ctx> {
                                 .into()
                         })
                         .collect();
+
+                    params_type.insert(
+                        0,
+                        self.llvm_module
+                            .get_calocom_type(RuntimeType::Closure)
+                            .ptr_type(AddressSpace::Generic)
+                            .as_basic_type_enum()
+                            .into(),
+                    );
 
                     let fn_ptr_type = self
                         .type_llvm_type_map
