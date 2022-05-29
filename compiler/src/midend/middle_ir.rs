@@ -85,7 +85,7 @@ pub struct Stmt {
 
 #[derive(Debug, Clone)]
 pub enum Terminator {
-    Select(Operand, Vec<(usize, BlockRef)>, BlockRef),
+    Select(VarDefRef, Vec<(usize, BlockRef)>, BlockRef),
     Branch(Operand, BlockRef, BlockRef),
     Jump(BlockRef),
     Return,
@@ -1062,7 +1062,7 @@ impl<'a> FunctionBuilder<'a> {
         let mut choices = vec![];
         let last_block = self.position.unwrap();
         let old_terminator = self.change_terminator_at_position(Terminator::Select(
-            self.build_operand_from_var_def(unboxed_integer),
+            unboxed_integer,
             vec![],
             self.func.panic_block,
         ));
@@ -1125,11 +1125,10 @@ impl<'a> FunctionBuilder<'a> {
             }
         }
 
-        let operand = self.build_operand_from_var_def(unboxed_integer);
         let other_position = terminator_other.unwrap_or(self.func.panic_block);
         self.position = Some(last_block);
         let term = self.get_terminator_at_position();
-        *term = Terminator::Select(operand, choices, other_position);
+        *term = Terminator::Select(unboxed_integer, choices, other_position);
 
         self.position = Some(end_block);
         self.build_operand_from_var_def(out)
@@ -2098,7 +2097,7 @@ impl Dump for (&TypeContext, &FuncDef, &Terminator) {
         let mut s = "".to_string();
         match term {
             Terminator::Select(val, targets, other) => {
-                write!(s, "select {} [", (*ty_ctx, *func, val).dump_string()).unwrap();
+                write!(s, "select {} [", (*func, *val).dump_string()).unwrap();
                 for (idx, target) in targets.iter().enumerate() {
                     if idx != 0 {
                         write!(s, ", ").unwrap();
