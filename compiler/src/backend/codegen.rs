@@ -84,7 +84,8 @@ impl<'ctx> CodeGen<'ctx> {
             &self.builder,
             &self.current_function.as_ref().unwrap().alloca_block,
         );
-        for (var_ref, var) in slots {
+        for var_ref in variables.iter().copied() {
+            let var = slots.get(var_ref).unwrap();
             let typ = self.memory_layout_ctx.get_llvm_type(var.typ);
             let stack_slot = self.builder.build_alloca(
                 if need_extra_ptr {
@@ -159,9 +160,9 @@ impl<'ctx> CodeGen<'ctx> {
             obj_reference,
             unwrapped,
             return_value,
-            entry_block,
-            return_block,
-            panic_block,
+            entry_block: _,
+            return_block: _,
+            panic_block: _,
         } = mir_func;
 
         let mem_ctx = &self.memory_layout_ctx;

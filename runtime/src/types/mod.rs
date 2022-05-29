@@ -3,10 +3,12 @@ use libc::c_void;
 use libc::uintptr_t;
 
 mod enumeration;
+mod float;
 mod int;
 mod tuple;
 
 pub use enumeration::*;
+pub use float::*;
 pub use int::*;
 pub use tuple::*;
 
@@ -46,9 +48,15 @@ pub struct _Int32 {
 }
 
 #[repr(C, packed)]
+pub struct _Float64 {
+    pub header: _Object,
+    pub data: f64,
+}
+
+#[repr(C, packed)]
 pub struct _Tuple {
     pub header: _Object,
-    pub data: [*mut c_void; 0],
+    pub data: [*mut _Object; 0],
 }
 
 #[repr(C, packed)]

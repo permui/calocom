@@ -11,8 +11,7 @@ pub extern "C" fn alloc(size: size_t) -> *mut c_void {
     unsafe {
         let ptr = calloc(1, size);
         if ptr.is_null() {
-            let fmt = const_cstr!("allocator returns a null pointer");
-            panic(fmt.as_ptr());
+            panic((const_cstr!("allocator returns a null pointer")).as_ptr());
         }
         ptr
     }
@@ -41,8 +40,7 @@ pub extern "C" fn alloc_unit() -> *mut _Unit {
 pub extern "C" fn alloc_string(length: size_t) -> *mut _String {
     unsafe {
         if length > u32::MAX as size_t {
-            let fmt = const_cstr!("string length exceeded");
-            panic(fmt.as_ptr());
+            panic(const_cstr!("string length exceeded").as_ptr());
         };
         // length size + string length + trailing zero size
         let mem = alloc(length + 1 + ::core::mem::size_of::<_String>()) as *mut _String;
@@ -87,6 +85,26 @@ pub extern "C" fn alloc_i32_literal(i: i32) -> *mut _Int32 {
 }
 
 #[no_mangle]
+#[export_name = "__calocom_runtime_alloc_f64"]
+pub extern "C" fn alloc_f64() -> *mut _Float64 {
+    let mem = alloc(::core::mem::size_of::<_Float64>()) as *mut _Float64;
+    unsafe {
+        (*mem).header.tag = _ObjectType::Float64;
+    }
+    mem
+}
+
+#[no_mangle]
+#[export_name = "__calocom_runtime_alloc_f64_literal"]
+pub extern "C" fn alloc_f64_literal(i: f64) -> *mut _Float64 {
+    let mem = alloc_f64();
+    unsafe {
+        (*mem).data = i;
+    }
+    mem
+}
+
+#[no_mangle]
 #[export_name = "__calocom_runtime_alloc_bool"]
 pub extern "C" fn alloc_bool() -> *mut _Int32 {
     let mem = alloc(::core::mem::size_of::<_Int32>()) as *mut _Int32;
@@ -112,12 +130,11 @@ pub extern "C" fn alloc_tuple(n: size_t) -> *mut _Tuple {
     let mem = alloc(::core::mem::size_of::<_Tuple>() + n * ::core::mem::size_of::<*mut c_void>())
         as *mut _Tuple;
     unsafe {
-        if n > u16::MAX as size_t {
-            let fmt = const_cstr!("the number of tuple fields exceeded");
-            panic(fmt.as_ptr());
+        if n > 8 as size_t {
+            panic(const_cstr!("the number of tuple fields exceeded 8").as_ptr());
         }
         (*mem).header.tag = _ObjectType::Tuple;
-        (*mem).header.reserved2 = n as u16;
+        (*mem).header.reserved1 = n as u8;
     }
     mem
 }

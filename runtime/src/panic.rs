@@ -14,8 +14,7 @@ pub unsafe extern "C" fn dummy(
     _i: *mut _Int32,
     _t: *mut _Tuple,
 ) -> ! {
-    let fmt = const_cstr!("this function should not be used");
-    panic(fmt.as_ptr())
+    panic(const_cstr!("this function should not be used").as_ptr())
 }
 
 /// # Safety
@@ -24,8 +23,7 @@ pub unsafe extern "C" fn dummy(
 #[no_mangle]
 #[export_name = "__calocom_runtime_entry_panic_block"]
 pub unsafe extern "C" fn entry_panic_block() -> ! {
-    let fmt = const_cstr!("panic: entry the panic basic block");
-    panic(fmt.as_ptr())
+    panic(const_cstr!("panic: entry the panic basic block").as_ptr())
 }
 
 /// # Safety
@@ -34,7 +32,6 @@ pub unsafe extern "C" fn entry_panic_block() -> ! {
 #[no_mangle]
 #[export_name = "__calocom_runtime_panic"]
 pub unsafe extern "C" fn panic(msg: *const c_char) -> ! {
-    let fmt = const_cstr!("calocom runtime panic: %s\n");
-    printf(fmt.as_ptr(), msg);
+    printf(const_cstr!("calocom runtime panic: %s\n").as_ptr(), msg);
     exit(1)
 }

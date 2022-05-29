@@ -24,8 +24,7 @@ pub unsafe extern "C" fn extract_enum_field(
     field_index: i32,
 ) -> *mut _Object {
     if (*e).discriminant != ctor_index as u32 {
-        let fmt = const_cstr!("the target enum doesn't carry the expected variant");
-        panic(fmt.as_ptr());
+        panic(const_cstr!("the target enum doesn't carry the expected variant").as_ptr());
     }
     let variant = (*e).variant as *mut _Tuple;
     extract_tuple_field(variant, field_index)
@@ -35,7 +34,7 @@ pub unsafe extern "C" fn extract_enum_field(
 ///
 /// This function should not be called directly by other crates
 #[export_name = "__calocom_runtime_construct_enum"]
-pub extern "C" fn construct(tag: i32, obj: *mut _Object) -> *mut _Enum {
+pub extern "C" fn construct_enum(tag: i32, obj: *mut _Object) -> *mut _Enum {
     let mem = alloc_enum();
     unsafe {
         (*mem).discriminant = tag as u32;

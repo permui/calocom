@@ -16,14 +16,11 @@ extern "C" fn eh_personality() {}
 #[cfg(not(test))]
 #[panic_handler]
 fn panic(_panic: &::core::panic::PanicInfo<'_>) -> ! {
-    unsafe {
-        let fmt = const_cstr!("");
-        panic::panic(fmt.as_ptr())
-    }
+    unsafe { panic::panic(const_cstr!("").as_ptr()) }
 }
 
 extern "C" {
-    #[link_name = "_CPF4mainRTCu"]
+    #[link_name = "TODO"]
     fn user_main() -> *mut types::_Unit;
 }
 

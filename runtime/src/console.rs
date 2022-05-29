@@ -2,7 +2,9 @@ use crate::panic::panic;
 use crate::types::*;
 use core::ptr::addr_of;
 use libc::c_char;
+use libc::c_int;
 use libc::printf;
+use libc::putchar;
 use libc::puts;
 
 /// # Safety
@@ -12,32 +14,56 @@ use libc::puts;
 pub unsafe fn print_object(p: *const _Object) {
     match (*p).tag {
         _ObjectType::Unit => {
-            let fmt = const_cstr!("()");
-            puts(fmt.as_ptr());
+            puts(const_cstr!("()").as_ptr());
         }
         _ObjectType::Str => {
             let s = p as *const _String;
-            let fmt = const_cstr!("%.*s");
-            printf(fmt.as_ptr(), (*s).len, addr_of!((*s).data) as *const c_char);
+            printf(
+                const_cstr!("%.*s").as_ptr(),
+                (*s).len,
+                addr_of!((*s).data) as *const c_char,
+            );
         }
         _ObjectType::Int32 => {
             let i = p as *const _Int32;
-            let fmt = const_cstr!("%d");
-            printf(fmt.as_ptr(), (*i).data);
+            printf(const_cstr!("%d").as_ptr(), (*i).data);
         }
         _ObjectType::Bool => {
             let i = p as *const _Int32;
-            let true_s = const_cstr!("true");
-            let false_s = const_cstr!("false");
-            puts(if (*i).data != 0 {
-                true_s.as_ptr()
+            printf(if (*i).data != 0 {
+                const_cstr!("true").as_ptr()
             } else {
-                false_s.as_ptr()
+                const_cstr!("false").as_ptr()
             });
         }
-        _ => {
-            let msg = const_cstr!("not supported type");
-            panic(msg.as_ptr());
+        _ObjectType::Reserved => {
+            printf(const_cstr!("<reserved>").as_ptr());
+        }
+        _ObjectType::Float64 => {
+            let f = p as *const _Float64;
+            printf(const_cstr!("%f").as_ptr(), (*f).data);
+        }
+        _ObjectType::Tuple => {
+            let t = p as *const _Tuple;
+            let len = (*t).header.reserved1 as usize;
+            printf(const_cstr!("(").as_ptr());
+            for i in 0..len {
+                if i != 0 {
+                    putchar(',' as c_int);
+                    putchar(' ' as c_int);
+                }
+                print_object((*t).data[i] as *const _Object);
+            }
+            printf(const_cstr!(")").as_ptr());
+        }
+        _ObjectType::Enum => {
+            printf(const_cstr!("<enum>").as_ptr());
+        }
+        _ObjectType::Closure => {
+            printf(const_cstr!("<closure>").as_ptr());
+        }
+        _ObjectType::Other => {
+            panic(const_cstr!("not supported type: other").as_ptr());
         }
     }
 }
