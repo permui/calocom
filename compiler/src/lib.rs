@@ -35,7 +35,6 @@ mod export_backend {
     pub use inkwell::OptimizationLevel;
     pub use std::ffi::OsStr;
     pub use std::path::Path;
-    use std::process::{Command, Output};
 }
 
 #[cfg(feature = "frontend")]
@@ -138,7 +137,9 @@ where
 }
 
 #[cfg(feature = "backend")]
-fn call_system_linker(input: &Path, output: &Path) -> Result<Output, String> {
+fn call_system_linker(input: &Path, output: &Path) -> Result<std::process::Output, String> {
+    use std::process::Command;
+
     if cfg!(target_os = "linux") {
         Command::new("cc")
             .args([input.as_os_str(), OsStr::new("-o"), output.as_os_str()])
@@ -191,7 +192,7 @@ pub fn compile_with_arguments(args: Args) -> Result<(), ()> {
 
     #[cfg(feature = "visualize")]
     if args.using_visualize {
-        match vis::generate_html(input_file) {
+        match vis::generate_html(&input_file) {
             Ok(_) => Ok(()),
             Err(_) => Err(()),
         }?;
@@ -238,8 +239,9 @@ pub fn compile_with_arguments(args: Args) -> Result<(), ()> {
     {
         let ctx = Context::create();
         let module_name = input_file.as_os_str().to_string_lossy();
-        let mut codegen = CodeGen::new(module_name.as_ref(), &ctx, &mir, args.runtime.as_path());
-        codegen.emit_all(&mir);
+        let module = ctx.create_module(module_name.as_ref());
+        let codegen = CodeGen::new(&ctx, module, &mir, args.runtime.as_path());
+        //codegen.emit_all(&mir);
 
         Target::initialize_native(&InitializationConfig::default())
             .expect("Failed to initialize native target");
@@ -266,7 +268,7 @@ pub fn compile_with_arguments(args: Args) -> Result<(), ()> {
             .unwrap();
 
         run_new_passes(
-            &codegen.module,
+            codegen.module(),
             &target_machine,
             args.level,
             args.llvm_pass_debug,
@@ -274,7 +276,7 @@ pub fn compile_with_arguments(args: Args) -> Result<(), ()> {
 
         check_flag_and_do(&mut output_kinds, OutputType::LLVMBitcode, || {
             let output_file = output_file.with_extension("bc");
-            codegen.module.write_bitcode_to_path(&output_file);
+            codegen.module().write_bitcode_to_path(&output_file);
             println!(
                 "{} Write llvm bitcode into {:?}",
                 "::".green(),
@@ -284,7 +286,7 @@ pub fn compile_with_arguments(args: Args) -> Result<(), ()> {
 
         check_flag_and_do(&mut output_kinds, OutputType::LLVMAsm, || {
             let output_file = output_file.with_extension("ll");
-            codegen.module.print_to_file(&output_file).unwrap();
+            codegen.module().print_to_file(&output_file).unwrap();
             println!(
                 "{} Write llvm assembly into {:?}",
                 "::".green(),
@@ -295,7 +297,7 @@ pub fn compile_with_arguments(args: Args) -> Result<(), ()> {
         check_flag_and_do(&mut output_kinds, OutputType::Asm, || {
             let output_file = output_file.with_extension("s");
             target_machine
-                .write_to_file(&codegen.module, FileType::Assembly, &output_file)
+                .write_to_file(codegen.module(), FileType::Assembly, &output_file)
                 .unwrap();
             println!(
                 "{} Write native assembly into {:?}",
@@ -308,7 +310,7 @@ pub fn compile_with_arguments(args: Args) -> Result<(), ()> {
         check_flag_and_do(&mut output_kinds, OutputType::Obj, || {
             let output_file = output_file.with_extension("o");
             target_machine
-                .write_to_file(&codegen.module, FileType::Object, &output_file)
+                .write_to_file(codegen.module(), FileType::Object, &output_file)
                 .unwrap();
             println!(
                 "{} Write object file into {:?}",
@@ -322,7 +324,7 @@ pub fn compile_with_arguments(args: Args) -> Result<(), ()> {
             let output_file = output_file.with_extension("o");
             if !has_object {
                 target_machine
-                    .write_to_file(&codegen.module, FileType::Object, &output_file)
+                    .write_to_file(codegen.module(), FileType::Object, &output_file)
                     .unwrap();
                 println!(
                     "{} Write object file into {:?}",
@@ -343,7 +345,7 @@ pub fn compile_with_arguments(args: Args) -> Result<(), ()> {
                 println!("{} {:?}", "::".red(), err.as_str());
                 Err(())
             };
-            let handle_output = |out: Output| -> Result<(), ()> {
+            let handle_output = |out: std::process::Output| -> Result<(), ()> {
                 if out.status.success() {
                     println!("{} Try to link the object file", "::".green());
                 } else {

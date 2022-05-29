@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use std::rc::Rc;
 use std::vec;
 
 use inkwell::context::Context;
@@ -14,7 +15,7 @@ pub struct MemoryLayoutContext<'ctx> {
     ty_ctx: TypeContext,
     type_name_map: HashMap<TypeRef, String>,
     llvm_ctx: &'ctx Context,
-    llvm_module: &'ctx Module<'ctx>,
+    llvm_module: Rc<Module<'ctx>>,
     type_llvm_type_map: HashMap<TypeRef, BasicTypeEnum<'ctx>>,
 }
 
@@ -24,11 +25,6 @@ impl<'ctx> MemoryLayoutContext<'ctx> {
     }
 
     fn initialize(&mut self) {
-        let i64_t = self.llvm_ctx.i64_type();
-        let i32_t = self.llvm_ctx.i32_type();
-        let i16_t = self.llvm_ctx.i16_type();
-        let i8_t = self.llvm_ctx.i8_type();
-        let i8_0_t = self.llvm_ctx.i8_type().array_type(0);
         let i8_p_t = self.llvm_ctx.i8_type().ptr_type(AddressSpace::Generic);
 
         for prim in Primitive::iter() {
@@ -52,8 +48,8 @@ impl<'ctx> MemoryLayoutContext<'ctx> {
                 }
                 Type::Callable {
                     kind,
-                    ret_type,
-                    parameters,
+                    ret_type: _,
+                    parameters: _,
                 } if !matches!(kind, CallKind::ClosureValue) => {
                     // do not generate opaque struct type callable type
                     // (kind: function, constructor) because they
@@ -78,7 +74,7 @@ impl<'ctx> MemoryLayoutContext<'ctx> {
                 Type::Tuple { fields: x } => {
                     let mut fields = vec![object_t.as_basic_type_enum()];
                     for ty in x.iter() {
-                        let llvm_type = self.type_llvm_type_map.get(&ty).unwrap();
+                        let llvm_type = self.type_llvm_type_map.get(ty).unwrap();
                         let field_ty = llvm_type
                             .ptr_type(AddressSpace::Generic)
                             .as_basic_type_enum();
@@ -90,7 +86,7 @@ impl<'ctx> MemoryLayoutContext<'ctx> {
                         .into_struct_type()
                         .set_body(&fields[..], true);
                 }
-                Type::Enum { name, ctors } => {
+                Type::Enum { .. } => {
                     self.type_llvm_type_map
                         .get_mut(&ty_ref)
                         .unwrap()
@@ -134,7 +130,7 @@ impl<'ctx> MemoryLayoutContext<'ctx> {
                         .iter()
                         .map(|param| {
                             self.type_llvm_type_map
-                                .get(ret_type)
+                                .get(param)
                                 .unwrap()
                                 .ptr_type(AddressSpace::Generic)
                                 .into()
@@ -179,8 +175,7 @@ impl<'ctx> MemoryLayoutContext<'ctx> {
     pub fn new(
         ty_ctx: TypeContext,
         llvm_ctx: &'ctx Context,
-        llvm_module: &'ctx Module<'ctx>,
-        calocom_types: &[BasicTypeEnum<'ctx>],
+        llvm_module: Rc<Module<'ctx>>,
     ) -> Self {
         let (ty_ctx, type_name_map) = ty_ctx.get_display_name_map();
         let mut ctx = MemoryLayoutContext {
@@ -195,7 +190,7 @@ impl<'ctx> MemoryLayoutContext<'ctx> {
     }
 
     pub fn get_llvm_type(&self, typ: TypeRef) -> BasicTypeEnum<'ctx> {
-        self.type_llvm_type_map.get(&typ).unwrap().clone()
+        *self.type_llvm_type_map.get(&typ).unwrap()
     }
 
     pub fn get_mir_type(&self, typ: TypeRef) -> Type {

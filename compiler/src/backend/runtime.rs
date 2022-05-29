@@ -124,7 +124,7 @@ pub trait CoreLibrary<'ctx> {
     runtime_type!(_Closure, 'ctx);
 
     fn get_calocom_type(&self, ty: RuntimeType) -> BasicTypeEnum<'ctx>;
-    fn link_calocom_runtime_module(&mut self, path: &Path);
+    fn link_calocom_runtime_module(&self, path: &Path);
 }
 
 impl<'ctx> CoreLibrary<'ctx> for Module<'ctx> {
@@ -176,7 +176,7 @@ impl<'ctx> CoreLibrary<'ctx> for Module<'ctx> {
         }
     }
 
-    fn link_calocom_runtime_module(&mut self, path: &Path) {
+    fn link_calocom_runtime_module(&self, path: &Path) {
         let memory_buffer = MemoryBuffer::create_from_file(path).expect("read runtime file failed");
         let context = unsafe { &*(&*self.get_context() as *const Context) };
         let runtime_module = context

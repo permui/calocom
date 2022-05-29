@@ -30,7 +30,7 @@ $(function() {
 </script>
 ";
 
-pub fn generate_html(path: PathBuf) -> Result<(), String> {
+pub fn generate_html(path: &PathBuf) -> Result<(), String> {
     let source = match fs::read_to_string(path) {
         Ok(res) => res,
         Err(info) => return Err(info.to_string()),

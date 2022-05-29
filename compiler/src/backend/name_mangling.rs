@@ -31,8 +31,8 @@ specialization     ::= 's' type-list
 context ::= name*   // Full restricted context
 context ::= '$'     // Current context
 
-polymorphic-function-name ::= '_CALOCOM_PF' context name function-signature
-specialized-function-name ::= '_CALOCOM_F'  context name generic-function-signature specialization
+polymorphic-function-name ::= '_CALOCOM_PF_' context name function-signature
+specialized-function-name ::= '_CALOCOM_F_'  context name generic-function-signature specialization
 */
 
 use crate::common::{
@@ -55,9 +55,19 @@ pub trait Mangling {
     fn get_mangled_type_list(&self, list: &[TypeRef]) -> String;
     fn get_mangled_type_name(&self, typ: TypeRef) -> String;
     fn get_mangled_context_name<T: AsRef<str>>(path: Option<&dyn ReferencePath<T>>) -> String;
+    fn get_mangled_polymorphic_function_name<T: AsRef<str> + Clone>(
+        &self,
+        full_path: &dyn ReferencePath<T>,
+        ret_type: TypeRef,
+        params: &[TypeRef],
+    ) -> String;
 }
 
 impl Mangling for TypeContext {
+    fn get_mangled_specialization(&self, list: &[TypeRef]) -> String {
+        format!("s{}", self.get_mangled_type_list(list))
+    }
+
     fn get_mangled_function_signature(&self, ret_type: TypeRef, params: &[TypeRef]) -> String {
         format!(
             "f{}{}",
@@ -148,7 +158,65 @@ impl Mangling for TypeContext {
         }
     }
 
+    fn get_mangled_polymorphic_function_name<T: AsRef<str> + Clone>(
+        &self,
+        full_path: &dyn ReferencePath<T>,
+        ret_type: TypeRef,
+        params: &[TypeRef],
+    ) -> String {
+        let context = full_path.prefix().unwrap();
+        format!(
+            "_CALOCOM_PF_{}{}{}",
+            TypeContext::get_mangled_context_name(if context.is_empty() {
+                None
+            } else {
+                Some(&context)
+            }),
+            full_path.base().as_ref(),
+            self.get_mangled_function_signature(ret_type, params)
+        )
+    }
+}
+
+impl<M> Mangling for &M
+where
+    M: Mangling,
+{
     fn get_mangled_specialization(&self, list: &[TypeRef]) -> String {
-        format!("s{}", self.get_mangled_type_list(list))
+        (*self).get_mangled_specialization(list)
+    }
+
+    fn get_mangled_function_signature(&self, ret_type: TypeRef, params: &[TypeRef]) -> String {
+        (*self).get_mangled_function_signature(ret_type, params)
+    }
+
+    fn get_mangled_generic_function_signature(
+        &self,
+        ret_type: TypeRef,
+        params: &[TypeRef],
+        generic_params: usize,
+    ) -> String {
+        (*self).get_mangled_generic_function_signature(ret_type, params, generic_params)
+    }
+
+    fn get_mangled_type_list(&self, list: &[TypeRef]) -> String {
+        (*self).get_mangled_type_list(list)
+    }
+
+    fn get_mangled_type_name(&self, typ: TypeRef) -> String {
+        (*self).get_mangled_type_name(typ)
+    }
+
+    fn get_mangled_context_name<T: AsRef<str>>(path: Option<&dyn ReferencePath<T>>) -> String {
+        M::get_mangled_context_name(path)
+    }
+
+    fn get_mangled_polymorphic_function_name<T: AsRef<str> + Clone>(
+        &self,
+        full_path: &dyn ReferencePath<T>,
+        ret_type: TypeRef,
+        params: &[TypeRef],
+    ) -> String {
+        (*self).get_mangled_polymorphic_function_name(full_path, ret_type, params)
     }
 }
