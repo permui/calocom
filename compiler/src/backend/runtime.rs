@@ -104,6 +104,8 @@ pub trait CoreLibrary<'ctx> {
     runtime_function!(alloc_i32_literal, 'ctx);
     runtime_function!(alloc_bool, 'ctx);
     runtime_function!(alloc_bool_literal, 'ctx);
+    runtime_function!(alloc_f64, 'ctx);
+    runtime_function!(alloc_f64_literal, 'ctx);
     runtime_function!(alloc_tuple, 'ctx);
     runtime_function!(alloc_enum, 'ctx);
 
@@ -142,6 +144,8 @@ impl<'ctx> CoreLibrary<'ctx> for Module<'ctx> {
     runtime_function_getter!(alloc_i32_literal, 'ctx);
     runtime_function_getter!(alloc_bool, 'ctx);
     runtime_function_getter!(alloc_bool_literal, 'ctx);
+    runtime_function_getter!(alloc_f64, 'ctx);
+    runtime_function_getter!(alloc_f64_literal, 'ctx);
     runtime_function_getter!(alloc_tuple, 'ctx);
     runtime_function_getter!(alloc_enum, 'ctx);
 

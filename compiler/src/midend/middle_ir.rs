@@ -132,6 +132,10 @@ pub enum ValueEnum {
     ExtractEnumField(usize, Operand, usize),
     ExtractEnumTag(Operand),
     CombineByFoldWithAnd1(Vec<Operand>),
+    UnboxBool(Operand),
+    UnboxInt32(Operand),
+    CompareStr(Operand, Operand),
+    CompareCInt32(Operand, Operand),
 }
 
 #[derive(Debug)]
@@ -967,9 +971,9 @@ impl<'a> FunctionBuilder<'a> {
                         left: Some(cmp_res),
                         right: Some(Value {
                             typ: self.ty_ctx.primitive_type(Primitive::CInt32),
-                            val: ValueEnum::Intrinsic(
-                                "cmp-str-eq",
-                                vec![matched.clone(), self.build_operand_from_literal(x.clone())],
+                            val: ValueEnum::CompareStr(
+                                matched.clone(),
+                                self.build_operand_from_literal(x.clone()),
                             ),
                         }),
                         note: "compare string and returns an i32",
@@ -1053,7 +1057,7 @@ impl<'a> FunctionBuilder<'a> {
             left: Some(unboxed_integer),
             right: Some(Value {
                 typ: self.ty_ctx.primitive_type(Primitive::CInt32),
-                val: ValueEnum::Intrinsic("unbox-i32", vec![matched.clone()]),
+                val: ValueEnum::UnboxInt32(matched.clone()),
             }),
             note: "load a i32 value",
         });
@@ -1173,12 +1177,9 @@ impl<'a> FunctionBuilder<'a> {
                     left: Some(cmp_var),
                     right: Some(Value {
                         typ: self.ty_ctx.primitive_type(Primitive::CInt32),
-                        val: ValueEnum::Intrinsic(
-                            "cmp-ci32-eq",
-                            vec![
-                                self.build_operand_from_var_def(tag_var),
-                                self.build_operand_from_imm(ctor_idx as i32),
-                            ],
+                        val: ValueEnum::CompareCInt32(
+                            self.build_operand_from_var_def(tag_var),
+                            self.build_operand_from_imm(ctor_idx as i32),
                         ),
                     }),
                     note: "compare tag and pattern",
@@ -1360,10 +1361,7 @@ impl<'a> FunctionBuilder<'a> {
                     left: Some(check_status),
                     right: Some(Value {
                         typ: self.ty_ctx.primitive_type(Primitive::CInt32),
-                        val: ValueEnum::Intrinsic(
-                            "unbox-bool",
-                            vec![self.build_operand_from_var_def(result)],
-                        ),
+                        val: ValueEnum::UnboxBool(self.build_operand_from_var_def(result)),
                     }),
                     note: "unbox normal compare result",
                 });
@@ -2311,6 +2309,30 @@ impl Dump for (&TypeContext, &FuncDef, &ValueEnum) {
                 )
                 .unwrap();
             }
+            ValueEnum::UnboxBool(val) => {
+                write!(s, "unbox-bool {}", (*ty_ctx, *func, val).dump_string(),).unwrap();
+            }
+            ValueEnum::UnboxInt32(val) => {
+                write!(s, "unbox-int32 {}", (*ty_ctx, *func, val).dump_string(),).unwrap();
+            }
+            ValueEnum::CompareStr(op1, op2) => {
+                write!(
+                    s,
+                    "cmp-str {} {}",
+                    (*ty_ctx, *func, op1).dump_string(),
+                    (*ty_ctx, *func, op2).dump_string()
+                )
+                .unwrap();
+            }
+            ValueEnum::CompareCInt32(op1, op2) => {
+                write!(
+                    s,
+                    "cmp-str {} {}",
+                    (*ty_ctx, *func, op1).dump_string(),
+                    (*ty_ctx, *func, op2).dump_string()
+                )
+                .unwrap();
+            },
         }
         s
     }

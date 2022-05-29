@@ -20,7 +20,8 @@ pub enum _ObjectType {
     Float64 = 5,
     Tuple = 6,
     Enum = 7,
-    Other = 8,
+    Closure = 8,
+    Other = 9,
 }
 
 #[repr(C, packed(4))]
@@ -60,4 +61,10 @@ pub struct _Enum {
     pub header: _Object,
     pub discriminant: u32,
     pub variant: *mut c_void,
+}
+
+#[repr(C, packed)]
+pub struct _Closure {
+    pub env: *mut _Tuple,
+    pub fn_ptr: [*mut c_void; 0],
 }
