@@ -42,8 +42,8 @@ pub extern "C" fn alloc_tuple(n: size_t) -> *mut _Tuple {
 /// # Safety
 ///
 /// This function should not be called directly by other crates
-#[export_name = "__calocom_runtime_extract_tuple_length"]
-pub unsafe extern "C" fn extract_tuple_length(t: *mut _Tuple) -> usize {
+#[export_name = "__calocom_runtime_get_tuple_length"]
+pub unsafe extern "C" fn get_tuple_length(t: *mut _Tuple) -> usize {
     (*t).header.reserved1 as usize
 }
 

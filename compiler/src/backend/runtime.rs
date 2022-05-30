@@ -98,22 +98,45 @@ pub trait CoreLibrary<'ctx> {
     runtime_function!(alloc, 'ctx);
     runtime_function!(alloc_object, 'ctx);
     runtime_function!(alloc_unit, 'ctx);
+
     runtime_function!(alloc_string, 'ctx);
     runtime_function!(alloc_string_literal, 'ctx);
+    runtime_function!(extract_cstr, 'ctx);
+    runtime_function!(get_string_length, 'ctx);
+    runtime_function!(append_buffer_to_string, 'ctx);
+
     runtime_function!(alloc_i32, 'ctx);
     runtime_function!(alloc_i32_literal, 'ctx);
+    runtime_function!(extract_i32, 'ctx);
+
     runtime_function!(alloc_bool, 'ctx);
     runtime_function!(alloc_bool_literal, 'ctx);
+    runtime_function!(extract_bool, 'ctx);
+
     runtime_function!(alloc_f64, 'ctx);
     runtime_function!(alloc_f64_literal, 'ctx);
-    runtime_function!(alloc_tuple, 'ctx);
-    runtime_function!(alloc_enum, 'ctx);
+    runtime_function!(extract_f64, 'ctx);
 
+    runtime_function!(alloc_tuple, 'ctx);
+    runtime_function!(get_tuple_length, 'ctx);
+    runtime_function!(extract_tuple_field, 'ctx);
+
+    runtime_function!(alloc_enum, 'ctx);
     runtime_function!(extract_enum_field, 'ctx);
     runtime_function!(extract_enum_tag, 'ctx);
-    runtime_function!(extract_tuple_field, 'ctx);
-    runtime_function!(extract_i32, 'ctx);
     runtime_function!(construct_enum, 'ctx);
+
+    runtime_function!(allow_array, 'ctx);
+    runtime_function!(array_index, 'ctx);
+    runtime_function!(get_array_length, 'ctx);
+
+    runtime_function!(create_closure, 'ctx);
+    runtime_function!(extract_closure_capture, 'ctx);
+
+    runtime_function!(i32_to_f64, 'ctx);
+    runtime_function!(f64_to_i32, 'ctx);
+
+    runtime_function!(compare_str, 'ctx);
 
     runtime_type!(_Object, 'ctx);
     runtime_type!(_Unit, 'ctx);
@@ -130,6 +153,7 @@ pub trait CoreLibrary<'ctx> {
 }
 
 impl<'ctx> CoreLibrary<'ctx> for Module<'ctx> {
+
     runtime_function_getter!(panic, 'ctx);
     runtime_function_getter!(entry_panic_block, 'ctx);
 
@@ -138,22 +162,45 @@ impl<'ctx> CoreLibrary<'ctx> for Module<'ctx> {
     runtime_function_getter!(alloc, 'ctx);
     runtime_function_getter!(alloc_object, 'ctx);
     runtime_function_getter!(alloc_unit, 'ctx);
+
     runtime_function_getter!(alloc_string, 'ctx);
     runtime_function_getter!(alloc_string_literal, 'ctx);
+    runtime_function_getter!(extract_cstr, 'ctx);
+    runtime_function_getter!(get_string_length, 'ctx);
+    runtime_function_getter!(append_buffer_to_string, 'ctx);
+
     runtime_function_getter!(alloc_i32, 'ctx);
     runtime_function_getter!(alloc_i32_literal, 'ctx);
+    runtime_function_getter!(extract_i32, 'ctx);
+
     runtime_function_getter!(alloc_bool, 'ctx);
     runtime_function_getter!(alloc_bool_literal, 'ctx);
+    runtime_function_getter!(extract_bool, 'ctx);
+
     runtime_function_getter!(alloc_f64, 'ctx);
     runtime_function_getter!(alloc_f64_literal, 'ctx);
-    runtime_function_getter!(alloc_tuple, 'ctx);
-    runtime_function_getter!(alloc_enum, 'ctx);
+    runtime_function_getter!(extract_f64, 'ctx);
 
+    runtime_function_getter!(alloc_tuple, 'ctx);
+    runtime_function_getter!(get_tuple_length, 'ctx);
+    runtime_function_getter!(extract_tuple_field, 'ctx);
+
+    runtime_function_getter!(alloc_enum, 'ctx);
     runtime_function_getter!(extract_enum_field, 'ctx);
     runtime_function_getter!(extract_enum_tag, 'ctx);
-    runtime_function_getter!(extract_tuple_field, 'ctx);
-    runtime_function_getter!(extract_i32, 'ctx);
     runtime_function_getter!(construct_enum, 'ctx);
+
+    runtime_function_getter!(allow_array, 'ctx);
+    runtime_function_getter!(array_index, 'ctx);
+    runtime_function_getter!(get_array_length, 'ctx);
+
+    runtime_function_getter!(create_closure, 'ctx);
+    runtime_function_getter!(extract_closure_capture, 'ctx);
+
+    runtime_function_getter!(i32_to_f64, 'ctx);
+    runtime_function_getter!(f64_to_i32, 'ctx);
+    
+    runtime_function_getter!(compare_str, 'ctx);
 
     runtime_type_getter!(_Object, 'ctx);
     runtime_type_getter!(_Unit, 'ctx);

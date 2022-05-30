@@ -49,7 +49,7 @@ pub unsafe extern "C" fn extract_cstr(s: *const _String) -> *const c_char {
 /// This function should not be called directly by other crates
 #[no_mangle]
 #[export_name = "__calocom_runtime_get_string_length"]
-pub unsafe extern "C" fn length(s: *const _String) -> usize {
+pub unsafe extern "C" fn get_string_length(s: *const _String) -> usize {
     (*s).len as usize
 }
 
@@ -63,7 +63,7 @@ pub unsafe extern "C" fn append_buffer(
     buffer: *const c_char,
     buffer_length: usize,
 ) -> *mut _String {
-    let old_length = length(s);
+    let old_length = get_string_length(s);
     let new_length = old_length + buffer_length;
     let new_str = alloc_string_literal(new_length, extract_cstr(s));
     memcpy(

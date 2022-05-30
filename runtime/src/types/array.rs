@@ -37,3 +37,12 @@ pub unsafe extern "C" fn array_index(
     }
     ((*array).data as *mut *mut _Object).add(subscript as usize)
 }
+
+/// # Safety
+///
+/// This function should not be called directly by other crates
+#[no_mangle]
+#[export_name = "__calocom_runtime_get_array_length"]
+pub unsafe extern "C" fn get_array_length(array: *mut _Array) -> usize {
+    (*array).length as usize
+}

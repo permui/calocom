@@ -1,7 +1,9 @@
-use libc::{c_void, memcmp};
+use libc::c_void;
+use libc::memcmp;
 
-use super::length;
-use super::{_String, extract_cstr};
+use super::_String;
+use super::extract_cstr;
+use super::get_string_length;
 
 /// # Safety
 ///
@@ -9,8 +11,8 @@ use super::{_String, extract_cstr};
 #[no_mangle]
 #[export_name = "__calocom_runtime_compare_string"]
 pub unsafe extern "C" fn compare_str(s1: *const _String, s2: *const _String) -> i32 {
-    let len = length(s1);
-    if len != length(s2) {
+    let len = get_string_length(s1);
+    if len != get_string_length(s2) {
         -1
     } else {
         memcmp(
