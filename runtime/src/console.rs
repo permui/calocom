@@ -1,11 +1,11 @@
 use crate::panic::panic;
 use crate::types::*;
+
 use core::ptr::addr_of;
 use libc::c_char;
 use libc::c_int;
 use libc::printf;
 use libc::putchar;
-use libc::puts;
 
 /// # Safety
 ///
@@ -14,7 +14,7 @@ use libc::puts;
 pub unsafe fn print_object(p: *const _Object) {
     match (*p).tag {
         _ObjectType::Unit => {
-            puts(const_cstr!("()").as_ptr());
+            printf(const_cstr!("()").as_ptr());
         }
         _ObjectType::Str => {
             let s = p as *const _String;
@@ -45,14 +45,18 @@ pub unsafe fn print_object(p: *const _Object) {
         }
         _ObjectType::Tuple => {
             let t = p as *const _Tuple;
-            let len = (*t).header.reserved1 as usize;
+            let len = (*t).length as usize;
             printf(const_cstr!("(").as_ptr());
             for i in 0..len {
                 if i != 0 {
                     putchar(',' as c_int);
                     putchar(' ' as c_int);
                 }
-                print_object((*t).data[i] as *const _Object);
+                print_object(
+                    (addr_of!((*t).data) as *const *const _Object)
+                        .add(len)
+                        .read(),
+                );
             }
             printf(const_cstr!(")").as_ptr());
         }
@@ -64,6 +68,19 @@ pub unsafe fn print_object(p: *const _Object) {
         }
         _ObjectType::Other => {
             panic(const_cstr!("not supported type: other").as_ptr());
+        }
+        _ObjectType::Array => {
+            let a = p as *const _Array;
+            let len = (*a).length as usize;
+            printf(const_cstr!("[").as_ptr());
+            for i in 0..len {
+                if i != 0 {
+                    putchar(',' as c_int);
+                    putchar(' ' as c_int);
+                }
+                print_object(((*a).data as *const *const _Object).add(len).read());
+            }
+            printf(const_cstr!(")").as_ptr());
         }
     }
 }

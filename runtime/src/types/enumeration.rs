@@ -1,10 +1,21 @@
 use super::_Enum;
 use super::_Object;
+use super::_ObjectType;
 use super::_Tuple;
 use super::tuple::extract_tuple_field;
-use crate::alloc::alloc_enum;
+use crate::alloc::alloc;
 use crate::panic::panic;
 use libc::c_void;
+
+#[no_mangle]
+#[export_name = "__calocom_runtime_alloc_enum"]
+pub extern "C" fn alloc_enum() -> *mut _Enum {
+    let mem = alloc(::core::mem::size_of::<_Enum>()) as *mut _Enum;
+    unsafe {
+        (*mem).header.tag = _ObjectType::Enum;
+    }
+    mem
+}
 
 /// # Safety
 ///
