@@ -963,7 +963,7 @@ impl<'a> FunctionBuilder<'a> {
                     let cmp_res = self.create_variable(
                         Some("str.cmp"),
                         self.ty_ctx.primitive_type(Primitive::CInt32),
-                        VariableKind::TemporaryVariable,
+                        VariableKind::RawVariable,
                     );
 
                     // compare the string with the literal in current block
@@ -1408,7 +1408,7 @@ impl<'a> FunctionBuilder<'a> {
             let check = self.create_variable(
                 Some("match.check.arm"),
                 self.ty_ctx.primitive_type(Primitive::CInt32),
-                VariableKind::TemporaryVariable,
+                VariableKind::RawVariable,
             );
 
             self.var_ctx.entry_scope();
@@ -2327,7 +2327,7 @@ impl Dump for (&TypeContext, &FuncDef, &ValueEnum) {
             ValueEnum::CompareCInt32(op1, op2) => {
                 write!(
                     s,
-                    "cmp-str {} {}",
+                    "cmp-ci32 {} {}",
                     (*ty_ctx, *func, op1).dump_string(),
                     (*ty_ctx, *func, op2).dump_string()
                 )
