@@ -495,6 +495,19 @@ impl TypeContext {
             || self.is_type_eq(t, self.primitive_type(Primitive::Str))
     }
 
+    pub fn determine_promoted_type(&self, t1: TypeRef, t2: TypeRef) -> TypeRef {
+        match (
+            self.is_type_eq(t1, self.primitive_type(Primitive::Float64)),
+            self.is_type_eq(t1, self.primitive_type(Primitive::Int32)),
+            self.is_type_eq(t2, self.primitive_type(Primitive::Float64)),
+            self.is_type_eq(t2, self.primitive_type(Primitive::Int32)),
+        ) {
+            (true, _, _, _) | (_, _, true, _) => self.primitive_type(Primitive::Float64),
+            (_, true, _, true) => self.primitive_type(Primitive::Int32),
+            _ => panic!("unable to determine promote type"),
+        }
+    }
+
     pub fn get_display_name_map(&self) -> (Self, HashMap<TypeRef, String>) {
         let context = self.clone();
         let mut display_name_map = HashMap::new();

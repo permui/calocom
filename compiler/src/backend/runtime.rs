@@ -132,7 +132,6 @@ pub trait CoreLibrary<'ctx> {
 
     runtime_function!(create_closure, 'ctx);
     runtime_function!(extract_closure_capture, 'ctx);
-
     runtime_function!(i32_to_f64, 'ctx);
     runtime_function!(f64_to_i32, 'ctx);
 

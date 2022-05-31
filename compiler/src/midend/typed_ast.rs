@@ -856,23 +856,6 @@ impl TypedAST {
         }
     }
 
-    fn determine_promoted_type(&self, t1: TypeRef, t2: TypeRef) -> TypeRef {
-        match (
-            self.ty_ctx
-                .is_type_eq(t1, self.ty_ctx.primitive_type(Primitive::Float64)),
-            self.ty_ctx
-                .is_type_eq(t1, self.ty_ctx.primitive_type(Primitive::Int32)),
-            self.ty_ctx
-                .is_type_eq(t2, self.ty_ctx.primitive_type(Primitive::Float64)),
-            self.ty_ctx
-                .is_type_eq(t2, self.ty_ctx.primitive_type(Primitive::Int32)),
-        ) {
-            (true, _, _, _) | (_, _, true, _) => self.ty_ctx.primitive_type(Primitive::Float64),
-            (_, true, _, true) => self.ty_ctx.primitive_type(Primitive::Int32),
-            _ => panic!("unable to determine promote type"),
-        }
-    }
-
     fn check_type_of_binary(&mut self, expr: &crate::ast::BinOpExpr) -> TypedExpr {
         let crate::ast::BinOpExpr { lhs, rhs, op } = expr;
         let left = self.check_type_of_expr(lhs);
@@ -908,7 +891,7 @@ impl TypedAST {
             Or | And => self.ty_ctx.primitive_type(Primitive::Bool),
             Eq | Ne => self.ty_ctx.primitive_type(Primitive::Bool),
             Le | Ge | Lt | Gt => self.ty_ctx.primitive_type(Primitive::Bool),
-            Plus | Sub | Mul | Div | Mod => self.determine_promoted_type(left.typ, right.typ),
+            Plus | Sub | Mul | Div | Mod => self.ty_ctx.determine_promoted_type(left.typ, right.typ),
         };
 
         TypedExpr {

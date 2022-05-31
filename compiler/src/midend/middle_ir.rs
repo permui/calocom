@@ -568,7 +568,7 @@ impl<'a> FunctionBuilder<'a> {
                 typ: target_type,
                 val: ValueEnum::Intrinsic("convert", vec![source]),
             }),
-            note: "convert",
+            note: "convert type",
         });
 
         self.build_operand_from_var_def(result)
@@ -1544,8 +1544,19 @@ impl<'a> FunctionBuilder<'a> {
         let ExprEnum::BinOp { lhs, rhs, op } = expr.as_ref() else { unreachable!() };
         let typ = *typ;
 
-        let left_operand = self.build_expr_as_operand(lhs);
-        let right_operand = self.build_expr_as_operand(rhs);
+        let mut left_operand = self.build_expr_as_operand(lhs);
+        let mut right_operand = self.build_expr_as_operand(rhs);
+        let t1 = left_operand.typ;
+        let t2 = right_operand.typ;
+
+        if t1 != t2 {
+            assert!(self.ty_ctx.is_arithmetic_type(t1));
+            assert!(self.ty_ctx.is_arithmetic_type(t2));
+
+            let promoted = self.ty_ctx.determine_promoted_type(t1, t2);
+            left_operand = self.build_type_conversion_if_need(left_operand, promoted);
+            right_operand = self.build_type_conversion_if_need(right_operand, promoted);
+        }
 
         let result = self.create_variable(Some("bin.op.res"), typ, VariableKind::TemporaryVariable);
 
@@ -1576,7 +1587,7 @@ impl<'a> FunctionBuilder<'a> {
                 typ,
                 val: ValueEnum::UnaryOp(*op, operand),
             }),
-            note: "binary operation",
+            note: "unary operation",
         });
 
         self.build_operand_from_var_def(result)
@@ -2332,7 +2343,7 @@ impl Dump for (&TypeContext, &FuncDef, &ValueEnum) {
                     (*ty_ctx, *func, op2).dump_string()
                 )
                 .unwrap();
-            },
+            }
         }
         s
     }

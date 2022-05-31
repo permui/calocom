@@ -1,8 +1,4 @@
-use std::{
-    collections::HashMap,
-    path::{self, Path},
-    rc::Rc,
-};
+use std::{collections::HashMap, ops::Sub, path::Path, rc::Rc};
 
 use inkwell::{
     basic_block::BasicBlock,
@@ -10,16 +6,19 @@ use inkwell::{
     context::Context,
     module::Module,
     types::{BasicMetadataTypeEnum, BasicType, PointerType},
-    values::{BasicValue, BasicValueEnum, FunctionValue, PointerValue},
-    AddressSpace,
+    values::{
+        BasicMetadataValueEnum, BasicValue, BasicValueEnum, CallableValue, FunctionValue, IntValue,
+        PointerValue,
+    },
+    AddressSpace, FloatPredicate, IntPredicate,
 };
 
 use slotmap::SlotMap;
 
 use super::{memory::MemoryLayoutContext, name_mangling::Mangling, runtime::CoreLibrary};
 use crate::{
-    ast::Literal,
-    common::name_context::NameContext,
+    ast::{BinOp, Literal},
+    common::{name_context::NameContext, type_context::Primitive},
     midend::middle_ir::{
         Block, BlockRef, FuncDef, Operand, OperandEnum, Terminator, Value, VarDef, VarDefRef,
     },
@@ -27,24 +26,25 @@ use crate::{
 };
 
 #[derive(Debug)]
-pub struct FunctionEmissionState<'ctx> {
+pub struct FunctionEmissionState<'ctx, 'a> {
     var_map: HashMap<VarDefRef, PointerValue<'ctx>>,
     block_map: HashMap<BlockRef, BasicBlock<'ctx>>,
     func: FunctionValue<'ctx>,
     alloca_block: BasicBlock<'ctx>,
     ret_value: PointerValue<'ctx>,
+    var_slotmap: &'a SlotMap<VarDefRef, VarDef>,
 }
 
-pub struct CodeGen<'ctx> {
+pub struct CodeGen<'ctx, 'a> {
     context: &'ctx Context,
     module: Rc<Module<'ctx>>,
     memory_layout_ctx: MemoryLayoutContext<'ctx>,
     function_value_ctx: NameContext<FunctionValue<'ctx>>,
     builder: Builder<'ctx>,
-    current_function: Option<FunctionEmissionState<'ctx>>,
+    current_function: Option<FunctionEmissionState<'ctx, 'a>>,
 }
 
-impl<'ctx> CodeGen<'ctx> {
+impl<'ctx, 'a> CodeGen<'ctx, 'a> {
     pub fn module(&self) -> &Module<'ctx> {
         self.module.as_ref()
     }
@@ -148,7 +148,7 @@ impl<'ctx> CodeGen<'ctx> {
             .as_basic_value_enum()
     }
 
-    fn emit_fn(&mut self, mir_func: &FuncDef) {
+    fn emit_fn(&mut self, mir_func: &'a FuncDef) {
         let FuncDef {
             name,
             blocks,
@@ -235,8 +235,10 @@ impl<'ctx> CodeGen<'ctx> {
             func,
             alloca_block,
             ret_value: ret_ptr,
+            var_slotmap: variables,
         });
 
+        self.emit_local_alloca(variables, captured, true);
         self.emit_local_alloca(variables, params, true);
         self.emit_local_alloca(variables, locals, true);
         self.emit_local_alloca(variables, temporaries, true);
@@ -245,13 +247,11 @@ impl<'ctx> CodeGen<'ctx> {
 
         // store the arguments into local variables
         self.emit_arguments_store(params);
-        // extract the captured variables from closure parameter
-        self.emit_captured_store(captured);
         self.builder
             .build_unconditional_branch(entry_block.unwrap());
 
         self.emit_all_stmts(blocks);
-        self.emit_basic_block_terminators(ret_ptr, blocks);
+        self.emit_basic_block_terminators(blocks);
     }
 
     fn emit_all_stmts(&self, blocks: &SlotMap<BlockRef, Block>) {
@@ -267,7 +267,7 @@ impl<'ctx> CodeGen<'ctx> {
 
         let var_map = &self.current_function.as_ref().unwrap().var_map;
         for stmt in &block.stmts {
-            let rhs = self.emit_calocom_value(stmt.right.as_ref().unwrap());
+            let rhs = self.emit_value(stmt.right.as_ref().unwrap());
             if let Some(left) = &stmt.left {
                 let &ptr = var_map
                     .get(left)
@@ -277,7 +277,30 @@ impl<'ctx> CodeGen<'ctx> {
         }
     }
 
+    fn emit_variable(&self, var: VarDefRef) -> BasicValueEnum<'ctx> {
+        let ptr = self
+            .current_function
+            .as_ref()
+            .unwrap()
+            .var_map
+            .get(&var)
+            .unwrap_or_else(|| panic!("variable map doesn't contains the var"));
+        let bv: BasicValueEnum = self.builder.build_load(*ptr, "");
+        bv
+    }
+
     fn emit_operand(&self, operand: &Operand) -> BasicValueEnum<'ctx> {
+        let Operand { val, .. } = operand;
+        match val.as_ref() {
+            OperandEnum::Imm(i) => {
+                panic!("not allowed to make unboxed immediate value")
+            }
+            OperandEnum::Literal(lit) => self.emit_literal_value(true, lit),
+            OperandEnum::Var(var) => self.emit_variable(*var),
+        }
+    }
+
+    fn emit_unboxed_operand(&self, operand: &Operand) -> BasicValueEnum<'ctx> {
         let Operand { val, .. } = operand;
         match val.as_ref() {
             OperandEnum::Imm(i) => self
@@ -285,19 +308,77 @@ impl<'ctx> CodeGen<'ctx> {
                 .i32_type()
                 .const_int(*i as u64, false)
                 .as_basic_value_enum(),
-            OperandEnum::Literal(lit) => self.emit_literal_value(true, lit),
+            OperandEnum::Literal(lit) => self.emit_literal_value(false, lit),
             OperandEnum::Var(var) => {
-                let ptr = self
+                let llvm_var = self.emit_variable(*var);
+                let ty_ctx = self.memory_layout_ctx.get_mir_type_context();
+
+                let var_def = self
                     .current_function
                     .as_ref()
                     .unwrap()
-                    .var_map
-                    .get(var)
-                    .unwrap_or_else(|| panic!("variable map doesn't contains the var"));
-                let bv: BasicValueEnum = self.builder.build_load(*ptr, "");
-                bv
+                    .var_slotmap
+                    .get(*var)
+                    .unwrap();
+
+                let typ = var_def.typ;
+                let res = if typ == ty_ctx.primitive_type(Primitive::Int32) {
+                    self.builder
+                        .build_call(
+                            self.module.get_runtime_function_extract_i32(),
+                            &[llvm_var.into(), self.context.i32_type().const_zero().into()],
+                            "",
+                        )
+                        .try_as_basic_value()
+                        .left()
+                        .unwrap()
+                } else if typ == ty_ctx.primitive_type(Primitive::Float64) {
+                    self.builder
+                        .build_call(
+                            self.module.get_runtime_function_extract_f64(),
+                            &[llvm_var.into(), self.context.f64_type().const_zero().into()],
+                            "",
+                        )
+                        .try_as_basic_value()
+                        .left()
+                        .unwrap()
+                } else if typ == ty_ctx.primitive_type(Primitive::Bool) {
+                    self.builder
+                        .build_call(
+                            self.module.get_runtime_function_extract_bool(),
+                            &[
+                                llvm_var.into(),
+                                self.context.bool_type().const_zero().into(),
+                            ],
+                            "",
+                        )
+                        .try_as_basic_value()
+                        .left()
+                        .unwrap()
+                } else if typ == ty_ctx.primitive_type(Primitive::CInt32) {
+                    llvm_var
+                } else {
+                    panic!("can't generate unboxed value for this")
+                };
+
+                res
             }
         }
+    }
+
+    fn emit_cast_closure_value_to_base(&self, closure: BasicValueEnum<'ctx>) -> PointerValue<'ctx> {
+        if !closure.is_pointer_value() {
+            panic!("not a pointer to closure");
+        }
+        let ptr = closure.into_pointer_value();
+        let converted = self.builder.build_pointer_cast(
+            ptr,
+            self.module
+                .get_runtime_type__Closure()
+                .ptr_type(AddressSpace::Generic),
+            "",
+        );
+        converted
     }
 
     fn emit_literal_value(&self, need_boxing: bool, literal: &Literal) -> BasicValueEnum<'ctx> {
@@ -395,13 +476,335 @@ impl<'ctx> CodeGen<'ctx> {
                         .left()
                         .unwrap()
                 } else {
+                    // can't produce a unboxed unit value
                     unreachable!()
                 }
             }
         }
     }
 
-    fn emit_calocom_value(&self, value: &Value) -> BasicValueEnum<'ctx> {
+    fn load_closure_fn(&self, closure: BasicValueEnum<'ctx>) -> PointerValue<'ctx> {
+        if !closure.is_pointer_value() {
+            panic!("not a pointer to closure");
+        }
+        let fn_ptr = self
+            .builder
+            .build_struct_gep(closure.into_pointer_value(), 1, "")
+            .expect("not a struct type");
+        let fn_ptr = self.builder.build_load(fn_ptr, "");
+        if !fn_ptr.is_pointer_value() {
+            panic!("not a function pointer");
+        }
+        fn_ptr.into_pointer_value()
+    }
+
+    fn store_closure_fn(&self, closure: PointerValue<'ctx>, closure_fn: FunctionValue<'ctx>) {
+        let fn_ptr = self
+            .builder
+            .build_struct_gep(closure, 1, "")
+            .expect("not a struct type");
+        self.builder.build_store(
+            fn_ptr,
+            closure_fn
+                .as_global_value()
+                .as_pointer_value()
+                .as_basic_value_enum(),
+        );
+    }
+
+    fn emit_boxed_bool(&self, value: BasicValueEnum<'ctx>) -> BasicValueEnum<'ctx> {
+        self.builder
+            .build_call(
+                self.module.get_runtime_function_alloc_bool_literal(),
+                &[value.into()],
+                "",
+            )
+            .try_as_basic_value()
+            .left()
+            .unwrap()
+    }
+
+    fn emit_boxed_i32(&self, value: BasicValueEnum<'ctx>) -> BasicValueEnum<'ctx> {
+        self.builder
+            .build_call(
+                self.module.get_runtime_function_alloc_i32_literal(),
+                &[value.into()],
+                "",
+            )
+            .try_as_basic_value()
+            .left()
+            .unwrap()
+    }
+
+    fn emit_boxed_f64(&self, value: BasicValueEnum<'ctx>) -> BasicValueEnum<'ctx> {
+        self.builder
+            .build_call(
+                self.module.get_runtime_function_alloc_f64_literal(),
+                &[value.into()],
+                "",
+            )
+            .try_as_basic_value()
+            .left()
+            .unwrap()
+    }
+
+    fn convert_to_valid_boolean_value(&self, value: IntValue<'ctx>) -> BasicValueEnum<'ctx> {
+        self.builder
+            .build_int_compare(
+                IntPredicate::NE,
+                value,
+                value.get_type().const_int(0, false),
+                "",
+            )
+            .as_basic_value_enum()
+    }
+
+    fn emit_logical_op(
+        &self,
+        op: BinOp,
+        lhs: BasicValueEnum<'ctx>,
+        rhs: BasicValueEnum<'ctx>,
+    ) -> BasicValueEnum<'ctx> {
+        use crate::ast::BinOp::*;
+        self.emit_boxed_bool(
+            self.convert_to_valid_boolean_value(match op {
+                And => self
+                    .builder
+                    .build_and(lhs.into_int_value(), rhs.into_int_value(), ""),
+                Or => self
+                    .builder
+                    .build_or(lhs.into_int_value(), rhs.into_int_value(), ""),
+                _ => unreachable!(),
+            }),
+        )
+    }
+
+    fn emit_relational_op(
+        &self,
+        op: BinOp,
+        lhs: BasicValueEnum<'ctx>,
+        rhs: BasicValueEnum<'ctx>,
+    ) -> BasicValueEnum<'ctx> {
+        use crate::ast::BinOp::*;
+        self.emit_boxed_bool(if lhs.is_float_value() {
+            match op {
+                Eq => self
+                    .builder
+                    .build_float_compare(
+                        FloatPredicate::OEQ,
+                        lhs.into_float_value(),
+                        rhs.into_float_value(),
+                        "",
+                    )
+                    .as_basic_value_enum(),
+                Ne => self
+                    .builder
+                    .build_float_compare(
+                        FloatPredicate::UNE,
+                        lhs.into_float_value(),
+                        rhs.into_float_value(),
+                        "",
+                    )
+                    .as_basic_value_enum(),
+                Ge => self
+                    .builder
+                    .build_float_compare(
+                        FloatPredicate::OGE,
+                        lhs.into_float_value(),
+                        rhs.into_float_value(),
+                        "",
+                    )
+                    .as_basic_value_enum(),
+                Le => self
+                    .builder
+                    .build_float_compare(
+                        FloatPredicate::OLE,
+                        lhs.into_float_value(),
+                        rhs.into_float_value(),
+                        "",
+                    )
+                    .as_basic_value_enum(),
+                Gt => self
+                    .builder
+                    .build_float_compare(
+                        FloatPredicate::OGT,
+                        lhs.into_float_value(),
+                        rhs.into_float_value(),
+                        "",
+                    )
+                    .as_basic_value_enum(),
+                Lt => self
+                    .builder
+                    .build_float_compare(
+                        FloatPredicate::OLT,
+                        lhs.into_float_value(),
+                        rhs.into_float_value(),
+                        "",
+                    )
+                    .as_basic_value_enum(),
+                _ => unreachable!(),
+            }
+        } else if lhs.is_int_value() {
+            match op {
+                Eq => self
+                    .builder
+                    .build_int_compare(
+                        IntPredicate::EQ,
+                        lhs.into_int_value(),
+                        rhs.into_int_value(),
+                        "",
+                    )
+                    .as_basic_value_enum(),
+                Ne => self
+                    .builder
+                    .build_int_compare(
+                        IntPredicate::NE,
+                        lhs.into_int_value(),
+                        rhs.into_int_value(),
+                        "",
+                    )
+                    .as_basic_value_enum(),
+                Ge => self
+                    .builder
+                    .build_int_compare(
+                        IntPredicate::SGE,
+                        lhs.into_int_value(),
+                        rhs.into_int_value(),
+                        "",
+                    )
+                    .as_basic_value_enum(),
+                Le => self
+                    .builder
+                    .build_int_compare(
+                        IntPredicate::SLE,
+                        lhs.into_int_value(),
+                        rhs.into_int_value(),
+                        "",
+                    )
+                    .as_basic_value_enum(),
+                Gt => self
+                    .builder
+                    .build_int_compare(
+                        IntPredicate::SGT,
+                        lhs.into_int_value(),
+                        rhs.into_int_value(),
+                        "",
+                    )
+                    .as_basic_value_enum(),
+                Lt => self
+                    .builder
+                    .build_int_compare(
+                        IntPredicate::SLT,
+                        lhs.into_int_value(),
+                        rhs.into_int_value(),
+                        "",
+                    )
+                    .as_basic_value_enum(),
+                _ => unreachable!(),
+            }
+        } else {
+            panic!("can't apply relational operation in such type");
+        })
+    }
+
+    fn emit_test_string_equality(
+        &self,
+        op: BinOp,
+        lhs: &Operand,
+        rhs: &Operand,
+    ) -> BasicValueEnum<'ctx> {
+        let lhs = self.emit_operand(lhs);
+        let rhs = self.emit_operand(rhs);
+        self.emit_boxed_bool(
+            self.builder
+                .build_call(
+                    self.module.get_runtime_function_compare_str(),
+                    &[
+                        lhs.into(),
+                        rhs.into(),
+                        self.context
+                            .bool_type()
+                            .const_int(
+                                match op {
+                                    crate::ast::BinOp::Eq => 1,
+                                    crate::ast::BinOp::Ne => 0,
+                                    _ => unreachable!(),
+                                } as u64,
+                                false,
+                            )
+                            .into(),
+                    ],
+                    "",
+                )
+                .try_as_basic_value()
+                .left()
+                .unwrap()
+                .into_int_value()
+                .as_basic_value_enum(),
+        )
+    }
+
+    fn emit_arithmetic_op(
+        &self,
+        op: BinOp,
+        lhs: BasicValueEnum<'ctx>,
+        rhs: BasicValueEnum<'ctx>,
+    ) -> BasicValueEnum<'ctx> {
+        use crate::ast::BinOp::*;
+        if lhs.is_float_value() {
+            match op {
+                Plus => self
+                    .builder
+                    .build_float_add(lhs.into_float_value(), rhs.into_float_value(), "")
+                    .as_basic_value_enum(),
+                Sub => self
+                    .builder
+                    .build_float_sub(lhs.into_float_value(), rhs.into_float_value(), "")
+                    .as_basic_value_enum(),
+                Mul => self
+                    .builder
+                    .build_float_mul(lhs.into_float_value(), rhs.into_float_value(), "")
+                    .as_basic_value_enum(),
+                Div => self
+                    .builder
+                    .build_float_div(lhs.into_float_value(), rhs.into_float_value(), "")
+                    .as_basic_value_enum(),
+                Mod => self
+                    .builder
+                    .build_float_rem(lhs.into_float_value(), rhs.into_float_value(), "")
+                    .as_basic_value_enum(),
+                _ => unreachable!(),
+            }
+        } else if lhs.is_int_value() {
+            match op {
+                Plus => self
+                    .builder
+                    .build_int_add(lhs.into_int_value(), rhs.into_int_value(), "")
+                    .as_basic_value_enum(),
+                Sub => self
+                    .builder
+                    .build_int_sub(lhs.into_int_value(), rhs.into_int_value(), "")
+                    .as_basic_value_enum(),
+                Mul => self
+                    .builder
+                    .build_int_mul(lhs.into_int_value(), rhs.into_int_value(), "")
+                    .as_basic_value_enum(),
+                Div => self
+                    .builder
+                    .build_int_signed_div(lhs.into_int_value(), rhs.into_int_value(), "")
+                    .as_basic_value_enum(),
+                Mod => self
+                    .builder
+                    .build_int_signed_rem(lhs.into_int_value(), rhs.into_int_value(), "")
+                    .as_basic_value_enum(),
+                _ => unreachable!(),
+            }
+        } else {
+            unreachable!()
+        }
+    }
+
+    fn emit_value(&self, value: &Value) -> BasicValueEnum<'ctx> {
         let Value { typ, val } = value;
         use crate::midend::middle_ir::ValueEnum::*;
         match val {
@@ -413,7 +816,7 @@ impl<'ctx> CodeGen<'ctx> {
                 let function = self.function_value_ctx.find_symbol(path).unwrap();
                 // NOTE: void function not allowed in calocom, so choose the left
                 self.builder
-                    .build_call(function, &args[..], "")
+                    .build_call(function, &args, "")
                     .try_as_basic_value()
                     .left()
                     .unwrap()
@@ -426,15 +829,139 @@ impl<'ctx> CodeGen<'ctx> {
                 let function = self.function_value_ctx.find_symbol(path).unwrap();
                 // NOTE: void function not allowed in calocom, so choose the left
                 self.builder
-                    .build_call(function, &args[..], "")
+                    .build_call(function, &args, "")
                     .try_as_basic_value()
                     .left()
                     .unwrap()
             }
-            ExtractClosureCapture(_, _) => todo!(),
-            ClosureCall(_, _) => todo!(),
-            MakeClosure { .. } => todo!(),
-            BinaryOp(_, _, _) => todo!(),
+            ExtractClosureCapture(var, index) => {
+                let closure = self.emit_variable(*var);
+                let index = self.context.i32_type().const_int(*index as u64, false);
+
+                let function = self.module.get_runtime_function_extract_closure_capture();
+
+                self.builder
+                    .build_call(function, &[closure.into(), index.into()], "")
+                    .try_as_basic_value()
+                    .left()
+                    .unwrap()
+            }
+            ClosureCall(operand, args) => {
+                let closure_self = self.emit_operand(operand);
+                let fn_ptr = self.load_closure_fn(closure_self);
+
+                let mut new_args = vec![self.emit_cast_closure_value_to_base(closure_self).into()];
+                new_args.extend(
+                    args.iter().map(|arg| -> BasicMetadataValueEnum<'ctx> {
+                        self.emit_operand(arg).into()
+                    }),
+                );
+
+                self.builder
+                    .build_call(
+                        CallableValue::try_from(fn_ptr).expect("not a callable function pointer"),
+                        &new_args,
+                        "",
+                    )
+                    .try_as_basic_value()
+                    .left()
+                    .unwrap()
+            }
+            MakeClosure { path, capture } => {
+                let closure_fn = self
+                    .function_value_ctx
+                    .find_symbol(path)
+                    .unwrap_or_else(|| panic!("can't find {}", path.join(".")));
+
+                let captured_array = self.builder.build_array_alloca(
+                    self.module
+                        .get_runtime_type__Object()
+                        .ptr_type(AddressSpace::Generic),
+                    self.context
+                        .i32_type()
+                        .const_int(capture.len() as u64, false),
+                    "",
+                );
+
+                for (idx, var) in capture.iter().enumerate() {
+                    let val = self.emit_operand(var);
+                    let gep = unsafe {
+                        self.builder.build_in_bounds_gep(
+                            captured_array,
+                            &[
+                                self.context.i32_type().const_int(0, false),
+                                self.context.i32_type().const_int(idx as u64, false),
+                            ],
+                            "",
+                        )
+                    };
+                    self.builder.build_store(gep, val);
+                }
+
+                let captured = self.builder.build_pointer_cast(
+                    captured_array,
+                    self.module
+                        .get_runtime_type__Object()
+                        .array_type(0)
+                        .ptr_type(AddressSpace::Generic),
+                    "",
+                );
+
+                let closure_ptr = self
+                    .builder
+                    .build_call(
+                        self.module.get_runtime_function_create_closure(),
+                        &[
+                            captured.into(),
+                            self.context
+                                .i32_type()
+                                .const_int(capture.len() as u64, false)
+                                .into(),
+                        ],
+                        "",
+                    )
+                    .try_as_basic_value()
+                    .left()
+                    .unwrap()
+                    .into_pointer_value();
+
+                let closure_ptr = self.builder.build_pointer_cast(
+                    closure_ptr,
+                    self.memory_layout_ctx
+                        .get_llvm_type(*typ)
+                        .ptr_type(AddressSpace::Generic),
+                    "",
+                );
+
+                self.store_closure_fn(closure_ptr, closure_fn);
+
+                closure_ptr.as_basic_value_enum()
+            }
+            BinaryOp(op, lhs, rhs) => {
+                let t1 = lhs.typ;
+                let t2 = rhs.typ;
+
+                assert!(t1 == t2);
+
+                use crate::ast::BinOp::*;
+                if t1
+                    == self
+                        .memory_layout_ctx
+                        .get_mir_type_context()
+                        .primitive_type(Primitive::Str)
+                {
+                    assert!(matches!(op, Eq | Ne));
+                    return self.emit_test_string_equality(*op, lhs, rhs);
+                }
+
+                let lhs_res = self.emit_unboxed_operand(lhs);
+                let rhs_res = self.emit_unboxed_operand(rhs);
+                match op {
+                    Or | And => self.emit_logical_op(*op, lhs_res, rhs_res),
+                    Le | Ge | Lt | Gt | Eq | Ne => self.emit_relational_op(*op, lhs_res, rhs_res),
+                    Plus | Sub | Mul | Div | Mod => self.emit_arithmetic_op(*op, lhs_res, rhs_res),
+                }
+            }
             UnaryOp(_, _) => todo!(),
             MakeTuple(_) => todo!(),
             Construct(_, _) => todo!(),
@@ -480,15 +1007,7 @@ impl<'ctx> CodeGen<'ctx> {
         }
     }
 
-    fn emit_captured_store(&self, captured: &[VarDefRef]) {
-        todo!()
-    }
-
-    fn emit_basic_block_terminators(
-        &self,
-        ret_var_ptr: PointerValue<'ctx>,
-        blocks: &SlotMap<BlockRef, Block>,
-    ) {
+    fn emit_basic_block_terminators(&self, blocks: &SlotMap<BlockRef, Block>) {
         let state = self.current_function.as_ref().unwrap();
         let ret_var_ptr = state.ret_value;
         let var_map = &state.var_map;
@@ -521,7 +1040,7 @@ impl<'ctx> CodeGen<'ctx> {
         }
     }
 
-    pub fn emit_all(&mut self, mir: &MiddleIR) {
+    pub fn emit_all(&mut self, mir: &'a MiddleIR) {
         for func in mir.module.iter() {
             self.emit_fn(func);
         }

@@ -173,5 +173,13 @@ test_tuple_match: (a: Nat, b: Nat) -> bool {
     }
 }
 
+test_type_implicit_casting: (a: i32, b: f64) -> f64 {
+    a + b
+}
+
+test_equality: (a: str, b: i32, c: f64) -> bool {
+    a == "test" || b == 0 || c == 0
+}
+
 main: () -> () {
 }

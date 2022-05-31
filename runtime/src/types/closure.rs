@@ -15,18 +15,16 @@ use libc::memcpy;
 #[export_name = "__calocom_runtime_create_closure"]
 pub unsafe extern "C" fn create_closure(
     captured: *mut [*mut _Object; 0],
-    length: usize,
-    fn_ptr: *mut c_void,
+    length: u32,
 ) -> *mut _Closure {
     let mem = alloc(::core::mem::size_of::<_Closure>() + ::core::mem::size_of::<*mut c_void>())
         as *mut _Closure;
-    let env_size = length * ::core::mem::size_of::<*mut _Object>();
+    let env_size = length as usize * ::core::mem::size_of::<*mut _Object>();
     let env = alloc(env_size) as *mut [*mut _Object; 0];
 
     (*mem).header.tag = _ObjectType::Closure;
     (*mem).env_len = length as u32;
     (*mem).env = env;
-    (addr_of_mut!((*mem).fn_ptr) as *mut *mut c_void).write(fn_ptr);
 
     // copy the environment
     memcpy(env as *mut c_void, captured as *mut c_void, env_size);
