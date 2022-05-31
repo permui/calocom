@@ -39,13 +39,13 @@ pub unsafe extern "C" fn compare_str_with_cstr(
     s2: *const c_char,
     length: u32,
 ) -> i32 {
-    if get_string_length(s1) != length {
+    if get_string_length(s1) != length as usize {
         -1
     } else {
         (memcmp(
             extract_cstr(s1) as *const c_void,
             s2 as *const c_void,
-            length,
+            length as usize,
         ) != 0) as i32
     }
 }
