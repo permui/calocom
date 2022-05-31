@@ -1,4 +1,4 @@
-use std::{collections::HashMap, ops::Sub, path::Path, rc::Rc};
+use std::{collections::HashMap, path::Path, rc::Rc};
 
 use inkwell::{
     basic_block::BasicBlock,
@@ -12,7 +12,6 @@ use inkwell::{
     },
     AddressSpace, FloatPredicate, IntPredicate,
 };
-
 use slotmap::SlotMap;
 
 use super::{memory::MemoryLayoutContext, name_mangling::Mangling, runtime::CoreLibrary};
@@ -292,7 +291,7 @@ impl<'ctx, 'a> CodeGen<'ctx, 'a> {
     fn emit_operand(&self, operand: &Operand) -> BasicValueEnum<'ctx> {
         let Operand { val, .. } = operand;
         match val.as_ref() {
-            OperandEnum::Imm(i) => {
+            OperandEnum::Imm(_) => {
                 panic!("not allowed to make unboxed immediate value")
             }
             OperandEnum::Literal(lit) => self.emit_literal_value(true, lit),
@@ -718,7 +717,7 @@ impl<'ctx, 'a> CodeGen<'ctx, 'a> {
         self.emit_boxed_bool(
             self.builder
                 .build_call(
-                    self.module.get_runtime_function_compare_str(),
+                    self.module.get_runtime_function_compare_string(),
                     &[
                         lhs.into(),
                         rhs.into(),
@@ -752,7 +751,7 @@ impl<'ctx, 'a> CodeGen<'ctx, 'a> {
     ) -> BasicValueEnum<'ctx> {
         use crate::ast::BinOp::*;
         if lhs.is_float_value() {
-            match op {
+            self.emit_boxed_f64(match op {
                 Plus => self
                     .builder
                     .build_float_add(lhs.into_float_value(), rhs.into_float_value(), "")
@@ -774,9 +773,9 @@ impl<'ctx, 'a> CodeGen<'ctx, 'a> {
                     .build_float_rem(lhs.into_float_value(), rhs.into_float_value(), "")
                     .as_basic_value_enum(),
                 _ => unreachable!(),
-            }
+            })
         } else if lhs.is_int_value() {
-            match op {
+            self.emit_boxed_i32(match op {
                 Plus => self
                     .builder
                     .build_int_add(lhs.into_int_value(), rhs.into_int_value(), "")
@@ -798,7 +797,7 @@ impl<'ctx, 'a> CodeGen<'ctx, 'a> {
                     .build_int_signed_rem(lhs.into_int_value(), rhs.into_int_value(), "")
                     .as_basic_value_enum(),
                 _ => unreachable!(),
-            }
+            })
         } else {
             unreachable!()
         }
@@ -962,12 +961,46 @@ impl<'ctx, 'a> CodeGen<'ctx, 'a> {
                     Plus | Sub | Mul | Div | Mod => self.emit_arithmetic_op(*op, lhs_res, rhs_res),
                 }
             }
-            UnaryOp(_, _) => todo!(),
+            UnaryOp(op, expr) => {
+                let expr = self.emit_unboxed_operand(expr);
+                use crate::ast::UnaryOp::*;
+                match op {
+                    Not => {
+                        if expr.is_int_value() {
+                            self.emit_boxed_bool(
+                                self.builder
+                                    .build_not(expr.into_int_value(), "")
+                                    .as_basic_value_enum(),
+                            )
+                        } else {
+                            unreachable!()
+                        }
+                    }
+                    Positive => expr,
+                    Negative => {
+                        if expr.is_float_value() {
+                            self.emit_boxed_f64(
+                                self.builder
+                                    .build_float_neg(expr.into_float_value(), "")
+                                    .as_basic_value_enum(),
+                            )
+                        } else if expr.is_int_value() {
+                            self.emit_boxed_i32(
+                                self.builder
+                                    .build_int_neg(expr.into_int_value(), "")
+                                    .as_basic_value_enum(),
+                            )
+                        } else {
+                            unreachable!()
+                        }
+                    }
+                }
+            }
             MakeTuple(_) => todo!(),
             Construct(_, _) => todo!(),
             Intrinsic(_, _) => todo!(),
             Index(_, _) => todo!(),
-            Operand(_) => todo!(),
+            Operand(operand) => self.emit_operand(operand),
             ExtractTupleField(_, _) => todo!(),
             ExtractEnumField(_, _, _) => todo!(),
             ExtractEnumTag(obj) => {
@@ -990,10 +1023,47 @@ impl<'ctx, 'a> CodeGen<'ctx, 'a> {
                     .as_basic_value_enum()
             }
             CombineByFoldWithAnd1(_) => todo!(),
-            UnboxBool(_) => todo!(),
-            UnboxInt32(_) => todo!(),
-            CompareStr(_, _) => todo!(),
-            CompareCInt32(_, _) => todo!(),
+            UnboxBool(operand) => {
+                let b = self.emit_unboxed_operand(operand);
+                self.builder
+                    .build_int_z_extend(b.into_int_value(), self.context.i32_type(), "")
+                    .as_basic_value_enum()
+            }
+            UnboxInt32(operand) => self.emit_unboxed_operand(operand),
+            CompareStr(var, lit) => {
+                let str_var = self.emit_operand(var);
+                let str_lit = self.emit_literal_value(false, lit);
+                let Literal::Str(s) = lit else { unreachable!() };
+
+                self.builder
+                    .build_call(
+                        self.module.get_runtime_function_compare_string_with_cstr(),
+                        &[
+                            str_var.into(),
+                            str_lit.into(),
+                            self.context
+                                .i32_type()
+                                .const_int(s.len() as u64, false)
+                                .into(),
+                        ],
+                        "",
+                    )
+                    .try_as_basic_value()
+                    .left()
+                    .unwrap()
+            }
+            CompareCInt32(var, imm) => {
+                let var = self.emit_unboxed_operand(var);
+
+                self.builder
+                    .build_int_compare(
+                        IntPredicate::EQ,
+                        var.into_int_value(),
+                        self.context.i32_type().const_int(*imm as u64, false),
+                        "",
+                    )
+                    .as_basic_value_enum()
+            }
         }
     }
 

@@ -134,8 +134,8 @@ pub enum ValueEnum {
     CombineByFoldWithAnd1(Vec<Operand>),
     UnboxBool(Operand),
     UnboxInt32(Operand),
-    CompareStr(Operand, Operand),
-    CompareCInt32(Operand, Operand),
+    CompareStr(Operand, Literal),
+    CompareCInt32(Operand, i32),
 }
 
 #[derive(Debug)]
@@ -971,10 +971,7 @@ impl<'a> FunctionBuilder<'a> {
                         left: Some(cmp_res),
                         right: Some(Value {
                             typ: self.ty_ctx.primitive_type(Primitive::CInt32),
-                            val: ValueEnum::CompareStr(
-                                matched.clone(),
-                                self.build_operand_from_literal(x.clone()),
-                            ),
+                            val: ValueEnum::CompareStr(matched.clone(), x.clone()),
                         }),
                         note: "compare string and returns an i32",
                     });
@@ -1179,7 +1176,7 @@ impl<'a> FunctionBuilder<'a> {
                         typ: self.ty_ctx.primitive_type(Primitive::CInt32),
                         val: ValueEnum::CompareCInt32(
                             self.build_operand_from_var_def(tag_var),
-                            self.build_operand_from_imm(ctor_idx as i32),
+                            ctor_idx as i32,
                         ),
                     }),
                     note: "compare tag and pattern",
@@ -2331,7 +2328,7 @@ impl Dump for (&TypeContext, &FuncDef, &ValueEnum) {
                     s,
                     "cmp-str {} {}",
                     (*ty_ctx, *func, op1).dump_string(),
-                    (*ty_ctx, *func, op2).dump_string()
+                    op2.dump_string()
                 )
                 .unwrap();
             }
@@ -2340,7 +2337,7 @@ impl Dump for (&TypeContext, &FuncDef, &ValueEnum) {
                     s,
                     "cmp-ci32 {} {}",
                     (*ty_ctx, *func, op1).dump_string(),
-                    (*ty_ctx, *func, op2).dump_string()
+                    op2
                 )
                 .unwrap();
             }

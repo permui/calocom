@@ -135,7 +135,8 @@ pub trait CoreLibrary<'ctx> {
     runtime_function!(i32_to_f64, 'ctx);
     runtime_function!(f64_to_i32, 'ctx);
 
-    runtime_function!(compare_str, 'ctx);
+    runtime_function!(compare_string, 'ctx);
+    runtime_function!(compare_string_with_cstr, 'ctx);
 
     runtime_type!(_Object, 'ctx);
     runtime_type!(_Unit, 'ctx);
@@ -199,7 +200,8 @@ impl<'ctx> CoreLibrary<'ctx> for Module<'ctx> {
     runtime_function_getter!(i32_to_f64, 'ctx);
     runtime_function_getter!(f64_to_i32, 'ctx);
     
-    runtime_function_getter!(compare_str, 'ctx);
+    runtime_function_getter!(compare_string, 'ctx);
+    runtime_function_getter!(compare_string_with_cstr, 'ctx);
 
     runtime_type_getter!(_Object, 'ctx);
     runtime_type_getter!(_Unit, 'ctx);

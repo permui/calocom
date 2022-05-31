@@ -4,7 +4,6 @@ use super::_ObjectType;
 use crate::alloc::alloc;
 use crate::panic::panic;
 
-use core::ptr::addr_of_mut;
 use libc::c_void;
 use libc::memcpy;
 
