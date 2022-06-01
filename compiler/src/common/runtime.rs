@@ -8,7 +8,12 @@ use inkwell::types::StructType;
 use inkwell::values::FunctionValue;
 use paste::paste;
 
+use crate::backend::name_mangling::Mangling;
+use crate::common::name_context::NameContext;
+use crate::common::type_context::CallKind;
 use crate::common::type_context::Primitive;
+use crate::common::type_context::TypeContext;
+use crate::common::type_context::TypeRef;
 
 macro_rules! runtime_function {
     ($fn_name:ident, $lf: lifetime) => {
@@ -59,6 +64,64 @@ macro_rules! runtime_type_getter {
                 self.get_struct_type(runtime_type_name_string!($ty_name)).expect("runtime type not found")
             }
         }
+    };
+}
+
+macro_rules! declare_library_function {
+    ($name_ctx: expr, $ty_ctx: expr; $($fn_name: ident).+ : || => $ret_type: ident) => {
+        $name_ctx
+            .insert_fully_qualified_symbol(
+                [$(stringify!($fn_name)),+].map(|s| s.to_string()).to_vec(),
+                $ty_ctx.callable_type(CallKind::Function, $ret_type, [].to_vec(), false),
+            )
+            .and_then(|_| -> Option<()> { unreachable!() });
+    };
+    ($name_ctx: expr, $ty_ctx: expr; $($fn_name: ident).+ : | $($param_type: ident),* | => $ret_type: ident) => {
+        $name_ctx
+            .insert_fully_qualified_symbol(
+                [$(stringify!($fn_name)),+].map(|s| s.to_string()).to_vec(),
+                $ty_ctx.callable_type(CallKind::Function, $ret_type, [$($param_type),*].to_vec(), false),
+            )
+            .and_then(|_| -> Option<()> { unreachable!() });
+    };
+}
+
+macro_rules! insert_library_function {
+    ($name_ctx: expr, $ty_ctx: expr, $module: expr; $($fn_name: ident).+ : || => $ret_type: ident) => {
+        let path = [$(stringify!($fn_name)),+].map(|s| s.to_string()).to_vec();
+        let path_ref = &path.as_slice();
+        let decorated_name = $ty_ctx.get_mangled_polymorphic_function_name(path_ref, $ret_type, &[]);
+        let function = $module
+            .get_function(decorated_name.as_str())
+            .unwrap_or_else(|| {
+                panic!(
+                    "function {}: {:?} doesn't exist",
+                    path.join("."),
+                    decorated_name.as_str()
+                )
+            });
+
+        $name_ctx
+            .insert_fully_qualified_symbol(path, function)
+            .and_then(|_| -> Option<()> { unreachable!() });
+    };
+    ($name_ctx: expr, $ty_ctx: expr, $module: expr; $($fn_name: ident).+ : | $($param_type: ident),* | => $ret_type: ident) => {
+        let path = [$(stringify!($fn_name)),+].map(|s| s.to_string()).to_vec();
+        let path_ref = &path.as_slice();
+        let decorated_name = $ty_ctx.get_mangled_polymorphic_function_name(path_ref, $ret_type, [$($param_type),*].to_vec().as_slice());
+        let function = $module
+            .get_function(decorated_name.as_str())
+            .unwrap_or_else(|| {
+                panic!(
+                    "function {}: {:?} doesn't exist",
+                    path.join("."),
+                    decorated_name.as_str()
+                )
+            });
+
+        $name_ctx
+            .insert_fully_qualified_symbol(path, function)
+            .and_then(|_| -> Option<()> { unreachable!() });
     };
 }
 
@@ -120,6 +183,14 @@ pub trait CoreLibrary<'ctx> {
     runtime_function!(alloc_tuple, 'ctx);
     runtime_function!(get_tuple_length, 'ctx);
     runtime_function!(extract_tuple_field, 'ctx);
+    runtime_function!(construct_tuple_1, 'ctx);
+    runtime_function!(construct_tuple_2, 'ctx);
+    runtime_function!(construct_tuple_3, 'ctx);
+    runtime_function!(construct_tuple_4, 'ctx);
+    runtime_function!(construct_tuple_5, 'ctx);
+    runtime_function!(construct_tuple_6, 'ctx);
+    runtime_function!(construct_tuple_7, 'ctx);
+    runtime_function!(construct_tuple_8, 'ctx);
 
     runtime_function!(alloc_enum, 'ctx);
     runtime_function!(extract_enum_field, 'ctx);
@@ -153,7 +224,6 @@ pub trait CoreLibrary<'ctx> {
 }
 
 impl<'ctx> CoreLibrary<'ctx> for Module<'ctx> {
-
     runtime_function_getter!(panic, 'ctx);
     runtime_function_getter!(entry_panic_block, 'ctx);
 
@@ -184,6 +254,14 @@ impl<'ctx> CoreLibrary<'ctx> for Module<'ctx> {
     runtime_function_getter!(alloc_tuple, 'ctx);
     runtime_function_getter!(get_tuple_length, 'ctx);
     runtime_function_getter!(extract_tuple_field, 'ctx);
+    runtime_function_getter!(construct_tuple_1, 'ctx);
+    runtime_function_getter!(construct_tuple_2, 'ctx);
+    runtime_function_getter!(construct_tuple_3, 'ctx);
+    runtime_function_getter!(construct_tuple_4, 'ctx);
+    runtime_function_getter!(construct_tuple_5, 'ctx);
+    runtime_function_getter!(construct_tuple_6, 'ctx);
+    runtime_function_getter!(construct_tuple_7, 'ctx);
+    runtime_function_getter!(construct_tuple_8, 'ctx);
 
     runtime_function_getter!(alloc_enum, 'ctx);
     runtime_function_getter!(extract_enum_field, 'ctx);
@@ -199,7 +277,7 @@ impl<'ctx> CoreLibrary<'ctx> for Module<'ctx> {
 
     runtime_function_getter!(i32_to_f64, 'ctx);
     runtime_function_getter!(f64_to_i32, 'ctx);
-    
+
     runtime_function_getter!(compare_string, 'ctx);
     runtime_function_getter!(compare_string_with_cstr, 'ctx);
 
@@ -237,4 +315,36 @@ impl<'ctx> CoreLibrary<'ctx> for Module<'ctx> {
         self.link_in_module(runtime_module)
             .expect("unable to link runtime module");
     }
+}
+
+pub fn create_library_function_signature(
+    name_ctx: &mut NameContext<TypeRef>,
+    type_ctx: &mut TypeContext,
+) {
+    let unit = type_ctx.primitive_type(Primitive::Unit);
+    let object = type_ctx.primitive_type(Primitive::Object);
+    let string = type_ctx.primitive_type(Primitive::Str);
+    let arr_of_str = type_ctx.array_type(string);
+
+    declare_library_function!(name_ctx, type_ctx; std.io.print: |object| => unit);
+    declare_library_function!(name_ctx, type_ctx; std.io.println: |object| => unit);
+    declare_library_function!(name_ctx, type_ctx; std.io.readln: || => string);
+    declare_library_function!(name_ctx, type_ctx; std.string.split: |string, string| => arr_of_str);
+}
+
+pub fn insert_library_function<'ctx>(
+    name_ctx: &mut NameContext<FunctionValue<'ctx>>,
+    type_ctx: &mut TypeContext,
+    module: &Module<'ctx>,
+) {
+    let unit = type_ctx.primitive_type(Primitive::Unit);
+    let object = type_ctx.primitive_type(Primitive::Object);
+    let string = type_ctx.primitive_type(Primitive::Str);
+    let arr_of_str = type_ctx.array_type(string);
+
+
+    insert_library_function!(name_ctx, type_ctx, module; std.io.print: |object| => unit);
+    insert_library_function!(name_ctx, type_ctx, module; std.io.println: |object| => unit);
+    insert_library_function!(name_ctx, type_ctx, module; std.io.readln: || => string);
+    insert_library_function!(name_ctx, type_ctx, module; std.string.split: |string, string| => arr_of_str);
 }

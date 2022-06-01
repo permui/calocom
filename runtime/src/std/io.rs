@@ -13,7 +13,7 @@ use libc::scanf;
 /// This function should not be called directly by other crates
 ///
 #[no_mangle]
-#[export_name = "TODO1"]
+#[export_name = "_CALOCOM_PF_3std2io5printfCuCo"]
 pub unsafe extern "C" fn print(p: *const _Object) -> *const _Unit {
     print_object(p);
     alloc_unit()
@@ -24,7 +24,7 @@ pub unsafe extern "C" fn print(p: *const _Object) -> *const _Unit {
 /// This function should not be called directly by other crates
 ///
 #[no_mangle]
-#[export_name = "TODO2"]
+#[export_name = "_CALOCOM_PF_3std2io7printlnfCuCo"]
 pub unsafe extern "C" fn println(p: *const _Object) -> *const _Unit {
     print_object(p);
     #[cfg(windows)]
@@ -54,7 +54,7 @@ pub extern "C" fn read_f64() -> *const _Float64 {
 }
 
 #[no_mangle]
-#[export_name = "TODO6"]
+#[export_name = "_CALOCOM_PF_3std2io6readlnfCs"]
 pub extern "C" fn readln() -> *const _String {
     const BUF_SIZE: usize = 16;
     let mut buffer: [c_char; BUF_SIZE] = Default::default();

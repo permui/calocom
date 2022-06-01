@@ -8,3 +8,6 @@ args = ["build", "--release"]
 
 [tasks.default]
 alias = "build"
+
+[tasks.to_home]
+alias = "build"

@@ -240,8 +240,8 @@ pub fn compile_with_arguments(args: Args) -> Result<(), ()> {
         let ctx = Context::create();
         let module_name = input_file.as_os_str().to_string_lossy();
         let module = ctx.create_module(module_name.as_ref());
-        let codegen = CodeGen::new(&ctx, module, &mir, args.runtime.as_path());
-        //codegen.emit_all(&mir);
+        let mut codegen = CodeGen::new(&ctx, module, &mir, args.runtime.as_path());
+        codegen.emit_all(&mir);
 
         Target::initialize_native(&InitializationConfig::default())
             .expect("Failed to initialize native target");

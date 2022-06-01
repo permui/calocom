@@ -7,3 +7,13 @@ alias = "build"
 
 [tasks.default]
 alias = "build"
+
+[tasks.to_home]
+dependencies = ["build"]
+script_runner = "@duckscript"
+script.main = '''
+cp ../target/release/deps/calocom_runtime.ll ../calocom_runtime.ll
+'''
+script.post = '''
+echo "calocom_runtime.ll copied."
+'''

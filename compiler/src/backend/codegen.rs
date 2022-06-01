@@ -14,10 +14,15 @@ use inkwell::{
 };
 use slotmap::SlotMap;
 
-use super::{memory::MemoryLayoutContext, name_mangling::Mangling, runtime::CoreLibrary};
+use super::{memory::MemoryLayoutContext, name_mangling::Mangling};
 use crate::{
     ast::{BinOp, Literal},
-    common::{name_context::NameContext, type_context::Primitive},
+    common::{
+        dump::Dump,
+        name_context::NameContext,
+        runtime::{insert_library_function, CoreLibrary},
+        type_context::{Primitive, TypeRef},
+    },
     midend::middle_ir::{
         Block, BlockRef, FuncDef, Operand, OperandEnum, Terminator, Value, VarDef, VarDefRef,
     },
@@ -202,6 +207,8 @@ impl<'ctx, 'a> CodeGen<'ctx, 'a> {
             &params_type_ref,
         );
 
+        dbg!(decorated_name.as_str());
+
         // create llvm function value
         let func = self
             .module
@@ -223,9 +230,7 @@ impl<'ctx, 'a> CodeGen<'ctx, 'a> {
 
         // build the alloca of return value and insert it to map
         let mut var_map = HashMap::new();
-        let ret_ptr = self
-            .builder
-            .build_alloca(ret_llvm_type.ptr_type(AddressSpace::Generic), "ret.var.ptr");
+        let ret_ptr = self.builder.build_alloca(ret_llvm_type, "ret.var.ptr");
         var_map.insert(ret_var_ref, ret_ptr);
 
         self.current_function = Some(FunctionEmissionState {
@@ -266,12 +271,13 @@ impl<'ctx, 'a> CodeGen<'ctx, 'a> {
 
         let var_map = &self.current_function.as_ref().unwrap().var_map;
         for stmt in &block.stmts {
+            dbg!(&stmt);
             let rhs = self.emit_value(stmt.right.as_ref().unwrap());
             if let Some(left) = &stmt.left {
                 let &ptr = var_map
                     .get(left)
                     .unwrap_or_else(|| panic!("variable map doesn't contains the var"));
-                self.builder.build_store(ptr, rhs);
+                self.builder.build_store(dbg!(ptr), dbg!(rhs));
             }
         }
     }
@@ -430,7 +436,7 @@ impl<'ctx, 'a> CodeGen<'ctx, 'a> {
             Literal::Bool(b) => {
                 let b = self
                     .context
-                    .i32_type()
+                    .bool_type()
                     .const_int(*b as u64, false)
                     .as_basic_value_enum();
                 if need_boxing {
@@ -547,7 +553,7 @@ impl<'ctx, 'a> CodeGen<'ctx, 'a> {
             .unwrap()
     }
 
-    fn convert_to_valid_boolean_value(&self, value: IntValue<'ctx>) -> BasicValueEnum<'ctx> {
+    fn convert_to_boolean(&self, value: IntValue<'ctx>) -> BasicValueEnum<'ctx> {
         self.builder
             .build_int_compare(
                 IntPredicate::NE,
@@ -555,6 +561,12 @@ impl<'ctx, 'a> CodeGen<'ctx, 'a> {
                 value.get_type().const_int(0, false),
                 "",
             )
+            .as_basic_value_enum()
+    }
+
+    fn extend_to_i32(&self, value: IntValue<'ctx>) -> BasicValueEnum<'ctx> {
+        self.builder
+            .build_int_z_extend(value, self.context.i32_type(), "")
             .as_basic_value_enum()
     }
 
@@ -566,7 +578,7 @@ impl<'ctx, 'a> CodeGen<'ctx, 'a> {
     ) -> BasicValueEnum<'ctx> {
         use crate::ast::BinOp::*;
         self.emit_boxed_bool(
-            self.convert_to_valid_boolean_value(match op {
+            self.convert_to_boolean(match op {
                 And => self
                     .builder
                     .build_and(lhs.into_int_value(), rhs.into_int_value(), ""),
@@ -803,6 +815,91 @@ impl<'ctx, 'a> CodeGen<'ctx, 'a> {
         }
     }
 
+    fn emit_construct_tuple(&self, fields: &[Operand]) -> BasicValueEnum<'ctx> {
+        let args: Vec<_> = fields
+            .iter()
+            .map(|arg| self.emit_operand(arg).into())
+            .collect();
+
+        let function = match args.len() {
+            0 => panic!("can't make a tuple without any fields"),
+            1 => self.module.get_runtime_function_construct_tuple_1(),
+            2 => self.module.get_runtime_function_construct_tuple_2(),
+            3 => self.module.get_runtime_function_construct_tuple_3(),
+            4 => self.module.get_runtime_function_construct_tuple_4(),
+            5 => self.module.get_runtime_function_construct_tuple_5(),
+            6 => self.module.get_runtime_function_construct_tuple_6(),
+            7 => self.module.get_runtime_function_construct_tuple_7(),
+            8 => self.module.get_runtime_function_construct_tuple_8(),
+            _ => panic!("too many fields "),
+        };
+
+        self.builder
+            .build_call(function, &args, "")
+            .try_as_basic_value()
+            .left()
+            .unwrap()
+    }
+
+    fn convert_number_type(
+        &self,
+        source: BasicValueEnum<'ctx>,
+        source_type: TypeRef,
+        target_type: TypeRef,
+    ) -> BasicValueEnum<'ctx> {
+        let ty_ctx = self.memory_layout_ctx.get_mir_type_context();
+        if target_type == ty_ctx.primitive_type(Primitive::Object)
+            && source_type != ty_ctx.primitive_type(Primitive::CInt32)
+        {
+            return self
+                .builder
+                .build_pointer_cast(
+                    source.into_pointer_value(),
+                    self.module
+                        .get_runtime_type__Object()
+                        .ptr_type(AddressSpace::Generic),
+                    "",
+                )
+                .as_basic_value_enum();
+        }
+
+        if target_type == ty_ctx.primitive_type(Primitive::Float64)
+            && source_type == ty_ctx.primitive_type(Primitive::Int32)
+        {
+            return self
+                .builder
+                .build_call(
+                    self.module.get_runtime_function_i32_to_f64(),
+                    &[source.into()],
+                    "",
+                )
+                .try_as_basic_value()
+                .left()
+                .unwrap();
+        }
+
+        if target_type == ty_ctx.primitive_type(Primitive::Int32)
+            && source_type == ty_ctx.primitive_type(Primitive::Float64)
+        {
+            return self
+                .builder
+                .build_call(
+                    self.module.get_runtime_function_f64_to_i32(),
+                    &[source.into()],
+                    "",
+                )
+                .try_as_basic_value()
+                .left()
+                .unwrap();
+        }
+
+        panic!(
+            "not supported type conversion: {} to {}",
+            (ty_ctx, source_type).dump_string(),
+            (ty_ctx, target_type).dump_string()
+        )
+    }
+
     fn emit_value(&self, value: &Value) -> BasicValueEnum<'ctx> {
         let Value { typ, val } = value;
         use crate::midend::middle_ir::ValueEnum::*;
@@ -812,7 +909,10 @@ impl<'ctx, 'a> CodeGen<'ctx, 'a> {
                     .iter()
                     .map(|arg| self.emit_operand(arg).into())
                     .collect();
-                let function = self.function_value_ctx.find_symbol(path).unwrap();
+                let function = self
+                    .function_value_ctx
+                    .find_symbol(path)
+                    .unwrap_or_else(|| panic!("unable to find function {}", path.join(".")));
                 // NOTE: void function not allowed in calocom, so choose the left
                 self.builder
                     .build_call(function, &args, "")
@@ -996,13 +1096,96 @@ impl<'ctx, 'a> CodeGen<'ctx, 'a> {
                     }
                 }
             }
-            MakeTuple(_) => todo!(),
-            Construct(_, _) => todo!(),
-            Intrinsic(_, _) => todo!(),
-            Index(_, _) => todo!(),
+            MakeTuple(args) => self.emit_construct_tuple(args),
+            Construct(discriminant, args) => {
+                let args_tuple = self.emit_construct_tuple(args);
+
+                self.builder
+                    .build_call(
+                        self.module.get_runtime_function_construct_enum(),
+                        &[
+                            self.context
+                                .i32_type()
+                                .const_int(*discriminant as u64, false)
+                                .into(),
+                            args_tuple.into(),
+                        ],
+                        "",
+                    )
+                    .try_as_basic_value()
+                    .left()
+                    .unwrap()
+            }
+            Intrinsic(name, args) => {
+                if *name == "convert" {
+                    assert!(args.len() == 1);
+                    let src = self.emit_operand(&args[0]);
+
+                    let src_type = args[0].typ;
+                    let target_type = *typ;
+
+                    self.convert_number_type(src, src_type, target_type)
+                } else {
+                    panic!("intrinsic {} not exist", name);
+                }
+            }
+            Index(array, index) => {
+                let array = self.emit_operand(array);
+                let array_index = self.emit_operand(index);
+
+                self.builder
+                    .build_call(
+                        self.module.get_runtime_function_array_index(),
+                        &[array.into(), array_index.into()],
+                        "",
+                    )
+                    .try_as_basic_value()
+                    .left()
+                    .unwrap()
+            }
             Operand(operand) => self.emit_operand(operand),
-            ExtractTupleField(_, _) => todo!(),
-            ExtractEnumField(_, _, _) => todo!(),
+            ExtractTupleField(operand, index) => {
+                let tuple = self.emit_operand(operand);
+
+                self.builder
+                    .build_call(
+                        self.module.get_runtime_function_extract_tuple_field(),
+                        &[
+                            tuple.into(),
+                            self.context
+                                .i32_type()
+                                .const_int(*index as u64, false)
+                                .into(),
+                        ],
+                        "",
+                    )
+                    .try_as_basic_value()
+                    .left()
+                    .unwrap()
+            }
+            ExtractEnumField(discriminant, operand, index) => {
+                let enumeration = self.emit_operand(operand);
+
+                self.builder
+                    .build_call(
+                        self.module.get_runtime_function_extract_tuple_field(),
+                        &[
+                            enumeration.into(),
+                            self.context
+                                .i32_type()
+                                .const_int(*discriminant as u64, false)
+                                .into(),
+                            self.context
+                                .i32_type()
+                                .const_int(*index as u64, false)
+                                .into(),
+                        ],
+                        "",
+                    )
+                    .try_as_basic_value()
+                    .left()
+                    .unwrap()
+            }
             ExtractEnumTag(obj) => {
                 let obj = self.emit_operand(obj);
                 let enum_type = self
@@ -1022,12 +1205,26 @@ impl<'ctx, 'a> CodeGen<'ctx, 'a> {
                     .unwrap()
                     .as_basic_value_enum()
             }
-            CombineByFoldWithAnd1(_) => todo!(),
+            CombineByFoldWithAnd1(args) => {
+                let args: Vec<_> = args
+                    .iter()
+                    .map(|arg| -> BasicMetadataValueEnum<'ctx> {
+                        self.convert_to_boolean(self.emit_unboxed_operand(arg).into_int_value())
+                            .into()
+                    })
+                    .collect();
+
+                let result = args
+                    .iter()
+                    .fold(self.context.i32_type().const_int(1, false), |a, b| {
+                        self.builder.build_and(a, b.into_int_value(), "")
+                    });
+
+                self.extend_to_i32(self.convert_to_boolean(result).into_int_value())
+            }
             UnboxBool(operand) => {
                 let b = self.emit_unboxed_operand(operand);
-                self.builder
-                    .build_int_z_extend(b.into_int_value(), self.context.i32_type(), "")
-                    .as_basic_value_enum()
+                self.extend_to_i32(b.into_int_value())
             }
             UnboxInt32(operand) => self.emit_unboxed_operand(operand),
             CompareStr(var, lit) => {
@@ -1088,8 +1285,33 @@ impl<'ctx, 'a> CodeGen<'ctx, 'a> {
             self.builder.position_at_end(*llvm_block);
 
             match &block.terminator {
-                Terminator::Branch(var, then, or) => todo!(),
-                Terminator::Select(var, choices, other) => todo!(),
+                Terminator::Branch(cond, then, or) => {
+                    let cond = self.emit_unboxed_operand(cond);
+                    let cond = self.convert_to_boolean(cond.into_int_value());
+                    self.builder.build_conditional_branch(
+                        cond.into_int_value(),
+                        *block_map.get(then).unwrap(),
+                        *block_map.get(or).unwrap(),
+                    );
+                }
+                Terminator::Select(cond, choices, other) => {
+                    let cond = var_map.get(cond).unwrap();
+                    let cond = self.builder.build_load(*cond, "");
+                    let choices: Vec<_> = choices
+                        .iter()
+                        .map(|(i, block_ref)| {
+                            (
+                                self.context.i32_type().const_int(*i as u64, false),
+                                *block_map.get(block_ref).unwrap(),
+                            )
+                        })
+                        .collect();
+                    self.builder.build_switch(
+                        cond.into_int_value(),
+                        *block_map.get(other).unwrap(),
+                        &choices,
+                    );
+                }
                 Terminator::Jump(x) => {
                     let target = block_map.get(x).unwrap();
                     self.builder.build_unconditional_branch(*target);
@@ -1111,9 +1333,16 @@ impl<'ctx, 'a> CodeGen<'ctx, 'a> {
     }
 
     pub fn emit_all(&mut self, mir: &'a MiddleIR) {
+        self.function_value_ctx.entry_scope();
+        insert_library_function(
+            &mut self.function_value_ctx,
+            self.memory_layout_ctx.get_mut_mir_type_context(),
+            self.module.as_ref(),
+        );
         for func in mir.module.iter() {
             self.emit_fn(func);
         }
+        self.function_value_ctx.exit_scope();
         self.module.verify().unwrap();
     }
 }

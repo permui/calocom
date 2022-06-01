@@ -8,7 +8,7 @@ use inkwell::types::{BasicMetadataTypeEnum, BasicType, BasicTypeEnum, FunctionTy
 use inkwell::AddressSpace;
 use strum::IntoEnumIterator;
 
-use super::runtime::{CoreLibrary, RuntimeType};
+use crate::common::runtime::{CoreLibrary, RuntimeType};
 use crate::common::type_context::*;
 
 pub struct MemoryLayoutContext<'ctx> {
@@ -22,6 +22,10 @@ pub struct MemoryLayoutContext<'ctx> {
 impl<'ctx> MemoryLayoutContext<'ctx> {
     pub fn get_mir_type_context(&self) -> &TypeContext {
         &self.ty_ctx
+    }
+
+    pub fn get_mut_mir_type_context(&mut self) -> &mut TypeContext {
+        &mut self.ty_ctx
     }
 
     fn initialize(&mut self) {

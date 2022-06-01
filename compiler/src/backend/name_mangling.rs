@@ -172,7 +172,7 @@ impl Mangling for TypeContext {
             } else {
                 Some(&context)
             }),
-            full_path.base().as_ref(),
+            Self::get_mangled_identifier(full_path.base()),
             self.get_mangled_function_signature(ret_type, params)
         )
     }

@@ -2,7 +2,7 @@ use std::{panic, vec};
 
 use crate::common::{
     name_context::NameContext,
-    type_context::{CallKind, Primitive, Type, TypeContext, TypeRef},
+    type_context::{CallKind, Primitive, Type, TypeContext, TypeRef}, runtime::create_library_function_signature,
 };
 
 #[derive(Debug)]
@@ -160,25 +160,6 @@ pub struct TypedAST {
     pub name_ctx: NameContext<TypeRef>,
     pub ty_ctx: TypeContext,
     pub module: Vec<TypedFuncDef>,
-}
-
-macro_rules! declare_library_function {
-    ($name_ctx: expr, $ty_ctx: expr; $($fn_name: ident).+ : || => $ret_type: ident) => {
-        $name_ctx
-            .insert_fully_qualified_symbol(
-                [$(stringify!($fn_name)),+].map(|s| s.to_string()).to_vec(),
-                $ty_ctx.callable_type(CallKind::Function, $ret_type, [].to_vec(), false),
-            )
-            .and_then(|_| -> Option<()> { unreachable!() });
-    };
-    ($name_ctx: expr, $ty_ctx: expr; $($fn_name: ident).+ : | $($param_type: ident),* | => $ret_type: ident) => {
-        $name_ctx
-            .insert_fully_qualified_symbol(
-                [$(stringify!($fn_name)),+].map(|s| s.to_string()).to_vec(),
-                $ty_ctx.callable_type(CallKind::Function, $ret_type, [$($param_type),*].to_vec(), false),
-            )
-            .and_then(|_| -> Option<()> { unreachable!() });
-    };
 }
 
 impl From<&crate::ast::ComplexPattern> for TypedASTComplexPattern {
@@ -1113,15 +1094,7 @@ impl TypedAST {
     }
 
     fn create_library_function_signature(&mut self) {
-        let unit = self.ty_ctx.primitive_type(Primitive::Unit);
-        let object = self.ty_ctx.primitive_type(Primitive::Object);
-        let string = self.ty_ctx.primitive_type(Primitive::Str);
-        let arr_of_str = self.ty_ctx.array_type(string);
-
-        declare_library_function!(self.name_ctx, self.ty_ctx; std.io.print: |object| => unit);
-        declare_library_function!(self.name_ctx, self.ty_ctx; std.io.println: |object| => unit);
-        declare_library_function!(self.name_ctx, self.ty_ctx; std.io.readline: || => string);
-        declare_library_function!(self.name_ctx, self.ty_ctx; std.string.split: |string, string| => arr_of_str);
+        create_library_function_signature(&mut self.name_ctx, &mut self.ty_ctx);
     }
 
     pub fn create_from_ast(module: &crate::ast::Module) -> Self {
