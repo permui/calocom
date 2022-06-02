@@ -136,6 +136,7 @@ pub enum ValueEnum {
     UnboxInt32(Operand),
     CompareStr(Operand, Literal),
     CompareCInt32(Operand, i32),
+    IncreaseIndVar(Operand),
 }
 
 #[derive(Debug)]
@@ -483,14 +484,10 @@ impl<'a> FunctionBuilder<'a> {
         self.change_terminator_at_position(Terminator::Jump(check_block));
 
         self.insert_stmt_at_position(Stmt {
-            left: Some(ind_var),
+            left: None,
             right: Some(Value {
-                typ: self.ty_ctx.primitive_type(Primitive::Bool),
-                val: ValueEnum::BinaryOp(
-                    BinOp::Plus,
-                    self.build_operand_from_imm(1),
-                    self.build_operand_from_var_def(ind_var),
-                ),
+                typ: range_l.typ,
+                val: ValueEnum::IncreaseIndVar(self.build_operand_from_var_def(ind_var)),
             }),
             note: "for induction variable increment",
         });
@@ -1708,7 +1705,7 @@ impl<'a> FunctionBuilder<'a> {
             left: Some(call_result),
             right: Some(Value {
                 typ: ret_type,
-                val: ValueEnum::Call(path.to_vec(), args_operands),
+                val: ValueEnum::Call(self.name_ctx.get_full_symbol_path(path), args_operands),
             }),
             note: "make a call here",
         });
@@ -2340,6 +2337,9 @@ impl Dump for (&TypeContext, &FuncDef, &ValueEnum) {
                     op2
                 )
                 .unwrap();
+            }
+            ValueEnum::IncreaseIndVar(op) => {
+                write!(s, "inc {}", (*ty_ctx, *func, op).dump_string(),).unwrap()
             }
         }
         s

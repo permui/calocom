@@ -1,4 +1,4 @@
-use libc::{c_void, calloc, size_t};
+use libc::{c_void, calloc, free, size_t};
 
 use super::panic::panic;
 use super::types::*;
@@ -13,6 +13,15 @@ pub extern "C" fn alloc(size: size_t) -> *mut c_void {
         }
         ptr
     }
+}
+
+/// # Safety
+///
+/// This function should not be called directly by other crates
+#[no_mangle]
+#[export_name = "__calocom_runtime_dealloc"]
+pub unsafe extern "C" fn dealloc(ptr: *mut c_void) {
+    free(ptr);
 }
 
 #[no_mangle]

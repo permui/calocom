@@ -29,3 +29,12 @@ pub extern "C" fn alloc_f64_literal(i: f64) -> *mut _Float64 {
 pub unsafe extern "C" fn extract_f64(obj: *const _Float64, _dummy: f64) -> f64 {
     (*obj).data
 }
+
+/// # Safety
+///
+/// This function should not be called directly by other crates
+#[export_name = "__calocom_runtime_increase_f64"]
+pub unsafe extern "C" fn increase_f64(obj: *mut _Float64) -> *mut _Float64 {
+    (*obj).data += 1.;
+    obj
+}

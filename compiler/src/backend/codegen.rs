@@ -5,7 +5,7 @@ use inkwell::{
     builder::Builder,
     context::Context,
     module::Module,
-    types::{BasicMetadataTypeEnum, BasicType, PointerType},
+    types::{BasicMetadataTypeEnum, BasicType, BasicTypeEnum, PointerType},
     values::{
         BasicMetadataValueEnum, BasicValue, BasicValueEnum, CallableValue, FunctionValue, IntValue,
         PointerValue,
@@ -152,17 +152,17 @@ impl<'ctx, 'a> CodeGen<'ctx, 'a> {
             .as_basic_value_enum()
     }
 
-    fn emit_fn(&mut self, mir_func: &'a FuncDef) {
+    fn emit_fn_declaration(&mut self, mir_func: &'a FuncDef) {
         let FuncDef {
             name,
-            blocks,
+            blocks: _,
             variables,
             params,
-            captured,
-            locals,
-            temporaries,
-            obj_reference,
-            unwrapped,
+            captured: _,
+            locals: _,
+            temporaries: _,
+            obj_reference: _,
+            unwrapped: _,
             return_value,
             entry_block: _,
             return_block: _,
@@ -222,6 +222,63 @@ impl<'ctx, 'a> CodeGen<'ctx, 'a> {
         self.function_value_ctx
             .insert_symbol(name.to_string(), func)
             .and_then(|_| -> Option<()> { panic!("duplicate function value") });
+    }
+
+    fn emit_fn(&mut self, mir_func: &'a FuncDef) {
+        let FuncDef {
+            name,
+            blocks,
+            variables,
+            params,
+            captured,
+            locals,
+            temporaries,
+            obj_reference,
+            unwrapped,
+            return_value,
+            entry_block: _,
+            return_block: _,
+            panic_block: _,
+        } = mir_func;
+
+        let mem_ctx = &self.memory_layout_ctx;
+
+        // get the llvm type of return value
+        let ret_var_ref = *return_value.as_ref().unwrap();
+        let ret_var = variables.get(ret_var_ref).unwrap();
+        let ret_type_ref = ret_var.typ;
+        let ret_llvm_type = mem_ctx
+            .get_llvm_type(ret_type_ref)
+            .ptr_type(AddressSpace::Generic);
+
+        // get the llvm type of parameters
+        let mut params_llvm_type: Vec<BasicMetadataTypeEnum<'ctx>> = vec![];
+        let mut params_type_ref = vec![];
+        for var_ref in params.iter() {
+            let param_var = variables.get(*var_ref).unwrap();
+            let param_type_ref = param_var.typ;
+            let typ = mem_ctx
+                .get_llvm_type(param_var.typ)
+                .ptr_type(AddressSpace::Generic);
+            params_llvm_type.push(typ.into());
+            params_type_ref.push(param_type_ref);
+        }
+
+        // generate mangled name
+        let ty_ctx = mem_ctx.get_mir_type_context();
+        let decorated_name = ty_ctx.get_mangled_polymorphic_function_name(
+            &[name.to_string()].as_slice(),
+            ret_type_ref,
+            &params_type_ref,
+        );
+
+        dbg!(decorated_name.as_str());
+
+        // create llvm function value
+        let func = self
+            .module
+            .get_function(decorated_name.as_str())
+            .unwrap_or_else(|| unreachable!());
 
         // create all basic blocks and alloca block
         let (block_map, entry_block) = CodeGen::emit_basic_blocks(self.context, func, blocks);
@@ -372,17 +429,25 @@ impl<'ctx, 'a> CodeGen<'ctx, 'a> {
     }
 
     fn emit_cast_closure_value_to_base(&self, closure: BasicValueEnum<'ctx>) -> PointerValue<'ctx> {
-        if !closure.is_pointer_value() {
+        self.emit_cast_value_pointer(closure, self.module.get_runtime_type__Closure().into())
+    }
+
+    fn emit_cast_object_value_to_base(&self, object: BasicValueEnum<'ctx>) -> PointerValue<'ctx> {
+        self.emit_cast_value_pointer(object, self.module.get_runtime_type__Object().into())
+    }
+
+    fn emit_cast_value_pointer(
+        &self,
+        object: BasicValueEnum<'ctx>,
+        target: BasicTypeEnum<'ctx>,
+    ) -> PointerValue<'ctx> {
+        if !object.is_pointer_value() {
             panic!("not a pointer to closure");
         }
-        let ptr = closure.into_pointer_value();
-        let converted = self.builder.build_pointer_cast(
-            ptr,
-            self.module
-                .get_runtime_type__Closure()
-                .ptr_type(AddressSpace::Generic),
-            "",
-        );
+        let ptr = object.into_pointer_value();
+        let converted =
+            self.builder
+                .build_pointer_cast(ptr, target.ptr_type(AddressSpace::Generic), "");
         converted
     }
 
@@ -818,7 +883,10 @@ impl<'ctx, 'a> CodeGen<'ctx, 'a> {
     fn emit_construct_tuple(&self, fields: &[Operand]) -> BasicValueEnum<'ctx> {
         let args: Vec<_> = fields
             .iter()
-            .map(|arg| self.emit_operand(arg).into())
+            .map(|arg| {
+                self.emit_cast_object_value_to_base(self.emit_operand(arg))
+                    .into()
+            })
             .collect();
 
         let function = match args.len() {
@@ -1040,7 +1108,13 @@ impl<'ctx, 'a> CodeGen<'ctx, 'a> {
                 let t1 = lhs.typ;
                 let t2 = rhs.typ;
 
-                assert!(t1 == t2);
+                if t1 != t2 {
+                    panic!(
+                        "{} != {}",
+                        (self.memory_layout_ctx.get_mir_type_context(), t1).dump_string(),
+                        (self.memory_layout_ctx.get_mir_type_context(), t2).dump_string(),
+                    );
+                }
 
                 use crate::ast::BinOp::*;
                 if t1
@@ -1096,26 +1170,44 @@ impl<'ctx, 'a> CodeGen<'ctx, 'a> {
                     }
                 }
             }
-            MakeTuple(args) => self.emit_construct_tuple(args),
-            Construct(discriminant, args) => {
-                let args_tuple = self.emit_construct_tuple(args);
-
-                self.builder
-                    .build_call(
-                        self.module.get_runtime_function_construct_enum(),
-                        &[
-                            self.context
-                                .i32_type()
-                                .const_int(*discriminant as u64, false)
-                                .into(),
-                            args_tuple.into(),
-                        ],
-                        "",
-                    )
-                    .try_as_basic_value()
-                    .left()
-                    .unwrap()
-            }
+            MakeTuple(args) => self
+                .emit_cast_value_pointer(
+                    self.emit_construct_tuple(args),
+                    self.memory_layout_ctx.get_llvm_type(*typ),
+                )
+                .into(),
+            Construct(discriminant, args) => self
+                .emit_cast_value_pointer(
+                    self.builder
+                        .build_call(
+                            self.module.get_runtime_function_construct_enum(),
+                            &[
+                                self.context
+                                    .i32_type()
+                                    .const_int(*discriminant as u64, false)
+                                    .into(),
+                                if args.is_empty() {
+                                    self.module
+                                        .get_runtime_type__Object()
+                                        .ptr_type(AddressSpace::Generic)
+                                        .const_null()
+                                        .as_basic_value_enum()
+                                        .into()
+                                } else {
+                                    self.emit_cast_object_value_to_base(
+                                        self.emit_construct_tuple(args),
+                                    )
+                                    .into()
+                                },
+                            ],
+                            "",
+                        )
+                        .try_as_basic_value()
+                        .left()
+                        .unwrap(),
+                    self.memory_layout_ctx.get_llvm_type(*typ),
+                )
+                .into(),
             Intrinsic(name, args) => {
                 if *name == "convert" {
                     assert!(args.len() == 1);
@@ -1130,18 +1222,25 @@ impl<'ctx, 'a> CodeGen<'ctx, 'a> {
                 }
             }
             Index(array, index) => {
-                let array = self.emit_operand(array);
+                let array = self.emit_cast_value_pointer(
+                    self.emit_operand(array),
+                    self.module.get_runtime_type__Array().into(),
+                );
                 let array_index = self.emit_operand(index);
 
-                self.builder
-                    .build_call(
-                        self.module.get_runtime_function_array_index(),
-                        &[array.into(), array_index.into()],
-                        "",
-                    )
-                    .try_as_basic_value()
-                    .left()
-                    .unwrap()
+                self.emit_cast_value_pointer(
+                    self.builder
+                        .build_call(
+                            self.module.get_runtime_function_array_index(),
+                            &[array.into(), array_index.into()],
+                            "",
+                        )
+                        .try_as_basic_value()
+                        .left()
+                        .unwrap(),
+                    self.memory_layout_ctx.get_llvm_type(*typ),
+                )
+                .into()
             }
             Operand(operand) => self.emit_operand(operand),
             ExtractTupleField(operand, index) => {
@@ -1261,6 +1360,44 @@ impl<'ctx, 'a> CodeGen<'ctx, 'a> {
                     )
                     .as_basic_value_enum()
             }
+            IncreaseIndVar(var) => {
+                let typ = var.typ;
+                let var = self.emit_operand(var);
+
+                if typ
+                    == self
+                        .memory_layout_ctx
+                        .get_mir_type_context()
+                        .primitive_type(Primitive::Int32)
+                {
+                    self.builder
+                        .build_call(
+                            self.module.get_runtime_function_increase_i32(),
+                            &[var.into()],
+                            "",
+                        )
+                        .try_as_basic_value()
+                        .left()
+                        .unwrap()
+                } else if typ
+                    == self
+                        .memory_layout_ctx
+                        .get_mir_type_context()
+                        .primitive_type(Primitive::Float64)
+                {
+                    self.builder
+                        .build_call(
+                            self.module.get_runtime_function_increase_f64(),
+                            &[var.into()],
+                            "",
+                        )
+                        .try_as_basic_value()
+                        .left()
+                        .unwrap()
+                } else {
+                    unreachable!()
+                }
+            }
         }
     }
 
@@ -1339,6 +1476,9 @@ impl<'ctx, 'a> CodeGen<'ctx, 'a> {
             self.memory_layout_ctx.get_mut_mir_type_context(),
             self.module.as_ref(),
         );
+        for func in mir.module.iter() {
+            self.emit_fn_declaration(func);
+        }
         for func in mir.module.iter() {
             self.emit_fn(func);
         }

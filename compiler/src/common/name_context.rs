@@ -64,6 +64,35 @@ where
         rc.as_ref().borrow().get(key).cloned()
     }
 
+    pub fn get_full_symbol_path(&self, key: &[String]) -> Vec<String> {
+        if key.len() == 1 {
+            return if self.env.find_symbol(key[0].as_str()).is_some() {
+                vec![key[0].to_string()]
+            } else if let Some(ctor_env) = self.ctor_env.as_ref() {
+                ctor_env
+                    .as_ref()
+                    .borrow()
+                    .get(key[0].as_str())
+                    .map_or_else(Vec::new, |_| vec![key[0].to_string()])
+            } else {
+                vec![]
+            };
+        } else if let Some(path) = self.import_env.get(key.root()) {
+            let fully_qualified_name = key.suffix().unwrap().with_prefix(path);
+            if self
+                .fully_qualified_name_env
+                .get(&fully_qualified_name)
+                .is_some()
+            {
+                return fully_qualified_name;
+            }
+        }
+        if self.fully_qualified_name_env.get(key).is_some() {
+            return key.to_vec();
+        }
+        vec![]
+    }
+
     pub fn find_symbol(&self, key: &[String]) -> Option<T> {
         if key.is_empty() {
             panic!("empty symbol name")

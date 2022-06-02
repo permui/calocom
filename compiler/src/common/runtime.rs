@@ -171,6 +171,7 @@ pub trait CoreLibrary<'ctx> {
     runtime_function!(alloc_i32, 'ctx);
     runtime_function!(alloc_i32_literal, 'ctx);
     runtime_function!(extract_i32, 'ctx);
+    runtime_function!(increase_i32, 'ctx);
 
     runtime_function!(alloc_bool, 'ctx);
     runtime_function!(alloc_bool_literal, 'ctx);
@@ -179,6 +180,7 @@ pub trait CoreLibrary<'ctx> {
     runtime_function!(alloc_f64, 'ctx);
     runtime_function!(alloc_f64_literal, 'ctx);
     runtime_function!(extract_f64, 'ctx);
+    runtime_function!(increase_f64, 'ctx);
 
     runtime_function!(alloc_tuple, 'ctx);
     runtime_function!(get_tuple_length, 'ctx);
@@ -242,6 +244,7 @@ impl<'ctx> CoreLibrary<'ctx> for Module<'ctx> {
     runtime_function_getter!(alloc_i32, 'ctx);
     runtime_function_getter!(alloc_i32_literal, 'ctx);
     runtime_function_getter!(extract_i32, 'ctx);
+    runtime_function_getter!(increase_i32, 'ctx);
 
     runtime_function_getter!(alloc_bool, 'ctx);
     runtime_function_getter!(alloc_bool_literal, 'ctx);
@@ -250,6 +253,7 @@ impl<'ctx> CoreLibrary<'ctx> for Module<'ctx> {
     runtime_function_getter!(alloc_f64, 'ctx);
     runtime_function_getter!(alloc_f64_literal, 'ctx);
     runtime_function_getter!(extract_f64, 'ctx);
+    runtime_function_getter!(increase_f64, 'ctx);
 
     runtime_function_getter!(alloc_tuple, 'ctx);
     runtime_function_getter!(get_tuple_length, 'ctx);
