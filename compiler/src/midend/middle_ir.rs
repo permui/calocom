@@ -430,19 +430,17 @@ impl<'a> FunctionBuilder<'a> {
 
         self.var_ctx.entry_scope();
 
-        // this is the induction variable
+        // this is the induction variable and variable for termination value
         let ind_var =
             self.create_variable(Some(var_name), range_l.typ, VariableKind::LocalVariable);
-
-        // we assign the initial value to the induction variable
-        self.build_expr_and_assign_to(range_l, Some(ind_var));
-
-        // we calculate the termination value of the for range
         let term_value = self.create_variable(
             Some("for.range.terminate"),
             range_r.typ,
             VariableKind::TemporaryVariable,
         );
+        // we assign the initial value to the induction variable
+        self.build_expr_and_assign_to(range_l, Some(ind_var));
+        self.build_expr_and_assign_to(range_r, Some(term_value));
 
         // allow to find the reference to induction variable
         if var_name != "_" {
@@ -1416,8 +1414,7 @@ impl<'a> FunctionBuilder<'a> {
             );
 
             // create next block for possible following comparison
-            let next_try_block =
-                self.create_block(Some("arm.check"), None);
+            let next_try_block = self.create_block(Some("arm.check"), None);
 
             // create expr block to do the work of expr
             let expr_block = self.create_block(Some("arm"), Some(Terminator::Jump(end_block)));

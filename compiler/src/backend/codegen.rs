@@ -24,14 +24,15 @@ use crate::{
         type_context::{Primitive, TypeRef},
     },
     midend::middle_ir::{
-        Block, BlockRef, FuncDef, Operand, OperandEnum, Terminator, Value, VarDef, VarDefRef,
+        Block, BlockRef, FuncDef, Operand, OperandEnum, Terminator, Value, ValueEnum, VarDef,
+        VarDefRef,
     },
     MiddleIR,
 };
 
 #[derive(Debug)]
 pub struct FunctionEmissionState<'ctx, 'a> {
-    var_map: HashMap<VarDefRef, PointerValue<'ctx>>,
+    var_map: HashMap<VarDefRef, (bool, PointerValue<'ctx>)>,
     block_map: HashMap<BlockRef, BasicBlock<'ctx>>,
     func: FunctionValue<'ctx>,
     alloca_block: BasicBlock<'ctx>,
@@ -82,7 +83,7 @@ impl<'ctx, 'a> CodeGen<'ctx, 'a> {
         &mut self,
         slots: &SlotMap<VarDefRef, VarDef>,
         variables: &[VarDefRef],
-        need_extra_ptr: bool,
+        ptr_level: usize,
     ) {
         CodeGen::set_insert_position_before_terminator(
             &self.builder,
@@ -90,20 +91,19 @@ impl<'ctx, 'a> CodeGen<'ctx, 'a> {
         );
         for var_ref in variables.iter().copied() {
             let var = slots.get(var_ref).unwrap();
-            let typ = self.memory_layout_ctx.get_llvm_type(var.typ);
-            let stack_slot = self.builder.build_alloca(
-                if need_extra_ptr {
-                    typ.ptr_type(AddressSpace::Generic).into()
-                } else {
-                    typ
-                },
-                var.name.as_str(),
-            );
+            let mut typ = self.memory_layout_ctx.get_llvm_type(var.typ);
+            assert!((0..=2).contains(&ptr_level));
+            for _ in 0..ptr_level {
+                typ = typ.ptr_type(AddressSpace::Generic).as_basic_type_enum();
+            }
+            let stack_slot = self
+                .builder
+                .build_alloca(dbg!(typ), dbg!(var.name.as_str()));
             self.current_function
                 .as_mut()
                 .unwrap()
                 .var_map
-                .insert(var_ref, stack_slot);
+                .insert(var_ref, (ptr_level == 2, stack_slot));
         }
     }
 
@@ -195,7 +195,6 @@ impl<'ctx, 'a> CodeGen<'ctx, 'a> {
             &params_type_ref,
         );
 
-
         // create llvm function value
         let func = self
             .module
@@ -273,7 +272,7 @@ impl<'ctx, 'a> CodeGen<'ctx, 'a> {
         // build the alloca of return value and insert it to map
         let mut var_map = HashMap::new();
         let ret_ptr = self.builder.build_alloca(ret_llvm_type, "ret.var.ptr");
-        var_map.insert(ret_var_ref, ret_ptr);
+        var_map.insert(ret_var_ref, (false, ret_ptr));
 
         self.current_function = Some(FunctionEmissionState {
             var_map,
@@ -284,12 +283,12 @@ impl<'ctx, 'a> CodeGen<'ctx, 'a> {
             var_slotmap: variables,
         });
 
-        self.emit_local_alloca(variables, captured, true);
-        self.emit_local_alloca(variables, params, true);
-        self.emit_local_alloca(variables, locals, true);
-        self.emit_local_alloca(variables, temporaries, true);
-        self.emit_local_alloca(variables, obj_reference, true);
-        self.emit_local_alloca(variables, unwrapped, false);
+        self.emit_local_alloca(variables, captured, 1);
+        self.emit_local_alloca(variables, params, 1);
+        self.emit_local_alloca(variables, locals, 1);
+        self.emit_local_alloca(variables, temporaries, 1);
+        self.emit_local_alloca(variables, obj_reference, 2);
+        self.emit_local_alloca(variables, unwrapped, 0);
 
         // store the arguments into local variables
         self.emit_arguments_store(params);
@@ -300,7 +299,7 @@ impl<'ctx, 'a> CodeGen<'ctx, 'a> {
         self.emit_basic_block_terminators(blocks);
     }
 
-    fn emit_all_stmts(&self, blocks: &SlotMap<BlockRef, Block>) {
+    fn emit_all_stmts(&mut self, blocks: &SlotMap<BlockRef, Block>) {
         let block_map = &self.current_function.as_ref().unwrap().block_map;
         for (bb_ref, bb) in blocks {
             let llvm_bb = block_map.get(&bb_ref).unwrap();
@@ -311,27 +310,45 @@ impl<'ctx, 'a> CodeGen<'ctx, 'a> {
     fn emit_stmts(&self, block: &Block, llvm_block: &BasicBlock) {
         CodeGen::set_insert_position_before_terminator(&self.builder, llvm_block);
 
-        let var_map = &self.current_function.as_ref().unwrap().var_map;
         for stmt in &block.stmts {
-            let rhs = self.emit_value(stmt.right.as_ref().unwrap());
+            let rhs = stmt.right.as_ref().unwrap();
+            let rhs_ret_ref = matches!(&rhs.val, ValueEnum::Index(_, _));
+            let rhs = self.emit_value(rhs);
             if let Some(left) = &stmt.left {
-                let &ptr = var_map
-                    .get(left)
-                    .unwrap_or_else(|| panic!("variable map doesn't contains the var"));
-                self.builder.build_store(ptr, rhs);
+                let ptr = self.emit_stack_slot(*left, rhs_ret_ref);
+                self.builder
+                    .build_store(dbg!(ptr.into_pointer_value()), dbg!(rhs));
             }
         }
     }
 
     fn emit_variable(&self, var: VarDefRef) -> BasicValueEnum<'ctx> {
-        let ptr = self
+        let &(is_ref, ptr) = self
             .current_function
             .as_ref()
             .unwrap()
             .var_map
             .get(&var)
             .unwrap_or_else(|| panic!("variable map doesn't contains the var"));
-        let bv: BasicValueEnum = self.builder.build_load(*ptr, "");
+        let mut bv: BasicValueEnum = self.builder.build_load(ptr, "");
+        if is_ref {
+            bv = self.builder.build_load(bv.into_pointer_value(), "");
+        }
+        bv
+    }
+
+    fn emit_stack_slot(&self, var: VarDefRef, do_not_deref: bool) -> BasicValueEnum<'ctx> {
+        let &(is_ref, ptr) = self
+            .current_function
+            .as_ref()
+            .unwrap()
+            .var_map
+            .get(&var)
+            .unwrap_or_else(|| panic!("variable map doesn't contains the var"));
+        let mut bv: BasicValueEnum = ptr.into();
+        if is_ref && !do_not_deref {
+            bv = self.builder.build_load(bv.into_pointer_value(), "");
+        }
         bv
     }
 
@@ -491,23 +508,26 @@ impl<'ctx, 'a> CodeGen<'ctx, 'a> {
                 }
             }
             Literal::Bool(b) => {
-                let b = self
-                    .context
-                    .bool_type()
-                    .const_int(*b as u64, false)
-                    .as_basic_value_enum();
                 if need_boxing {
                     self.builder
                         .build_call(
                             self.module.get_runtime_function_alloc_bool_literal(),
-                            &[b.into()],
+                            &[self
+                                .context
+                                .bool_type()
+                                .const_int(*b as u64, false)
+                                .as_basic_value_enum()
+                                .into()],
                             "",
                         )
                         .try_as_basic_value()
                         .left()
                         .unwrap()
                 } else {
-                    b
+                    self.context
+                        .i32_type()
+                        .const_int(*b as u64, false)
+                        .as_basic_value_enum()
                 }
             }
             Literal::Float(f) => {
@@ -1227,6 +1247,7 @@ impl<'ctx, 'a> CodeGen<'ctx, 'a> {
                 );
                 let array_index = self.emit_operand(index);
 
+                // NOTICE: we return a 2-level pointer here
                 self.emit_cast_value_pointer(
                     self.builder
                         .build_call(
@@ -1236,8 +1257,12 @@ impl<'ctx, 'a> CodeGen<'ctx, 'a> {
                         )
                         .try_as_basic_value()
                         .left()
-                        .unwrap(),
-                    self.memory_layout_ctx.get_llvm_type(*typ),
+                        .unwrap()
+                        .as_basic_value_enum(),
+                    self.memory_layout_ctx
+                        .get_llvm_type(*typ)
+                        .ptr_type(AddressSpace::Generic)
+                        .into(),
                 )
                 .into()
             }
@@ -1407,18 +1432,17 @@ impl<'ctx, 'a> CodeGen<'ctx, 'a> {
 
     fn emit_arguments_store(&mut self, params: &[VarDefRef]) {
         let func = self.current_function.as_ref().unwrap().func;
-        let var_map = &mut self.current_function.as_mut().unwrap().var_map;
         for (idx, var) in params.iter().enumerate() {
-            let stack_slot = var_map.get(var).expect("expect a slack slot");
+            let stack_slot = self.emit_stack_slot(*var, false);
             let arg = func.get_nth_param(idx as u32).expect("expect an argument");
-            self.builder.build_store(*stack_slot, arg);
+            self.builder
+                .build_store(dbg!(stack_slot.into_pointer_value()), dbg!(arg));
         }
     }
 
     fn emit_basic_block_terminators(&self, blocks: &SlotMap<BlockRef, Block>) {
         let state = self.current_function.as_ref().unwrap();
         let ret_var_ptr = state.ret_value;
-        let var_map = &state.var_map;
         let block_map = &state.block_map;
 
         for (block_ref, block) in blocks.iter() {
@@ -1436,8 +1460,7 @@ impl<'ctx, 'a> CodeGen<'ctx, 'a> {
                     );
                 }
                 Terminator::Select(cond, choices, other) => {
-                    let cond = var_map.get(cond).unwrap();
-                    let cond = self.builder.build_load(*cond, "");
+                    let cond = self.emit_variable(*cond);
                     let choices: Vec<_> = choices
                         .iter()
                         .map(|(i, block_ref)| {

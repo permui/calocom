@@ -54,7 +54,7 @@ pub unsafe fn print_object(p: *const _Object) {
                 }
                 print_object(
                     (addr_of!((*t).data) as *const *const _Object)
-                        .add(len)
+                        .add(i)
                         .read(),
                 );
             }
