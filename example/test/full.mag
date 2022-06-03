@@ -238,4 +238,5 @@ main: () -> () {
     );
     io.println(test_type_implicit_casting(1, 2.0));
     io.println(test_fib(30));
+    io.println(std.string.split("a,b,c,d,e,f,g", ","));
 }

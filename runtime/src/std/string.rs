@@ -1,5 +1,6 @@
 use libc::strpbrk;
 
+use crate::console::print_object;
 use crate::types::_Object;
 use crate::types::alloc_array;
 use crate::types::alloc_string_literal;
@@ -35,6 +36,7 @@ pub unsafe extern "C" fn split(s: *const _String, delim: *const _String) -> *con
             let seg_len = p.offset_from(c) as usize;
             let str = alloc_string_literal(seg_len, c);
             array_push_back(arr, str as *mut _Object);
+            p = p.add(1);
         }
     }
 

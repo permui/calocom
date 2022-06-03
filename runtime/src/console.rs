@@ -4,6 +4,7 @@ use crate::types::*;
 use core::ptr::addr_of;
 use libc::c_char;
 use libc::c_int;
+use libc::isprint;
 use libc::printf;
 use libc::putchar;
 
@@ -18,11 +19,27 @@ pub unsafe fn print_object(p: *const _Object) {
         }
         _ObjectType::Str => {
             let s = p as *const _String;
-            printf(
-                const_cstr!("%.*s").as_ptr(),
-                (*s).len,
-                addr_of!((*s).data) as *const c_char,
-            );
+            putchar(b'\"' as c_int);
+            for i in 0..(*s).len {
+                let c = *(addr_of!((*s).data) as *const c_char).add(i as usize) as u8;
+                match c {
+                    b'\0' => printf(const_cstr!("\\0").as_ptr()),
+                    b'\n' => printf(const_cstr!("\\n").as_ptr()),
+                    b'\r' => printf(const_cstr!("\\r").as_ptr()),
+                    b'\t' => printf(const_cstr!("\\t").as_ptr()),
+                    b'\\' => printf(const_cstr!("\\\\").as_ptr()),
+                    b'\'' => printf(const_cstr!("\\\'").as_ptr()),
+                    b'\"' => printf(const_cstr!("\\\"").as_ptr()),
+                    _ => {
+                        if isprint(c as c_int) != 0 {
+                            putchar(c as c_int)
+                        } else {
+                            printf(const_cstr!("\\x%02x").as_ptr(), c as c_int)
+                        }
+                    }
+                };
+            }
+            putchar(b'\"' as c_int);
         }
         _ObjectType::Int32 => {
             let i = p as *const _Int32;
@@ -52,11 +69,7 @@ pub unsafe fn print_object(p: *const _Object) {
                     putchar(',' as c_int);
                     putchar(' ' as c_int);
                 }
-                print_object(
-                    (addr_of!((*t).data) as *const *const _Object)
-                        .add(i)
-                        .read(),
-                );
+                print_object((addr_of!((*t).data) as *const *const _Object).add(i).read());
             }
             printf(const_cstr!(")").as_ptr());
         }
@@ -78,9 +91,9 @@ pub unsafe fn print_object(p: *const _Object) {
                     putchar(',' as c_int);
                     putchar(' ' as c_int);
                 }
-                print_object(((*a).data as *const *const _Object).add(len).read());
+                print_object(((*a).data as *const *const _Object).add(i).read());
             }
-            printf(const_cstr!(")").as_ptr());
+            printf(const_cstr!("]").as_ptr());
         }
     }
 }

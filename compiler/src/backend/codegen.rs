@@ -994,11 +994,15 @@ impl<'ctx, 'a> CodeGen<'ctx, 'a> {
                     .find_symbol(path)
                     .unwrap_or_else(|| panic!("unable to find function {}", path.join(".")));
                 // NOTE: void function not allowed in calocom, so choose the left
-                self.builder
-                    .build_call(function, &args, "")
-                    .try_as_basic_value()
-                    .left()
-                    .unwrap()
+                self.emit_cast_value_pointer(
+                    self.builder
+                        .build_call(function, &args, "")
+                        .try_as_basic_value()
+                        .left()
+                        .unwrap(),
+                    self.memory_layout_ctx.get_llvm_type(*typ),
+                )
+                .into()
             }
             ExtCall(path, args) => {
                 let args: Vec<_> = args
@@ -1010,11 +1014,15 @@ impl<'ctx, 'a> CodeGen<'ctx, 'a> {
                     .find_symbol(path)
                     .unwrap_or_else(|| panic!("unable to find function {}", path.join(".")));
                 // NOTE: void function not allowed in calocom, so choose the left
-                self.builder
-                    .build_call(function, &args, "")
-                    .try_as_basic_value()
-                    .left()
-                    .unwrap()
+                self.emit_cast_value_pointer(
+                    self.builder
+                        .build_call(function, &args, "")
+                        .try_as_basic_value()
+                        .left()
+                        .unwrap(),
+                    self.memory_layout_ctx.get_llvm_type(*typ),
+                )
+                .into()
             }
             ExtractClosureCapture(var, index) => {
                 let closure = self.emit_variable(*var);
