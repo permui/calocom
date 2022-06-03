@@ -483,7 +483,7 @@ impl<'a> FunctionBuilder<'a> {
         self.change_terminator_at_position(Terminator::Jump(check_block));
 
         self.insert_stmt_at_position(Stmt {
-            left: None,
+            left: Some(ind_var),
             right: Some(Value {
                 typ: range_l.typ,
                 val: ValueEnum::IncreaseIndVar(self.build_operand_from_var_def(ind_var)),

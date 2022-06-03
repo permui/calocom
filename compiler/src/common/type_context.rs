@@ -395,6 +395,13 @@ impl TypeContext {
         }
     }
 
+    pub fn get_array_base_type(&self, typ: TypeRef) -> Option<TypeRef> {
+        match self.types.get(typ).unwrap() {
+            Type::Array(elem) => Some(*elem),
+            _ => None,
+        }
+    }
+
     pub fn get_reference_base_type(&self, typ: TypeRef) -> Option<TypeRef> {
         match self.types.get(typ).unwrap() {
             Type::Reference { refer } => Some(*refer.as_ref().left().unwrap()),
@@ -438,12 +445,22 @@ impl TypeContext {
         self.is_arithmetic_type(t1) && self.is_arithmetic_type(t2)
     }
 
+    pub fn is_array_compatible(&self, t1: TypeRef, t2: TypeRef) -> bool {
+        matches!((
+            self.get_array_base_type(t1),
+            self.get_array_base_type(t2),
+        ), (Some(t1), Some(t2))
+        if self.is_type_eq(t1, self.primitive_type(Primitive::Object))
+            || self.is_type_eq(t2, self.primitive_type(Primitive::Object)))
+    }
+
     // if true, both types are compatible when doing assignment
     pub fn is_type_compatible(&self, t1: TypeRef, t2: TypeRef) -> bool {
         self.is_type_eq(t1, t2) // the same nominal type
             || self.is_arithmetic_compatible(t1, t2) // can be cast 
             || self.is_type_eq(t1, self.primitive_type(Primitive::Object)) // unsafe cast due to polymorphism
             || self.is_type_eq(t2, self.primitive_type(Primitive::Object)) // unsafe cast due to polymorphism
+            || self.is_array_compatible(t1, t2)   // one is array of array
             || self.is_t1_reference_of_t2(t1, t2) // one is reference and the other is the referred type
             || self.is_t1_reference_of_t2(t2, t1)
     }

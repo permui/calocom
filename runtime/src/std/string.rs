@@ -1,6 +1,5 @@
 use libc::strpbrk;
 
-use crate::console::print_object;
 use crate::types::_Object;
 use crate::types::alloc_array;
 use crate::types::alloc_string_literal;

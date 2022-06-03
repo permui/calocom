@@ -93,18 +93,19 @@ test_nat_ctor_2: (n: Nat) -> Nat {
     S(n)
 }
 
-test_array: (arr: [i32]) -> i32 {
+test_array: () -> [i32] {
+    let arr: [i32] = std.array.new(5, \ (_: i32) -> i32 => 2);
     arr[0] = 1;
-    arr[0]
-}
-
-test_ret_array: (arr: [[i32]]) -> [[i32]] {
     arr
 }
 
-test_ret_assign: (arr: [[[i32]]]) -> i32 {
-    test_ret_array(arr[0])[1][2] = 3;
-    test_ret_array(arr[4])[5][6]
+test_complex_array: () -> [[i32]] {
+    let arr: [[i32]] = std.array.new(5, \ (_: i32) -> [i32] => std.array.new(5, \ (_: i32) -> i32 => 0));
+    for i in 0 .. 5 {
+        io.println(i);
+        arr[i][i] = i;
+    };
+    arr
 }
 
 test_wildcard: (_: i32) -> i32 {
@@ -200,6 +201,10 @@ test_fib: (n: i32) -> i32 {
     }
 }
 
+test_string_split: () -> [str] {
+    std.string.split("a,b,c,d,e,f,g", ",")
+}
+
 main: () -> () {
     io.println(test_equality("test", 0, 0.0) == true);
     io.println(test_if() == 1);
@@ -238,5 +243,7 @@ main: () -> () {
     );
     io.println(test_type_implicit_casting(1, 2.0));
     io.println(test_fib(30));
-    io.println(std.string.split("a,b,c,d,e,f,g", ","));
+    io.println(test_string_split());
+    io.println(test_array());
+    io.println(test_complex_array());
 }

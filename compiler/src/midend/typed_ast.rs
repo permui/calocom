@@ -1,8 +1,10 @@
 use std::{panic, vec};
 
 use crate::common::{
+    dump::Dump,
     name_context::NameContext,
-    type_context::{CallKind, Primitive, Type, TypeContext, TypeRef}, runtime::create_library_function_signature,
+    runtime::create_library_function_signature,
+    type_context::{CallKind, Primitive, Type, TypeContext, TypeRef},
 };
 
 #[derive(Debug)]
@@ -294,7 +296,11 @@ impl TypedAST {
         let type_ref = self.resolve_type(None, typ, false);
         let typed_expr = self.check_type_of_expr(expr);
         if !self.ty_ctx.is_type_compatible(type_ref, typed_expr.typ) {
-            panic!("initializer of variable {var_name} has incorrect type");
+            panic!(
+                "initializer of variable {var_name} has incorrect type: {}, {}",
+                (&self.ty_ctx, type_ref).dump_string(),
+                (&self.ty_ctx, typed_expr.typ).dump_string()
+            );
         }
 
         if var_name != "_" {
@@ -872,7 +878,9 @@ impl TypedAST {
             Or | And => self.ty_ctx.primitive_type(Primitive::Bool),
             Eq | Ne => self.ty_ctx.primitive_type(Primitive::Bool),
             Le | Ge | Lt | Gt => self.ty_ctx.primitive_type(Primitive::Bool),
-            Plus | Sub | Mul | Div | Mod => self.ty_ctx.determine_promoted_type(left.typ, right.typ),
+            Plus | Sub | Mul | Div | Mod => {
+                self.ty_ctx.determine_promoted_type(left.typ, right.typ)
+            }
         };
 
         TypedExpr {

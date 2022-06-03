@@ -96,9 +96,7 @@ impl<'ctx, 'a> CodeGen<'ctx, 'a> {
             for _ in 0..ptr_level {
                 typ = typ.ptr_type(AddressSpace::Generic).as_basic_type_enum();
             }
-            let stack_slot = self
-                .builder
-                .build_alloca(dbg!(typ), dbg!(var.name.as_str()));
+            let stack_slot = self.builder.build_alloca(typ, var.name.as_str());
             self.current_function
                 .as_mut()
                 .unwrap()
@@ -316,8 +314,7 @@ impl<'ctx, 'a> CodeGen<'ctx, 'a> {
             let rhs = self.emit_value(rhs);
             if let Some(left) = &stmt.left {
                 let ptr = self.emit_stack_slot(*left, rhs_ret_ref);
-                self.builder
-                    .build_store(dbg!(ptr.into_pointer_value()), dbg!(rhs));
+                self.builder.build_store(ptr.into_pointer_value(), rhs);
             }
         }
     }
@@ -973,6 +970,22 @@ impl<'ctx, 'a> CodeGen<'ctx, 'a> {
                 .unwrap();
         }
 
+        if let (Some(source_elem), Some(target_elem)) = (
+            ty_ctx.get_array_base_type(source_type),
+            ty_ctx.get_array_base_type(target_type),
+        ) {
+            if source_elem == ty_ctx.primitive_type(Primitive::Object)
+                || target_elem == ty_ctx.primitive_type(Primitive::Object)
+            {
+                return self
+                    .emit_cast_value_pointer(
+                        source,
+                        self.memory_layout_ctx.get_llvm_type(target_type),
+                    )
+                    .as_basic_value_enum();
+            }
+        }
+
         panic!(
             "not supported type conversion: {} to {}",
             (ty_ctx, source_type).dump_string(),
@@ -1444,7 +1457,7 @@ impl<'ctx, 'a> CodeGen<'ctx, 'a> {
             let stack_slot = self.emit_stack_slot(*var, false);
             let arg = func.get_nth_param(idx as u32).expect("expect an argument");
             self.builder
-                .build_store(dbg!(stack_slot.into_pointer_value()), dbg!(arg));
+                .build_store(stack_slot.into_pointer_value(), arg);
         }
     }
 
