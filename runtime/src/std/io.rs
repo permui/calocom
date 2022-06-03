@@ -34,7 +34,7 @@ pub unsafe extern "C" fn println(p: *const _Object) -> *const _Unit {
 }
 
 #[no_mangle]
-#[export_name = "TODO4"]
+#[export_name = "_CALOCOM_PF_3std2io8read_i32fCi4"]
 pub extern "C" fn read_i32() -> *const _Int32 {
     let mut n = 0;
     unsafe {
@@ -44,7 +44,7 @@ pub extern "C" fn read_i32() -> *const _Int32 {
 }
 
 #[no_mangle]
-#[export_name = "TODO5"]
+#[export_name = "_CALOCOM_PF_3std2io8read_f64fCf8"]
 pub extern "C" fn read_f64() -> *const _Float64 {
     let mut n = 0.;
     unsafe {

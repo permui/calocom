@@ -332,11 +332,15 @@ pub fn create_library_function_signature(
     let unit = type_ctx.primitive_type(Primitive::Unit);
     let object = type_ctx.primitive_type(Primitive::Object);
     let string = type_ctx.primitive_type(Primitive::Str);
+    let t_i32 = type_ctx.primitive_type(Primitive::Int32);
+    let t_f64 = type_ctx.primitive_type(Primitive::Float64);
     let arr_of_str = type_ctx.array_type(string);
 
     declare_library_function!(name_ctx, type_ctx; std.io.print: |object| => unit);
     declare_library_function!(name_ctx, type_ctx; std.io.println: |object| => unit);
     declare_library_function!(name_ctx, type_ctx; std.io.readln: || => string);
+    declare_library_function!(name_ctx, type_ctx; std.io.read_f64: || => t_f64);
+    declare_library_function!(name_ctx, type_ctx; std.io.read_i32: || => t_i32);
     declare_library_function!(name_ctx, type_ctx; std.string.split: |string, string| => arr_of_str);
 }
 
@@ -348,11 +352,14 @@ pub fn insert_library_function<'ctx>(
     let unit = type_ctx.primitive_type(Primitive::Unit);
     let object = type_ctx.primitive_type(Primitive::Object);
     let string = type_ctx.primitive_type(Primitive::Str);
+    let t_i32 = type_ctx.primitive_type(Primitive::Int32);
+    let t_f64 = type_ctx.primitive_type(Primitive::Float64);
     let arr_of_str = type_ctx.array_type(string);
-
 
     insert_library_function!(name_ctx, type_ctx, module; std.io.print: |object| => unit);
     insert_library_function!(name_ctx, type_ctx, module; std.io.println: |object| => unit);
     insert_library_function!(name_ctx, type_ctx, module; std.io.readln: || => string);
+    insert_library_function!(name_ctx, type_ctx, module; std.io.read_f64: || => t_f64);
+    insert_library_function!(name_ctx, type_ctx, module; std.io.read_i32: || => t_i32);
     insert_library_function!(name_ctx, type_ctx, module; std.string.split: |string, string| => arr_of_str);
 }
