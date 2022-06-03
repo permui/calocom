@@ -125,7 +125,7 @@ macro_rules! insert_library_function {
     };
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(PartialEq, Eq)]
 pub enum RuntimeType {
     Object,
     Str,
@@ -136,6 +136,8 @@ pub enum RuntimeType {
     CInt32,
     Array,
     Closure,
+    Enum,
+    Tuple,
 }
 
 impl From<Primitive> for RuntimeType {
@@ -307,6 +309,8 @@ impl<'ctx> CoreLibrary<'ctx> for Module<'ctx> {
             RuntimeType::CInt32 => context.i32_type().into(),
             RuntimeType::Array => self.get_runtime_type__Array().into(),
             RuntimeType::Closure => self.get_runtime_type__Closure().into(),
+            RuntimeType::Enum => self.get_runtime_type__Enum().into(),
+            RuntimeType::Tuple => self.get_runtime_type__Tuple().into(),
         }
     }
 

@@ -20,7 +20,7 @@ fn panic(_panic: &::core::panic::PanicInfo<'_>) -> ! {
 }
 
 extern "C" {
-    #[link_name = "TODO"]
+    #[link_name = "_CALOCOM_PF_$4mainfCu"]
     fn user_main() -> *mut types::_Unit;
 }
 

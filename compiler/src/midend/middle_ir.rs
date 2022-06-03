@@ -128,6 +128,7 @@ pub enum ValueEnum {
     Intrinsic(&'static str, Vec<Operand>),
     Index(Operand, Operand),
     Operand(Operand),
+    UnboxedOperand(Operand),
     ExtractTupleField(Operand, usize),
     ExtractEnumField(usize, Operand, usize),
     ExtractEnumTag(Operand),
@@ -475,8 +476,8 @@ impl<'a> FunctionBuilder<'a> {
 
         self.change_terminator_at_position(Terminator::Branch(
             self.build_operand_from_var_def(cond_check_var),
-            body_block,
             end_block,
+            body_block,
         ));
 
         self.position = Some(body_block);
@@ -1261,7 +1262,7 @@ impl<'a> FunctionBuilder<'a> {
                     left: Some(check_status),
                     right: Some(Value {
                         typ: self.ty_ctx.primitive_type(Primitive::CInt32),
-                        val: ValueEnum::Operand(self.build_operand_from_imm(0)),
+                        val: ValueEnum::UnboxedOperand(self.build_operand_from_imm(0)),
                     }),
                     note: "check not passed",
                 });
@@ -1273,6 +1274,8 @@ impl<'a> FunctionBuilder<'a> {
 
                 let check_end_block =
                     self.create_block(Some("match.arm.check.tuple.end"), Some(current));
+
+                self.change_terminator_at_position(Terminator::Jump(check_end_block));
 
                 let check_field_result_var: Vec<_> = fields
                     .iter()
@@ -1371,7 +1374,7 @@ impl<'a> FunctionBuilder<'a> {
                     left: Some(check_status),
                     right: Some(Value {
                         typ: self.ty_ctx.primitive_type(Primitive::CInt32),
-                        val: ValueEnum::Operand(self.build_operand_from_imm(1)),
+                        val: ValueEnum::UnboxedOperand(self.build_operand_from_imm(1)),
                     }),
                     note: "check passed",
                 });
@@ -1381,7 +1384,7 @@ impl<'a> FunctionBuilder<'a> {
                     left: Some(check_status),
                     right: Some(Value {
                         typ: self.ty_ctx.primitive_type(Primitive::CInt32),
-                        val: ValueEnum::Operand(self.build_operand_from_imm(1)),
+                        val: ValueEnum::UnboxedOperand(self.build_operand_from_imm(1)),
                     }),
                     note: "check passed",
                 });
@@ -1414,7 +1417,7 @@ impl<'a> FunctionBuilder<'a> {
 
             // create next block for possible following comparison
             let next_try_block =
-                self.create_block(Some("arm.check"), Some(Terminator::Jump(end_block)));
+                self.create_block(Some("arm.check"), None);
 
             // create expr block to do the work of expr
             let expr_block = self.create_block(Some("arm"), Some(Terminator::Jump(end_block)));
@@ -2251,8 +2254,10 @@ impl Dump for (&TypeContext, &FuncDef, &ValueEnum) {
                 )
                 .unwrap();
             }
-
             ValueEnum::Operand(operand) => {
+                write!(s, "{}", (*ty_ctx, *func, operand).dump_string()).unwrap();
+            }
+            ValueEnum::UnboxedOperand(operand) => {
                 write!(s, "{}", (*ty_ctx, *func, operand).dump_string()).unwrap();
             }
             ValueEnum::MakeClosure { path, capture } => {

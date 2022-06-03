@@ -5,7 +5,7 @@ use inkwell::{
     builder::Builder,
     context::Context,
     module::Module,
-    types::{BasicMetadataTypeEnum, BasicType, BasicTypeEnum, PointerType},
+    types::{BasicMetadataTypeEnum, BasicType, BasicTypeEnum},
     values::{
         BasicMetadataValueEnum, BasicValue, BasicValueEnum, CallableValue, FunctionValue, IntValue,
         PointerValue,
@@ -20,7 +20,7 @@ use crate::{
     common::{
         dump::Dump,
         name_context::NameContext,
-        runtime::{insert_library_function, CoreLibrary},
+        runtime::{insert_library_function, CoreLibrary, RuntimeType},
         type_context::{Primitive, TypeRef},
     },
     midend::middle_ir::{
@@ -140,18 +140,6 @@ impl<'ctx, 'a> CodeGen<'ctx, 'a> {
         (map, entry)
     }
 
-    // NOTICE: 2022.4 clang & llvm begin to fully support opaque pointer type,
-    // llvm may deprecate normal typed pointer in the future
-    fn emit_pointer_cast(
-        &self,
-        ptr: PointerValue<'ctx>,
-        typ: PointerType<'ctx>,
-    ) -> BasicValueEnum<'ctx> {
-        self.builder
-            .build_pointer_cast(ptr, typ, "")
-            .as_basic_value_enum()
-    }
-
     fn emit_fn_declaration(&mut self, mir_func: &'a FuncDef) {
         let FuncDef {
             name,
@@ -207,7 +195,6 @@ impl<'ctx, 'a> CodeGen<'ctx, 'a> {
             &params_type_ref,
         );
 
-        dbg!(decorated_name.as_str());
 
         // create llvm function value
         let func = self
@@ -272,8 +259,6 @@ impl<'ctx, 'a> CodeGen<'ctx, 'a> {
             &params_type_ref,
         );
 
-        dbg!(decorated_name.as_str());
-
         // create llvm function value
         let func = self
             .module
@@ -281,9 +266,9 @@ impl<'ctx, 'a> CodeGen<'ctx, 'a> {
             .unwrap_or_else(|| unreachable!());
 
         // create all basic blocks and alloca block
-        let (block_map, entry_block) = CodeGen::emit_basic_blocks(self.context, func, blocks);
         let alloca_block = self.context.append_basic_block(func, "alloca");
         CodeGen::set_insert_position_before_terminator(&self.builder, &alloca_block);
+        let (block_map, entry_block) = CodeGen::emit_basic_blocks(self.context, func, blocks);
 
         // build the alloca of return value and insert it to map
         let mut var_map = HashMap::new();
@@ -328,13 +313,12 @@ impl<'ctx, 'a> CodeGen<'ctx, 'a> {
 
         let var_map = &self.current_function.as_ref().unwrap().var_map;
         for stmt in &block.stmts {
-            dbg!(&stmt);
             let rhs = self.emit_value(stmt.right.as_ref().unwrap());
             if let Some(left) = &stmt.left {
                 let &ptr = var_map
                     .get(left)
                     .unwrap_or_else(|| panic!("variable map doesn't contains the var"));
-                self.builder.build_store(dbg!(ptr), dbg!(rhs));
+                self.builder.build_store(ptr, rhs);
             }
         }
     }
@@ -355,7 +339,7 @@ impl<'ctx, 'a> CodeGen<'ctx, 'a> {
         let Operand { val, .. } = operand;
         match val.as_ref() {
             OperandEnum::Imm(_) => {
-                panic!("not allowed to make unboxed immediate value")
+                panic!("not allowed to make boxed immediate value")
             }
             OperandEnum::Literal(lit) => self.emit_literal_value(true, lit),
             OperandEnum::Var(var) => self.emit_variable(*var),
@@ -429,11 +413,19 @@ impl<'ctx, 'a> CodeGen<'ctx, 'a> {
     }
 
     fn emit_cast_closure_value_to_base(&self, closure: BasicValueEnum<'ctx>) -> PointerValue<'ctx> {
-        self.emit_cast_value_pointer(closure, self.module.get_runtime_type__Closure().into())
+        self.emit_cast_value_pointer(closure, self.module.get_calocom_type(RuntimeType::Closure))
     }
 
     fn emit_cast_object_value_to_base(&self, object: BasicValueEnum<'ctx>) -> PointerValue<'ctx> {
-        self.emit_cast_value_pointer(object, self.module.get_runtime_type__Object().into())
+        self.emit_cast_value_pointer(object, self.module.get_calocom_type(RuntimeType::Object))
+    }
+
+    fn emit_cast_enum_value_to_base(&self, object: BasicValueEnum<'ctx>) -> PointerValue<'ctx> {
+        self.emit_cast_value_pointer(object, self.module.get_calocom_type(RuntimeType::Enum))
+    }
+
+    fn emit_cast_tuple_value_to_base(&self, object: BasicValueEnum<'ctx>) -> PointerValue<'ctx> {
+        self.emit_cast_value_pointer(object, self.module.get_calocom_type(RuntimeType::Tuple))
     }
 
     fn emit_cast_value_pointer(
@@ -924,7 +916,7 @@ impl<'ctx, 'a> CodeGen<'ctx, 'a> {
                 .build_pointer_cast(
                     source.into_pointer_value(),
                     self.module
-                        .get_runtime_type__Object()
+                        .get_calocom_type(RuntimeType::Object)
                         .ptr_type(AddressSpace::Generic),
                     "",
                 )
@@ -993,7 +985,10 @@ impl<'ctx, 'a> CodeGen<'ctx, 'a> {
                     .iter()
                     .map(|arg| self.emit_operand(arg).into())
                     .collect();
-                let function = self.function_value_ctx.find_symbol(path).unwrap();
+                let function = self
+                    .function_value_ctx
+                    .find_symbol(path)
+                    .unwrap_or_else(|| panic!("unable to find function {}", path.join(".")));
                 // NOTE: void function not allowed in calocom, so choose the left
                 self.builder
                     .build_call(function, &args, "")
@@ -1003,21 +998,25 @@ impl<'ctx, 'a> CodeGen<'ctx, 'a> {
             }
             ExtractClosureCapture(var, index) => {
                 let closure = self.emit_variable(*var);
+                let closure = self.emit_cast_closure_value_to_base(closure);
                 let index = self.context.i32_type().const_int(*index as u64, false);
 
                 let function = self.module.get_runtime_function_extract_closure_capture();
-
-                self.builder
-                    .build_call(function, &[closure.into(), index.into()], "")
-                    .try_as_basic_value()
-                    .left()
-                    .unwrap()
+                self.emit_cast_value_pointer(
+                    self.builder
+                        .build_call(function, &[closure.into(), index.into()], "")
+                        .try_as_basic_value()
+                        .left()
+                        .unwrap(),
+                    self.memory_layout_ctx.get_llvm_type(*typ),
+                )
+                .into()
             }
             ClosureCall(operand, args) => {
                 let closure_self = self.emit_operand(operand);
                 let fn_ptr = self.load_closure_fn(closure_self);
 
-                let mut new_args = vec![self.emit_cast_closure_value_to_base(closure_self).into()];
+                let mut new_args = vec![self.emit_cast_object_value_to_base(closure_self).into()];
                 new_args.extend(
                     args.iter().map(|arg| -> BasicMetadataValueEnum<'ctx> {
                         self.emit_operand(arg).into()
@@ -1040,13 +1039,11 @@ impl<'ctx, 'a> CodeGen<'ctx, 'a> {
                     .find_symbol(path)
                     .unwrap_or_else(|| panic!("can't find {}", path.join(".")));
 
-                let captured_array = self.builder.build_array_alloca(
+                let captured_array = self.builder.build_alloca(
                     self.module
-                        .get_runtime_type__Object()
-                        .ptr_type(AddressSpace::Generic),
-                    self.context
-                        .i32_type()
-                        .const_int(capture.len() as u64, false),
+                        .get_calocom_type(RuntimeType::Object)
+                        .ptr_type(AddressSpace::Generic)
+                        .array_type(capture.len() as u32),
                     "",
                 );
 
@@ -1062,13 +1059,15 @@ impl<'ctx, 'a> CodeGen<'ctx, 'a> {
                             "",
                         )
                     };
-                    self.builder.build_store(gep, val);
+                    self.builder
+                        .build_store(gep, self.emit_cast_object_value_to_base(val));
                 }
 
                 let captured = self.builder.build_pointer_cast(
                     captured_array,
                     self.module
-                        .get_runtime_type__Object()
+                        .get_calocom_type(RuntimeType::Object)
+                        .ptr_type(AddressSpace::Generic)
                         .array_type(0)
                         .ptr_type(AddressSpace::Generic),
                     "",
@@ -1188,7 +1187,7 @@ impl<'ctx, 'a> CodeGen<'ctx, 'a> {
                                     .into(),
                                 if args.is_empty() {
                                     self.module
-                                        .get_runtime_type__Object()
+                                        .get_calocom_type(RuntimeType::Object)
                                         .ptr_type(AddressSpace::Generic)
                                         .const_null()
                                         .as_basic_value_enum()
@@ -1224,7 +1223,7 @@ impl<'ctx, 'a> CodeGen<'ctx, 'a> {
             Index(array, index) => {
                 let array = self.emit_cast_value_pointer(
                     self.emit_operand(array),
-                    self.module.get_runtime_type__Array().into(),
+                    self.module.get_calocom_type(RuntimeType::Array),
                 );
                 let array_index = self.emit_operand(index);
 
@@ -1243,55 +1242,62 @@ impl<'ctx, 'a> CodeGen<'ctx, 'a> {
                 .into()
             }
             Operand(operand) => self.emit_operand(operand),
+            UnboxedOperand(operand) => self.emit_unboxed_operand(operand),
             ExtractTupleField(operand, index) => {
                 let tuple = self.emit_operand(operand);
+                let tuple = self.emit_cast_tuple_value_to_base(tuple);
 
-                self.builder
-                    .build_call(
-                        self.module.get_runtime_function_extract_tuple_field(),
-                        &[
-                            tuple.into(),
-                            self.context
-                                .i32_type()
-                                .const_int(*index as u64, false)
-                                .into(),
-                        ],
-                        "",
-                    )
-                    .try_as_basic_value()
-                    .left()
-                    .unwrap()
+                self.emit_cast_value_pointer(
+                    self.builder
+                        .build_call(
+                            self.module.get_runtime_function_extract_tuple_field(),
+                            &[
+                                tuple.into(),
+                                self.context
+                                    .i32_type()
+                                    .const_int(*index as u64, false)
+                                    .into(),
+                            ],
+                            "",
+                        )
+                        .try_as_basic_value()
+                        .left()
+                        .unwrap(),
+                    self.memory_layout_ctx.get_llvm_type(*typ),
+                )
+                .into()
             }
             ExtractEnumField(discriminant, operand, index) => {
-                let enumeration = self.emit_operand(operand);
+                let obj = self.emit_operand(operand);
+                let obj = self.emit_cast_enum_value_to_base(obj);
 
-                self.builder
-                    .build_call(
-                        self.module.get_runtime_function_extract_tuple_field(),
-                        &[
-                            enumeration.into(),
-                            self.context
-                                .i32_type()
-                                .const_int(*discriminant as u64, false)
-                                .into(),
-                            self.context
-                                .i32_type()
-                                .const_int(*index as u64, false)
-                                .into(),
-                        ],
-                        "",
-                    )
-                    .try_as_basic_value()
-                    .left()
-                    .unwrap()
+                self.emit_cast_value_pointer(
+                    self.builder
+                        .build_call(
+                            self.module.get_runtime_function_extract_enum_field(),
+                            &[
+                                obj.into(),
+                                self.context
+                                    .i32_type()
+                                    .const_int(*discriminant as u64, false)
+                                    .into(),
+                                self.context
+                                    .i32_type()
+                                    .const_int(*index as u64, false)
+                                    .into(),
+                            ],
+                            "",
+                        )
+                        .try_as_basic_value()
+                        .left()
+                        .unwrap(),
+                    self.memory_layout_ctx.get_llvm_type(*typ),
+                )
+                .into()
             }
             ExtractEnumTag(obj) => {
                 let obj = self.emit_operand(obj);
-                let enum_type = self
-                    .module
-                    .get_runtime_type__Enum()
-                    .ptr_type(AddressSpace::Generic);
-                let obj = self.emit_pointer_cast(obj.into_pointer_value(), enum_type);
+                let obj = self.emit_cast_enum_value_to_base(obj);
 
                 self.builder
                     .build_call(
@@ -1315,7 +1321,7 @@ impl<'ctx, 'a> CodeGen<'ctx, 'a> {
 
                 let result = args
                     .iter()
-                    .fold(self.context.i32_type().const_int(1, false), |a, b| {
+                    .fold(self.context.bool_type().const_int(1, false), |a, b| {
                         self.builder.build_and(a, b.into_int_value(), "")
                     });
 
@@ -1351,14 +1357,12 @@ impl<'ctx, 'a> CodeGen<'ctx, 'a> {
             CompareCInt32(var, imm) => {
                 let var = self.emit_unboxed_operand(var);
 
-                self.builder
-                    .build_int_compare(
-                        IntPredicate::EQ,
-                        var.into_int_value(),
-                        self.context.i32_type().const_int(*imm as u64, false),
-                        "",
-                    )
-                    .as_basic_value_enum()
+                self.extend_to_i32(self.builder.build_int_compare(
+                    IntPredicate::EQ,
+                    var.into_int_value(),
+                    self.context.i32_type().const_int(*imm as u64, false),
+                    "",
+                ))
             }
             IncreaseIndVar(var) => {
                 let typ = var.typ;
@@ -1483,6 +1487,9 @@ impl<'ctx, 'a> CodeGen<'ctx, 'a> {
             self.emit_fn(func);
         }
         self.function_value_ctx.exit_scope();
-        self.module.verify().unwrap();
+        self.module.verify().unwrap_or_else(|msg| {
+            eprintln!("{}", msg.to_string());
+            panic!("verification failed")
+        });
     }
 }

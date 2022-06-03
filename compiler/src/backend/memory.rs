@@ -144,7 +144,7 @@ impl<'ctx> MemoryLayoutContext<'ctx> {
                     params_type.insert(
                         0,
                         self.llvm_module
-                            .get_calocom_type(RuntimeType::Closure)
+                            .get_calocom_type(RuntimeType::Object)
                             .ptr_type(AddressSpace::Generic)
                             .as_basic_type_enum()
                             .into(),
