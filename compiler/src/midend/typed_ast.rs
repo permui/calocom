@@ -1121,8 +1121,6 @@ impl TypedAST {
         // may leave opaque named type
         typed_ast.resolve_all_type(module);
 
-        // resolve type, second pass, replace previously opaque
-        // named type [Right(name)] with type index [Left(type_ref)].
         typed_ast.ty_ctx.refine_all_type();
 
         typed_ast.check_type(module);

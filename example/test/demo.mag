@@ -1,0 +1,101 @@
+
+import std.io
+import std.array
+import std.string
+
+
+data Nat = O
+         | S(Nat);
+
+data Weekday = Monday   | Tuesday | Wednesday    
+             | Thursday | Friday;
+
+nat_is_equal: (a: Nat, b: Nat) -> bool {
+    match (a, b) {
+        (O, O) => true,
+        (S(x), S(y)) => nat_is_equal(x, y),
+        (_, _) => false
+    }
+}
+
+add_x: (x: i32) -> i32 -> i32 {
+    \ (y: i32) -> i32 => {
+        x + y
+    }
+}
+
+main: () -> () {
+    let inc: i32 -> i32 = add_x(1);
+    std.io.println(inc(1));
+}
+
+complex_array: () -> [[i32]] {
+    let arr: [[i32]] = std.array.new(
+        5,
+        \ (_: i32) -> [i32] => 
+            std.array.new(
+                5,
+                \ (_: i32) -> i32 =>
+                    0));
+
+    for i in 0 .. 5 {
+        io.println(i);
+        arr[i][i] = i;
+    };
+    arr
+}
+
+
+test_if: () -> i32 {
+    let i: i32 = 0;
+    if i != 1 {
+        i + 2
+    } else {
+        if i != 3 {
+            i + 4
+        } else {
+            i + 5
+        }
+    }
+}
+
+test_while: () -> i32 {
+    let i: i32 = 0;
+    while i < 100 {
+        i = i + 1;
+    };
+    i
+}
+
+test_for: () -> i32 {
+    let sum: i32 = 0;
+    for i in 0 .. 10 {
+        sum = sum + i;
+    };
+    sum
+}
+
+test_nested_for: () -> i32 {
+    let sum: i32 = 0;
+    for i in 0 .. 10 {
+        for j in -99 .. 100 {
+            sum = sum + i + j;
+        };
+    };
+    sum
+}
+
+test_break_continue: () -> i32 {
+    let i : i32 = 0;
+    while true {
+        if i > 10 {
+            break;
+        };
+        if i == 0 {
+            i = 9;
+            continue;
+        };
+        i = i + 1;
+    };
+    i
+}

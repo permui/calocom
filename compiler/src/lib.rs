@@ -192,10 +192,10 @@ pub fn compile_with_arguments(args: Args) -> Result<(), ()> {
 
     #[cfg(feature = "visualize")]
     if args.using_visualize {
-        match vis::generate_html(&input_file) {
+        return match vis::generate_html(&ast) {
             Ok(_) => Ok(()),
             Err(_) => Err(()),
-        }?;
+        };
     };
 
     #[cfg(feature = "frontend")]

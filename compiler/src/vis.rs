@@ -1,8 +1,4 @@
 use super::ast::*;
-use super::frontend::parse;
-use std::path::PathBuf;
-#[allow(unused)]
-use std::{fmt::DebugTuple, fs};
 
 const HTML_PROVISION: &str =
     "<script src=\"https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js\"></script>
@@ -30,24 +26,19 @@ $(function() {
 </script>
 ";
 
-pub fn generate_html(path: &PathBuf) -> Result<(), String> {
-    let source = match fs::read_to_string(path) {
-        Ok(res) => res,
-        Err(info) => return Err(info.to_string()),
-    };
-    let m = parse(&source);
+pub fn generate_html(ast: &Module) -> Result<(), String> {
     println!("{}", HTML_PROVISION);
     println!(
         "<div class=\"mermaid\">\n%%{{init: {{'theme':'dark'}}}}%%\ngraph\n{}\n</div>\n",
-        generate_imports(&m)
+        generate_imports(ast)
     );
     println!(
         "<div class=\"mermaid\">\n%%{{init: {{'theme':'dark'}}}}%%\ngraph\n{}\n</div>\n",
-        generate_data_defs(&m)
+        generate_data_defs(ast)
     );
     println!(
         "<div class=\"mermaid\">\n%%{{init: {{'theme':'dark'}}}}%%\ngraph\n{}\n</div>\n",
-        generate_func_defs(&m)
+        generate_func_defs(ast)
     );
     Ok(())
 }
