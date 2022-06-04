@@ -1,10 +1,12 @@
 use crate::alloc::alloc_unit;
 use crate::console::print_object;
+use crate::panic::panic;
 use crate::types::*;
 
 use libc::c_char;
 use libc::c_int;
 use libc::getchar;
+use libc::printf;
 use libc::putchar;
 use libc::scanf;
 
@@ -30,6 +32,33 @@ pub unsafe extern "C" fn println(p: *const _Object) -> *const _Unit {
     #[cfg(windows)]
     putchar('\r' as c_int);
     putchar('\n' as c_int);
+    alloc_unit()
+}
+
+/// # Safety
+///
+/// This function should not be called directly by other crates
+///
+#[no_mangle]
+#[export_name = "_CALOCOM_PF_3std2io20print_i32_with_alignfCuCi4CsCi4"]
+pub unsafe extern "C" fn print_i32_with_align(
+    i: *const _Int32,
+    dir: *const _String,
+    width: *const _Int32,
+) -> *const _Unit {
+    let left_align = const_cstr!("<");
+    let right_align = const_cstr!(">");
+    let width = extract_i32(width, 0);
+    let value = extract_i32(i, 0);
+
+    if compare_str_with_cstr(dir, left_align.as_ptr(), left_align.len() as u32) == 0 {
+        printf(const_cstr!("%-*d").as_ptr(), width, value);
+    } else if compare_str_with_cstr(dir, right_align.as_ptr(), right_align.len() as u32) == 0 {
+        printf(const_cstr!("%*d").as_ptr(), width, value);
+    } else {
+        panic(const_cstr!("not available align specifier").as_ptr());
+    }
+
     alloc_unit()
 }
 

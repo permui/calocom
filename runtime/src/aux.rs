@@ -9,6 +9,10 @@ impl ConstCStr {
     pub fn as_ptr(&self) -> *const c_char {
         self.data.as_bytes().as_ptr() as *const c_char
     }
+
+    pub fn len(&self) -> usize {
+        self.data.as_bytes().len() - 1
+    }
 }
 
 #[macro_export]

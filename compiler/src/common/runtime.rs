@@ -339,6 +339,7 @@ pub fn create_library_function_signature(
 
     declare_library_function!(name_ctx, type_ctx; std.io.print: |object| => unit);
     declare_library_function!(name_ctx, type_ctx; std.io.println: |object| => unit);
+    declare_library_function!(name_ctx, type_ctx; std.io.print_i32_with_align: |t_i32, string, t_i32| => unit);
     declare_library_function!(name_ctx, type_ctx; std.io.readln: || => string);
     declare_library_function!(name_ctx, type_ctx; std.io.read_f64: || => t_f64);
     declare_library_function!(name_ctx, type_ctx; std.io.read_i32: || => t_i32);
@@ -362,6 +363,7 @@ pub fn insert_library_function<'ctx>(
 
     insert_library_function!(name_ctx, type_ctx, module; std.io.print: |object| => unit);
     insert_library_function!(name_ctx, type_ctx, module; std.io.println: |object| => unit);
+    insert_library_function!(name_ctx, type_ctx, module; std.io.print_i32_with_align: |t_i32, string, t_i32| => unit);
     insert_library_function!(name_ctx, type_ctx, module; std.io.readln: || => string);
     insert_library_function!(name_ctx, type_ctx, module; std.io.read_f64: || => t_f64);
     insert_library_function!(name_ctx, type_ctx, module; std.io.read_i32: || => t_i32);

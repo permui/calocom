@@ -28,7 +28,7 @@ main: () -> () {
     };
     for i in 0 .. cn {
         for j in 0 .. cm {
-            io.println(c[i][j]);
+            io.print_i32_with_align(c[i][j], ">", 10);
         };
         io.println("")
     };

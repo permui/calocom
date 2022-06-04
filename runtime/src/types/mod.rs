@@ -22,6 +22,7 @@ pub use int::*;
 pub use string::*;
 pub use tuple::*;
 pub use conversion::*;
+pub use comparison::*;
 
 #[repr(u8)]
 pub enum _ObjectType {
