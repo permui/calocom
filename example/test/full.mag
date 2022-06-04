@@ -205,6 +205,14 @@ test_string_split: () -> [str] {
     std.string.split("a,b,c,d,e,f,g", ",")
 }
 
+test_int_convert_nat: (x: i32) -> Nat {
+    let m: Nat = O;
+    for i in 0 .. x {
+        m = S(m);
+    };
+    m
+}
+
 main: () -> () {
     io.println(test_equality("test", 0, 0.0) == true);
     io.println(test_if() == 1);
@@ -246,4 +254,5 @@ main: () -> () {
     io.println(test_string_split());
     io.println(test_array());
     io.println(test_complex_array());
+    io.println(test_normal_match(test_int_convert_nat(10)));
 }

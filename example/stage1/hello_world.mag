@@ -1,5 +1,0 @@
-import std.io
-
-main: () -> () {
-	io.println<str>("hello world!");
-}

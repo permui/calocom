@@ -55,7 +55,7 @@ use std::path::PathBuf;
 #[clap(author, version, about, long_about = None)]
 pub struct Args {
     /// Specify the runtime file
-    #[clap(long, default_value = "calocom_runtime.ll", parse(from_os_str))]
+    #[clap(long, default_value = "./calocom_runtime.ll", parse(from_os_str))]
     runtime: PathBuf,
 
     /// Specify the optimizing level
