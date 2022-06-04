@@ -62,6 +62,35 @@ pub unsafe extern "C" fn print_i32_with_align(
     alloc_unit()
 }
 
+/// # Safety
+///
+/// This function should not be called directly by other crates
+///
+#[no_mangle]
+#[export_name = "_CALOCOM_PF_3std2io30print_f64_with_align_precisionfCuCf8CsCi4Ci4"]
+pub unsafe extern "C" fn print_f64_with_align_precision(
+    f: *const _Float64,
+    dir: *const _String,
+    width: *const _Int32,
+    precision: *const _Int32,
+) -> *const _Unit {
+    let left_align = const_cstr!("<");
+    let right_align = const_cstr!(">");
+    let width = extract_i32(width, 0);
+    let precision = extract_i32(precision, 0);
+    let value = extract_f64(f, 0.);
+
+    if compare_str_with_cstr(dir, left_align.as_ptr(), left_align.len() as u32) == 0 {
+        printf(const_cstr!("%-*.*f").as_ptr(), width, precision, value);
+    } else if compare_str_with_cstr(dir, right_align.as_ptr(), right_align.len() as u32) == 0 {
+        printf(const_cstr!("%*.*d").as_ptr(), width, precision, value);
+    } else {
+        panic(const_cstr!("not available align specifier").as_ptr());
+    }
+
+    alloc_unit()
+}
+
 #[no_mangle]
 #[export_name = "_CALOCOM_PF_3std2io8read_i32fCi4"]
 pub extern "C" fn read_i32() -> *const _Int32 {

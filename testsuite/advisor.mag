@@ -163,19 +163,19 @@ main: () -> () {
     if att_sum > 0 { gpa = gpa / att_sum; } else { gpa = 0; };
 
     io.print("GPA: ");
-    io.print(gpa);
+    io.print_f64_with_align_precision(gpa, "<", 0, 1);
     io.println("");
     
     io.print("Hours Attempted: ");
-    io.print(att_sum);
+    io.print_f64_with_align_precision(att_sum, "<", 0, 0);
     io.println("");
 
     io.print("Hours Completed: ");
-    io.print(acq_sum);
+    io.print_f64_with_align_precision(acq_sum, "<", 0, 0);
     io.println("");
 
     io.print("Credits Remaining: ");
-    io.print(rem_sum);
+    io.print_f64_with_align_precision(rem_sum, "<", 0, 0);
     io.println("");
 
     io.println("");

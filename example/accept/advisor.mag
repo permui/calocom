@@ -25,6 +25,7 @@ to_credit: (s: str) -> f64 {
         "2" => 2,
         "3" => 3,
         "4" => 4,
+        "5" => 5,
         _ => 0
     }
 }
@@ -38,6 +39,19 @@ to_score: (s: str) -> f64 {
         "F" => 0,
         "" => -1,
         _ => -2
+    }
+}
+
+print_str_list: (a: StrList) -> () {
+    match a {
+        StrNil => {
+            io.println("");
+        },
+        StrCon(s, tail) => {
+            io.print(s);
+            io.print(", ");
+            print_str_list(tail);
+        }
     }
 }
 
@@ -70,8 +84,12 @@ satisfy_or: (r: OrRequire, alr: StrList) -> bool {
 
 satisfy: (r: OrRequire, alr: StrList) -> bool {
     match r {
-        OrNil => true,
-        _ => satisfy_or(r, alr)
+        OrNil => {
+            true
+        }, 
+        OrCon(_, _) => {
+            satisfy_or(r, alr)
+        }
     }
 }
 
@@ -99,14 +117,18 @@ to_require_and: (s: str) -> StrList {
 }
 
 to_require: (s: str) -> OrRequire {
-    let a : [str] = string.split(s, ";");
-    let n : i32 = array.len(a);
-    let ret : OrRequire = OrNil;
-    for i in 0 .. n {
-        let p : StrList = to_require_and(a[i]);
-        ret = OrCon(p, ret);
-    };
-    ret
+    if s == "" { OrNil } else {
+
+        let a : [str] = string.split(s, ";");
+        let n : i32 = array.len(a);
+        let ret : OrRequire = OrNil;
+
+        for i in 0 .. n {
+            let p : StrList = to_require_and(a[i]);
+            ret = OrCon(p, ret);
+        };
+        ret
+    }
 }
 
 main: () -> () {
@@ -141,19 +163,19 @@ main: () -> () {
     if att_sum > 0 { gpa = gpa / att_sum; } else { gpa = 0; };
 
     io.print("GPA: ");
-    io.print(gpa);
+    io.print_f64_with_align_precision(gpa, "<", 0, 1);
     io.println("");
     
     io.print("Hours Attempted: ");
-    io.print(att_sum);
+    io.print_f64_with_align_precision(att_sum, "<", 0, 0);
     io.println("");
 
     io.print("Hours Completed: ");
-    io.print(acq_sum);
+    io.print_f64_with_align_precision(acq_sum, "<", 0, 0);
     io.println("");
 
     io.print("Credits Remaining: ");
-    io.print(rem_sum);
+    io.print_f64_with_align_precision(rem_sum, "<", 0, 0);
     io.println("");
 
     io.println("");
