@@ -3,7 +3,8 @@ WORKDIR /home/calocom
 RUN apt-get update && apt-get install -y lsb-release wget software-properties-common gnupg2 && rm -rf /var/lib/apt/lists/*
 RUN wget https://apt.llvm.org/llvm.sh \
     && chmod +x llvm.sh \
-    && ./llvm.sh 13
+    && ./llvm.sh 13 \
+    && rm -rf /var/lib/apt/lists/*
 COPY . .
 RUN cd ./runtime \
     && cargo rustc --lib --release -- --emit=llvm-ir

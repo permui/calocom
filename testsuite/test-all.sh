@@ -6,3 +6,6 @@ calocom-compiler -l O3 -t bin -o matrix-mul ./matrix-mul.mag
 
 calocom-compiler -l O3 -t bin -o quicksort ./quicksort.mag
 ./quicksort-tester ./quicksort
+
+calocom-compiler -l O3 -t bin -o advisor ./advisor.mag
+./advisor-tester ./advisor
