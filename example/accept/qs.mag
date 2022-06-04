@@ -12,9 +12,20 @@ sort: (a: [i32], l: i32, r: i32) -> () {
     let x : i32 = a[r];
     let i : i32 = l;
     let j : i32 = r - 1;
-    while true {
-        while a[i] <= x && i < r { i = i + 1; };
-        while a[j] > x && j >= l { j = j - 1; };
+
+    while true {    
+        while i < r { 
+            if a[i] > x {
+                break;
+            };
+            i = i + 1;
+        };
+        while j >= l {
+            if a[j] <= x {
+                break;
+            };
+            j = j - 1;
+        };
         if i < j {
             tmp = a[i];
             a[i] = a[j];

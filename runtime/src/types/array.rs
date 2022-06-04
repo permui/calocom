@@ -9,6 +9,7 @@ use crate::panic::panic;
 
 use libc::c_void;
 use libc::memcpy;
+use libc::printf;
 use libc::size_t;
 
 #[no_mangle]
@@ -37,6 +38,11 @@ pub unsafe extern "C" fn array_index(
 ) -> *mut *mut _Object {
     let subscript = extract_i32(index, 0);
     if subscript < 0 || subscript as u32 >= (*array).length {
+        printf(
+            const_cstr!("try access [%d] but limit is [%d]\n").as_ptr(),
+            subscript,
+            (*array).length,
+        );
         panic(const_cstr!("array bound checking failed").as_ptr());
     }
     ((*array).data as *mut *mut _Object).add(subscript as usize)
@@ -94,6 +100,8 @@ pub unsafe extern "C" fn array_push_back(array: *mut _Array, elem: *mut _Object)
         array_grow(array);
     }
     let length = (*array).length;
-    ((*array).data as *mut *mut _Object).add(length as usize).write(elem);
+    ((*array).data as *mut *mut _Object)
+        .add(length as usize)
+        .write(elem);
     (*array).length += 1;
 }
