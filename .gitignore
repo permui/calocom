@@ -2,7 +2,9 @@
 /target
 .vscode
 .idea
+.cargo
 *.ll
 *.bc
 *.ir
 *.s
+*.o

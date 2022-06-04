@@ -1,0 +1,51 @@
+import std.io
+import std.array
+
+sort: (a: [i32], l: i32, r: i32) -> () {
+    if l >= r { return; };
+    let mid : i32 = (l + r) / 2;
+
+    let tmp : i32 = a[mid];
+    a[mid] = a[r];
+    a[r] = tmp;
+
+    let x : i32 = a[r];
+    let i : i32 = l;
+    let j : i32 = r - 1;
+
+    while true {    
+        while i < r { 
+            if a[i] > x {
+                break;
+            };
+            i = i + 1;
+        };
+        while j >= l {
+            if a[j] <= x {
+                break;
+            };
+            j = j - 1;
+        };
+        if i < j {
+            tmp = a[i];
+            a[i] = a[j];
+            a[j] = tmp;
+        } else { break; };
+    };
+
+    tmp = a[i];
+    a[i] = a[r];
+    a[r] = tmp;
+
+    sort(a, l, j);
+    sort(a, i + 1, r);
+}
+
+main: () -> () {
+    let n : i32 = io.read_i32();
+    let a : [i32] = array.new(n, \ (_: i32) -> i32 => io.read_i32());
+    sort(a, 0, n - 1);
+    for i in 0 .. n {
+        io.println(a[i]);
+    };
+}

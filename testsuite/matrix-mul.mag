@@ -1,0 +1,35 @@
+import std.io
+import std.array
+
+main: () -> () {
+    let an : i32 = io.read_i32();
+    let am : i32 = io.read_i32();
+    let a : [[i32]] = array.new(an, \ (_: i32) -> [i32] => array.new(am, \ (_: i32) -> i32 => io.read_i32()));
+    let bn : i32 = io.read_i32();
+    let bm : i32 = io.read_i32();
+    let b : [[i32]] = array.new(bn, \ (_: i32) -> [i32] => array.new(bm, \ (_: i32) -> i32 => io.read_i32()));
+    
+    if am != bn {
+        io.println("Incompatible Dimensions");
+        return;
+    };
+
+    let cn : i32 = an;
+    let cm : i32 = bm;
+    let c : [[i32]] = array.new(cn, \ (_: i32) -> [i32] => array.new(cm, \ (_: i32) -> i32 => 0));
+    for i in 0 .. cn {
+        for j in 0 .. cm {
+            let s : i32 = 0;
+            for k in 0 .. am {
+                s = s + a[i][k] * b[k][j];
+            };
+            c[i][j] = s;
+        };
+    };
+    for i in 0 .. cn {
+        for j in 0 .. cm {
+            io.print_i32_with_align(c[i][j], ">", 10);
+        };
+        io.println("")
+    };
+}
