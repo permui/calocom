@@ -13,6 +13,10 @@ pub mod types;
 #[lang = "eh_personality"]
 extern "C" fn eh_personality() {}
 
+#[no_mangle]
+pub fn __rust_probestack() {
+}
+
 #[cfg(not(test))]
 #[panic_handler]
 fn panic(_panic: &::core::panic::PanicInfo<'_>) -> ! {

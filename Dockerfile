@@ -11,4 +11,4 @@ RUN cargo install --path ./compiler
 WORKDIR /home/calocom/testsuite
 RUN cp ../target/release/deps/calocom_runtime.ll /home/calocom/testsuite/calocom_runtime.ll \
     && chmod +x ./test-all.sh
-CMD [ "bash" ]
+CMD ./test-all.sh
