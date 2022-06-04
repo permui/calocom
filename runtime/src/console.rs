@@ -19,7 +19,6 @@ pub unsafe fn print_object(p: *const _Object) {
         }
         _ObjectType::Str => {
             let s = p as *const _String;
-            putchar(b'\"' as c_int);
             for i in 0..(*s).len {
                 let c = *(addr_of!((*s).data) as *const c_char).add(i as usize) as u8;
                 match c {
@@ -39,7 +38,6 @@ pub unsafe fn print_object(p: *const _Object) {
                     }
                 };
             }
-            putchar(b'\"' as c_int);
         }
         _ObjectType::Int32 => {
             let i = p as *const _Int32;

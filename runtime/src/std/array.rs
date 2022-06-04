@@ -10,6 +10,7 @@ use crate::types::alloc_array;
 use crate::types::alloc_i32_literal;
 use crate::types::array_push_back;
 use crate::types::extract_i32;
+use crate::types::get_array_length;
 
 /// # Safety
 ///
@@ -32,4 +33,17 @@ pub unsafe extern "C" fn new(length: *const _Int32, initializer: *const _Object)
         array_push_back(arr, element);
     }
     arr
+}
+
+/// # Safety
+///
+/// This function should not be called directly by other crates
+#[no_mangle]
+#[export_name = "_CALOCOM_PF_3std5array3lenfCi4Co"]
+pub unsafe extern "C" fn len(array: *const _Object) -> *const _Int32 {
+    if !matches!((*array).tag, _ObjectType::Array) {
+        panic(const_cstr!("must be a array to calculate the length").as_ptr());
+    }
+    let array = array as *const _Array;
+    alloc_i32_literal(get_array_length(array) as i32)
 }

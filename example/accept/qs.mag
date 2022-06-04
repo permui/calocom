@@ -31,13 +31,10 @@ sort: (a: [i32], l: i32, r: i32) -> () {
 }
 
 main: () -> () {
-    let n : i32 = io.read<i32>();
-    let a : [i32] = array.new(n, \ () -> i32 => 0);
-    for i in 0 .. n {
-        a[i] = io.read<i32>();
-    };
+    let n : i32 = io.read_i32();
+    let a : [i32] = array.new(n, \ (_: i32) -> i32 => io.read_i32());
     sort(a, 0, n - 1);
     for i in 0 .. n {
-        io.println<i32>(a[i]);
+        io.println(a[i]);
     };
 }

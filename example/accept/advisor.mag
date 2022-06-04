@@ -80,8 +80,8 @@ recommend: (l: ReqList, alr: StrList) -> () {
         ReqNil => (),
         ReqCon((name, req), tail) => {
             if satisfy(req, alr) {
-                io.print<str>("  ");
-                io.println<str>(name);
+                io.print("  ");
+                io.println(name);
             };
             recommend(tail, alr);
         }
@@ -118,8 +118,8 @@ main: () -> () {
     let c : ReqList = ReqNil;
 
     while true {
-        // readline returns an `str`
-        let line : str = io.readline(); 
+        // readln returns an `str`
+        let line : str = io.readln(); 
 
         if line == "" { break; };
 
@@ -140,23 +140,23 @@ main: () -> () {
 
     if att_sum > 0 { gpa = gpa / att_sum; } else { gpa = 0; };
 
-    io.print<str>("GPA: ");
-    io.print_float(gpa, 1);
-    io.print_newline();
+    io.print("GPA: ");
+    io.print(gpa);
+    io.println("");
     
-    io.print<str>("Hours Attempted: ");
-    io.print_float(att_sum, 0);
-    io.print_newline();
+    io.print("Hours Attempted: ");
+    io.print(att_sum);
+    io.println("");
 
-    io.print<str>("Hours Completed: ");
-    io.print_float(acq_sum, 0);
-    io.print_newline();
+    io.print("Hours Completed: ");
+    io.print(acq_sum);
+    io.println("");
 
-    io.print<str>("Credits Remaining: ");
-    io.print_float(rem_sum, 0);
-    io.print_newline();
+    io.print("Credits Remaining: ");
+    io.print(rem_sum);
+    io.println("");
 
-    io.print_newline();
+    io.println("");
     io.println("Possible Courses to Take Next");
     if rem_sum == 0 {
         io.println("  None - Congratulations!");

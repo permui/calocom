@@ -343,7 +343,8 @@ pub fn create_library_function_signature(
     declare_library_function!(name_ctx, type_ctx; std.io.read_f64: || => t_f64);
     declare_library_function!(name_ctx, type_ctx; std.io.read_i32: || => t_i32);
     declare_library_function!(name_ctx, type_ctx; std.string.split: |string, string| => arr_of_str);
-    declare_library_function!(name_ctx, type_ctx; std.array.new: |t_i32, object| => arr_of_obj );
+    declare_library_function!(name_ctx, type_ctx; std.array.new: |t_i32, object| => arr_of_obj);
+    declare_library_function!(name_ctx, type_ctx; std.array.len: |object| => t_i32);
 }
 
 pub fn insert_library_function<'ctx>(
@@ -365,5 +366,6 @@ pub fn insert_library_function<'ctx>(
     insert_library_function!(name_ctx, type_ctx, module; std.io.read_f64: || => t_f64);
     insert_library_function!(name_ctx, type_ctx, module; std.io.read_i32: || => t_i32);
     insert_library_function!(name_ctx, type_ctx, module; std.string.split: |string, string| => arr_of_str);
-    insert_library_function!(name_ctx, type_ctx, module; std.array.new: |t_i32, object| => arr_of_obj );
+    insert_library_function!(name_ctx, type_ctx, module; std.array.new: |t_i32, object| => arr_of_obj);
+    insert_library_function!(name_ctx, type_ctx, module; std.array.len: |object| => t_i32);
 }
