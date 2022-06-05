@@ -1,7 +1,7 @@
 use super::ast::*;
 
 const HTML_PROVISION: &str =
-    "<script src=\"https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js\"></script>
+    "<script src=\"https://cdnjs.cloudflare.com/ajax/libs/mermaid/9.1.1/mermaid.min.js\"></script>
 <script>
 mermaid.initialize({startOnLoad:true, maxTextSize: 500000});
 </script>
@@ -9,7 +9,7 @@ mermaid.initialize({startOnLoad:true, maxTextSize: 500000});
     .mermaid {}
 </style>
 
-<script src=\"https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js\"></script>
+<script src=\"https://cdnjs.cloudflare.com/ajax/libs/mermaid/9.1.1/mermaid.min.js\"></script>
 <script>
 mermaid.initialize({startOnLoad:false});
 </script>
@@ -29,15 +29,15 @@ $(function() {
 pub fn generate_html(ast: &Module) -> Result<(), String> {
     println!("{}", HTML_PROVISION);
     println!(
-        "<div class=\"mermaid\">\n%%{{init: {{'theme':'dark'}}}}%%\ngraph\n{}\n</div>\n",
+        "<div class=\"mermaid\">\n%%{{init: {{'theme':'light'}}}}%%\ngraph\n{}\n</div>\n",
         generate_imports(ast)
     );
     println!(
-        "<div class=\"mermaid\">\n%%{{init: {{'theme':'dark'}}}}%%\ngraph\n{}\n</div>\n",
+        "<div class=\"mermaid\">\n%%{{init: {{'theme':'light'}}}}%%\ngraph\n{}\n</div>\n",
         generate_data_defs(ast)
     );
     println!(
-        "<div class=\"mermaid\">\n%%{{init: {{'theme':'dark'}}}}%%\ngraph\n{}\n</div>\n",
+        "<div class=\"mermaid\">\n%%{{init: {{'theme':'light'}}}}%%\ngraph\n{}\n</div>\n",
         generate_func_defs(ast)
     );
     Ok(())
