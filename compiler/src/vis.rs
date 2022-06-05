@@ -396,9 +396,10 @@ fn generate_complex_pattern(complex_pattern: &ComplexPattern, prefix: String) ->
                 .as_str(),
             );
         }
-        ComplexPattern::Tuple(_) => todo!(),
-        ComplexPattern::Wildcard => todo!(),
-        ComplexPattern::Literal(_) => todo!(),
+        _ => {}
+        // ComplexPattern::Tuple(_) => todo!(),
+        // ComplexPattern::Wildcard => todo!(),
+        // ComplexPattern::Literal(_) => todo!(),
     }
     ret
 }
