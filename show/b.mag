@@ -1,0 +1,25 @@
+import std.io
+
+data Nat = O | S(Nat);
+
+nat_eq: (x: Nat, y: Nat) -> bool {
+    match (x, y) {
+        (O, O) => true,
+        (S(u), S(v)) => nat_eq(u, v),
+        (_, _) => false
+    }
+}
+
+nat_to_i32: (x: Nat) -> i32 {
+    match x {
+        O => 0,
+        S(u) => 1 + nat_to_i32(u)
+    }
+}
+
+main: () -> () {
+    let x : Nat = S(S(S(O)));
+    let y : Nat = S(S((O)));
+    io.println(nat_eq(x, y));
+    io.println(nat_to_i32(x));
+}

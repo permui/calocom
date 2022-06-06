@@ -405,7 +405,7 @@ fn generate_complex_pattern(complex_pattern: &ComplexPattern, prefix: String) ->
 }
 
 fn generate_ctor_pattern(ctor_pattern: &CtorPattern, prefix: String) -> String {
-    let mut ret = format!("ctor_pattern__{}_((Ctor))", prefix);
+    let mut ret = format!("ctor_pattern__{}_((Ctor))\n", prefix);
     ret.push_str(
         format!(
             "ctor_pattern_name__{}_(({}))\nctor_pattern__{}_-->ctor_pattern_name__{}_\n",
