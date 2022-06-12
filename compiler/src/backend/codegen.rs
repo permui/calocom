@@ -1190,7 +1190,19 @@ impl<'ctx, 'a> CodeGen<'ctx, 'a> {
                             unreachable!()
                         }
                     }
-                    Positive => expr,
+                    Positive => {
+                        if expr.is_float_value() {
+                            self.emit_boxed_f64(
+                                expr.as_basic_value_enum()
+                            )
+                        } else if expr.is_int_value() {
+                            self.emit_boxed_i32(
+                                expr.as_basic_value_enum()
+                            )
+                        } else {
+                            unreachable!()
+                        }
+                    }
                     Negative => {
                         if expr.is_float_value() {
                             self.emit_boxed_f64(
